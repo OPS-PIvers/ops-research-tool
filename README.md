@@ -19,10 +19,13 @@ Pre-pilot. v1 in development. Build plan in [`docs/build-plan.md`](docs/build-pl
 
 | Phase | Description | Status |
 | --- | --- | --- |
-| 1 | Backend, schema, roster, provisioning | in progress |
+| 1 | Backend, schema, roster, provisioning | **complete** (round-trip + idempotency + URL-dedup tests green) |
 | 2 | Chrome extension (MV3 + offline buffer + PDF.js) | not started |
 | 3 | Google Docs sidebar | not started |
 | 4 | Teacher console + pilot | not started |
+
+See [`CLAUDE.md`](CLAUDE.md) for current build state, the decisions log, and
+the next-session start guide.
 
 ## Repository layout
 
