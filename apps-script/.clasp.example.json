@@ -1,0 +1,10 @@
+{
+  "_comment": "Copy this to .clasp.json (gitignored) and fill in scriptId. Run `clasp create --type standalone --title 'OPS Research Tool - Backend' --rootDir ./src` to generate a real one.",
+  "scriptId": "<paste-your-scriptId-here>",
+  "rootDir": "src",
+  "scriptExtensions": [".js", ".gs"],
+  "htmlExtensions": [".html"],
+  "jsonExtensions": [".json"],
+  "filePushOrder": [],
+  "skipSubdirectories": false
+}
