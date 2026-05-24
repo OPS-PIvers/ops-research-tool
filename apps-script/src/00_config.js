@@ -7,17 +7,16 @@
  */
 const CONFIG = {
   // Drive folder that contains everything (Roster workbook, registries, per-project folders).
-  // Empty string means "not yet set — setup() will create it and log the ID".
-  ROOT_FOLDER_ID: '',
+  ROOT_FOLDER_ID: '13bA8j83R-wZDaewWcOpYisWxH_Ojwhu4',
 
   // Roster + Staff workbook (tabs: Roster, Staff). Single workbook, district-wide.
-  ROSTER_SHEET_ID: '',
+  ROSTER_SHEET_ID: '17vs9bb7oFoiT_D7Z4z2vQfLzWyEpLMd21ZWUDovSvEs',
 
   // Projects registry Sheet (one tab listing every project ever created).
-  PROJECTS_SHEET_ID: '',
+  PROJECTS_SHEET_ID: '1FSCdO5zcnGhIr5Wdm4-YFSSIcjskWlivffm-ivkJvKE',
 
   // Bundles config Sheet (immutable rows; one row per category bundle).
-  BUNDLES_SHEET_ID: '',
+  BUNDLES_SHEET_ID: '1Ht6ggmLyqD-VhepLr10bE8lO28zLX9-1NcfXirxHIYk',
 
   // The Google account that owns the script + data during PoC. Used as a sanity
   // check inside setup() so a different account doesn't accidentally re-bootstrap.
