@@ -80,6 +80,28 @@ function devValidateRoster() {
   return validateRoster();
 }
 
+/** Diagnostic: confirms whether the URL constructor works in this GAS runtime. */
+function devProbeUrlConstructor() {
+  try {
+    const u = new URL('https://example.com/test?a=1&utm_source=x#frag');
+    console.log('URL constructor: works');
+    console.log('  toString: ' + u.toString());
+    console.log('  protocol: ' + u.protocol);
+    console.log('  host: ' + u.host);
+    console.log('  pathname: ' + u.pathname);
+    console.log('  search: ' + u.search);
+    console.log('  hash: ' + u.hash);
+    console.log('  searchParams typeof: ' + typeof u.searchParams);
+    if (u.searchParams && u.searchParams.forEach) {
+      const entries = [];
+      u.searchParams.forEach((v, k) => entries.push(k + '=' + v));
+      console.log('  searchParams entries: [' + entries.join(', ') + ']');
+    }
+  } catch (e) {
+    console.log('URL constructor: THROWS — ' + e.message);
+  }
+}
+
 /** URL normalization unit checks. Logs each case + a pass/fail count. */
 function devTestNormalizeUrl() {
   const cases = [

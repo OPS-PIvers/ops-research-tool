@@ -16,25 +16,27 @@ const DROP_QUERY_PARAMS = new Set([
 
 /**
  * Strip tracking params + fragment; preserve path + meaningful query.
- * Built by re-serializing rather than mutating the URL — GAS's V8 URLSearchParams
- * doesn't react to `u.search = ''` the way browsers do, so a clean rebuild is
- * the only reliable approach here.
+ * Pure string parsing — GAS V8 doesn't expose a working `URL` constructor
+ * (it throws), and URLSearchParams mutations don't take. Hand-rolling is
+ * the only thing that works reliably here.
  */
 function normalizeUrl_(rawUrl) {
   if (!rawUrl) return '';
-  try {
-    const u = new URL(String(rawUrl));
-    const kept = [];
-    u.searchParams.forEach((v, k) => {
-      if (!DROP_QUERY_PARAMS.has(String(k).toLowerCase())) {
-        kept.push(encodeURIComponent(k) + '=' + encodeURIComponent(v));
-      }
-    });
-    const query = kept.length ? '?' + kept.join('&') : '';
-    return u.protocol + '//' + u.host + u.pathname + query;
-  } catch (e) {
-    return String(rawUrl).trim();
-  }
+  const s = String(rawUrl).trim();
+  // scheme://host/path?query#fragment
+  const m = s.match(/^([a-z][a-z0-9+.\-]*:\/\/[^\/?#]+)([^?#]*)(\?[^#]*)?(#.*)?$/i);
+  if (!m) return s; // not a parseable URL — return as-is
+  const origin = m[1];
+  const path = m[2] || '/';
+  const queryStr = m[3] || ''; // includes leading '?'
+  // fragment (m[4]) intentionally dropped
+  if (!queryStr) return origin + path;
+  const kept = queryStr.slice(1).split('&').filter(Boolean).filter((kv) => {
+    const eq = kv.indexOf('=');
+    const key = (eq >= 0 ? kv.slice(0, eq) : kv).toLowerCase();
+    return !DROP_QUERY_PARAMS.has(key);
+  });
+  return origin + path + (kept.length ? '?' + kept.join('&') : '');
 }
 
 /** Get a Sheet tab; throw if missing. */
