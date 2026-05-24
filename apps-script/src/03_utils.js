@@ -8,23 +8,32 @@ function nowIso_() {
   return new Date().toISOString();
 }
 
-/** Strip tracking params + fragment; preserve path + meaningful query. */
+const DROP_QUERY_PARAMS = new Set([
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+  'gclid', 'fbclid', 'mc_cid', 'mc_eid', '_ga', 'ref', 'ref_src',
+  'igshid', 'yclid', 'msclkid',
+]);
+
+/**
+ * Strip tracking params + fragment; preserve path + meaningful query.
+ * Built by re-serializing rather than mutating the URL — GAS's V8 URLSearchParams
+ * doesn't react to `u.search = ''` the way browsers do, so a clean rebuild is
+ * the only reliable approach here.
+ */
 function normalizeUrl_(rawUrl) {
+  if (!rawUrl) return '';
   try {
-    const u = new URL(rawUrl);
-    u.hash = '';
-    const drop = new Set([
-      'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
-      'gclid', 'fbclid', 'mc_cid', 'mc_eid', '_ga', 'ref', 'ref_src',
-      'igshid', 'yclid', 'msclkid',
-    ]);
-    const keep = [];
-    u.searchParams.forEach((v, k) => { if (!drop.has(k.toLowerCase())) keep.push([k, v]); });
-    u.search = '';
-    keep.forEach(([k, v]) => u.searchParams.append(k, v));
-    return u.toString();
+    const u = new URL(String(rawUrl));
+    const kept = [];
+    u.searchParams.forEach((v, k) => {
+      if (!DROP_QUERY_PARAMS.has(String(k).toLowerCase())) {
+        kept.push(encodeURIComponent(k) + '=' + encodeURIComponent(v));
+      }
+    });
+    const query = kept.length ? '?' + kept.join('&') : '';
+    return u.protocol + '//' + u.host + u.pathname + query;
   } catch (e) {
-    return String(rawUrl || '').trim();
+    return String(rawUrl).trim();
   }
 }
 

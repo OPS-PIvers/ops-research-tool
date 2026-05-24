@@ -113,6 +113,14 @@ function handleGet_(e) {
         return { ok: true, highlights: readHighlightsForActor_(actorEmail, params.projectId) };
       }
 
+      case 'findSource': {
+        if (!params.projectId) throw new Error('projectId required');
+        if (!params.rawUrl) throw new Error('rawUrl required');
+        const normalized = normalizeUrl_(params.rawUrl);
+        const existing = findSourceByNormalizedUrl_(actorEmail, params.projectId, normalized);
+        return { ok: true, normalizedUrl: normalized, source: existing };
+      }
+
       default:
         throw new Error(`Unknown action ${action}`);
     }

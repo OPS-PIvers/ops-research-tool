@@ -28,3 +28,14 @@ function readHighlightsForActor_(actorEmail, projectId) {
   if (!ss) return [];
   return readAllAsObjects_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
 }
+
+/**
+ * The extension calls this before creating a new source so two highlights on
+ * the same page (after tracking params are stripped) attach to one source
+ * instead of duplicating. Returns the existing source row or null.
+ */
+function findSourceByNormalizedUrl_(actorEmail, projectId, normalizedUrl) {
+  if (!normalizedUrl) return null;
+  const sources = readSourcesForActor_(actorEmail, projectId);
+  return sources.find((s) => s.normalizedUrl === normalizedUrl) || null;
+}

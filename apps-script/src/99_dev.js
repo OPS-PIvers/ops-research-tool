@@ -79,3 +79,44 @@ function devTestRoundTrip() {
 function devValidateRoster() {
   return validateRoster();
 }
+
+/** URL normalization unit checks. Logs each case + a pass/fail count. */
+function devTestNormalizeUrl() {
+  const cases = [
+    ['https://example.com/article?utm_source=foo', 'https://example.com/article'],
+    ['https://example.com/article?utm_source=foo&id=42', 'https://example.com/article?id=42'],
+    ['https://example.com/article#section', 'https://example.com/article'],
+    ['https://example.com/?utm_medium=x&utm_campaign=y&q=cats', 'https://example.com/?q=cats'],
+    ['https://example.com/path?fbclid=abc&gclid=def', 'https://example.com/path'],
+    ['https://example.com/page', 'https://example.com/page'],
+    ['', ''],
+    ['not a url', 'not a url'],
+  ];
+  let pass = 0;
+  cases.forEach(([input, expected]) => {
+    const got = normalizeUrl_(input);
+    const ok = got === expected;
+    if (ok) pass++;
+    console.log(`${ok ? 'PASS' : 'FAIL'}  in=${JSON.stringify(input)}  got=${JSON.stringify(got)}  expected=${JSON.stringify(expected)}`);
+  });
+  console.log(`${pass}/${cases.length} passed`);
+}
+
+/** Dedup check: two different sourceIds with the same normalized URL should be detectable via findSource. */
+function devTestSourceDedup() {
+  const project = devSeedDevProject();
+  const url1 = 'https://example.com/dedup-test?utm_source=fb';
+  const url2 = 'https://example.com/dedup-test?utm_source=tw';
+  const sourceId1 = uuid_();
+  // Write the first source
+  handlePost_({ postData: { contents: JSON.stringify({
+    projectId: project.projectId,
+    sources: [{ sourceId: sourceId1, rawUrl: url1, scrapedTitle: 'Dedup Test' }],
+    highlights: [],
+  })}});
+  // findSource for the SECOND URL — should return the FIRST source (same normalized URL)
+  const lookup = handleGet_({ parameter: { action: 'findSource', projectId: project.projectId, rawUrl: url2 } });
+  console.log('findSource lookup: ' + JSON.stringify(lookup, null, 2));
+  const ok = lookup.source && lookup.source.sourceId === sourceId1;
+  console.log(ok ? 'PASS — same normalized URL resolved to existing sourceId' : 'FAIL — should have matched the existing source');
+}
