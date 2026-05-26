@@ -93,7 +93,14 @@ async function bootstrapFromNetwork_() {
   const projects = (refresh.projects && refresh.projects.projects) || [];
   const bundles = (refresh.bundles && refresh.bundles.bundles) || [];
   renderIdentity(me);
-  const activeProjectId = (await chrome.storage.local.get('activeProjectId')).activeProjectId || null;
+  let activeProjectId = (await chrome.storage.local.get('activeProjectId')).activeProjectId || null;
+  // Auto-set after network refresh too. The cache-first bootstrap can't do
+  // this on a fresh install because cachedProjects is still empty; the
+  // network is what first delivers the project list.
+  if (!activeProjectId && projects.length > 0) {
+    activeProjectId = projects[0].projectId;
+    await chrome.storage.local.set({ activeProjectId });
+  }
   renderProjectPicker(projects, activeProjectId);
   renderBundleForActive(projects, bundles, activeProjectId);
 }
