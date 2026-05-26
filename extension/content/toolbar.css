@@ -1,0 +1,95 @@
+/* Floating selection toolbar. Scoped to .ops-research-toolbar to avoid
+   colliding with host-page styles. Defensive resets reduce inheritance from
+   exotic page CSS. */
+
+.ops-research-toolbar {
+  all: initial;
+  position: absolute;
+  z-index: 2147483647;          /* sit on top of basically anything */
+  background: #ffffff;
+  color: #202124;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.3;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+  user-select: none;
+}
+
+.ops-research-toolbar * {
+  box-sizing: border-box;
+}
+
+.ops-research-toolbar-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.ops-research-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.6), 0 1px 2px rgba(0, 0, 0, 0.18);
+  transition: transform 0.08s;
+}
+
+.ops-research-swatch:hover {
+  transform: scale(1.08);
+}
+
+.ops-research-swatch:focus-visible {
+  outline: 2px solid #4285F4;
+  outline-offset: 2px;
+}
+
+.ops-research-swatch-label {
+  font-size: 11px;
+  color: #5f6368;
+  text-align: center;
+  margin-top: 2px;
+}
+
+.ops-research-toolbar-project {
+  font-size: 11px;
+  color: #5f6368;
+  padding: 0 2px;
+}
+
+.ops-research-toolbar-note {
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 32px;
+  width: 100%;
+}
+
+.ops-research-toolbar-note-toggle {
+  background: none;
+  border: none;
+  color: #1a73e8;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px;
+  align-self: flex-start;
+}
+
+.ops-research-toolbar-status {
+  font-size: 11px;
+  color: #5f6368;
+}
+
+.ops-research-toolbar-error {
+  color: #d93025;
+}

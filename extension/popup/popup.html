@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>OPS Research Tool</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>OPS Research Tool</h1>
+    <div id="sync-status" class="sync-status sync-status--idle">All saved</div>
+  </header>
+
+  <section id="identity" class="identity">
+    <div class="identity__name" id="identity-name">…</div>
+    <div class="identity__email" id="identity-email"></div>
+  </section>
+
+  <section class="project-picker">
+    <label for="project-select">Saving to</label>
+    <select id="project-select" disabled>
+      <option>loading…</option>
+    </select>
+  </section>
+
+  <section id="bundle-preview" class="bundle-preview" hidden>
+    <div class="bundle-preview__row" id="bundle-preview-row"></div>
+  </section>
+
+  <section id="error" class="error" hidden></section>
+
+  <footer>
+    <button id="force-drain" type="button">Sync now</button>
+    <span id="last-sync" class="last-sync"></span>
+  </footer>
+
+  <script src="../config.js"></script>
+  <script src="../shared/ids.js"></script>
+  <script src="../shared/url.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

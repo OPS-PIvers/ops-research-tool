@@ -45,9 +45,25 @@ Moving the project = edit that one file, `clasp push`, redeploy.
   - History Day bundle seeded.
   - Editor tests `devTestRoundTrip`, `devTestNormalizeUrl` (8/8),
     `devTestSourceDedup` all green.
-- **Phase 2 — Chrome extension — NEXT.** Answered setup questions:
-  vanilla JS no bundler, `chrome.identity.getAuthToken` + Bearer header,
-  PDF.js self-hosted in `extension/vendor/`. See §6 below.
+- **Phase 2 — Chrome extension — FOUNDATION COMPLETE; UI scaffolded; not yet loadable until config + OAuth client are filled in.**
+  - Vanilla JS MV3 scaffold under [`extension/`](extension/).
+  - Offline buffer: `chrome.storage.local` queue (`q:<uuid>`), synchronous
+    enqueue, service-worker drain with exponential backoff + idempotent
+    retries. Build plan §2 "kills Scrible lost-work bug" invariant satisfied.
+  - Sync queue: drains on `chrome.alarms` (1 min) AND on `chrome.storage`
+    change (immediate kick). Grouped POST per projectId via the GAS doPost.
+  - Auth: `chrome.identity.getAuthToken` + Bearer header, 401 retry once,
+    cached token invalidation on failure.
+  - Source dedup: in-session cache + `findSource` lookup → mint new if absent.
+  - Content scripts: `mouseup`/`keyup` selection → floating toolbar with the
+    bundle's 5 swatches → wrap selection in `<span class="ops-research-mark">`
+    (in-session only, vanishes on reload per spec). Optional note. Click
+    on mark messages a sidebar to focus (no-op if absent).
+  - Popup: identity surface, project picker (sticky), sync status pill,
+    bundle preview, "Sync now" button.
+  - **Still TODO in Phase 2:** PDF.js Tier 2 (fetch + getTextContent + own
+    panel for selecting/categorizing); roster-not-found UX polish; force-
+    install setup with the district Admin console; QA on real pages.
 - **Phase 3 — Google Docs sidebar — not started.**
 - **Phase 4 — Teacher Console + pilot — not started.**
 
@@ -96,15 +112,26 @@ These supersede or refine the spec — apply them before defaulting to plan text
    manual step — the CI workflow can only *update* an existing deployment,
    not create it). Editor → **Deploy → New deployment → Web app**, Execute
    as: **Me**, Access: **Anyone within `orono.k12.mn.us`**. Save. Then:
-   - Copy the `/exec` URL → it goes in `extension/config.js`.
+   - Copy the `/exec` URL → paste into [`extension/config.js`](extension/config.js)
+     as `WEB_APP_URL`.
    - Copy the deployment ID (looks like `AKfycb...`, ~50 chars) → add it as
-     a repo *variable* named `GAS_DEPLOYMENT_ID` (see §12 for setup).
-2. **Configure CI secrets** so the deploy workflow can run — see §12.
-3. **Grab the OAuth client ID** from the GCP project linked to the GAS, for
-   the extension manifest's `oauth2` block. May require enabling the Apps
-   Script API in the linked GCP project (separate from the per-user toggle
-   Paul already did).
-4. **Confirm Class strings** when Paul has a real roster sample —
+     a repo *variable* named `GAS_DEPLOYMENT_ID` (see §11 for setup).
+2. **Grab the OAuth client ID** from the GCP project linked to the GAS:
+   editor → **Project Settings** → **Google Cloud Platform (GCP) Project**.
+   Click into the linked project, then **APIs & Services → Credentials** in
+   GCP. Use an existing OAuth 2.0 Client ID of type "Chrome Extension" OR
+   create one (key field: the extension's ID, which you get after first
+   loading it as unpacked at `chrome://extensions`). Paste into BOTH:
+   - [`extension/manifest.json`](extension/manifest.json) `oauth2.client_id`
+   - [`extension/config.js`](extension/config.js) `OAUTH_CLIENT_ID`
+   May require enabling the Apps Script API in the linked GCP project
+   (separate from the per-user toggle Paul already did during clasp setup).
+3. **Load the extension unpacked once** to get a stable extension ID, then
+   register that ID in the GCP OAuth client.
+4. **Configure CI secrets** so the deploy workflow can run — see §11.
+   (GitHub Actions was status `degraded_performance` on 2026-05-26 — the
+   workflow code is in place; retry once GitHub is green.)
+5. **Confirm Class strings** when Paul has a real roster sample —
    `validateRoster()` only checks blank/duplicate emails today; consistency
    of Class strings (no leading/trailing whitespace, casing) hasn't been
    validated against real data yet.
@@ -149,30 +176,25 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
    `devTestNormalizeUrl` from the GAS editor.
 4. Address the §7 blockers (deploy web app, grab oauth client id) before
    writing extension code that depends on them.
-5. Scaffold `extension/` per §6 decisions:
-   ```
-   extension/
-   ├── manifest.json          # MV3, host_permissions for <all_urls>, oauth2 block
-   ├── background.js          # service worker — sync queue drain, chrome.alarms
-   ├── content/
-   │   ├── toolbar.js         # the swatch popup on text selection
-   │   ├── marks.js           # in-session colored spans
-   │   └── scrape.js          # meta-tag scraping (title, og:site_name, etc.)
-   ├── popup/                 # the toolbar popup (project selector, sync status)
-   ├── pdf/                   # PDF.js panel (Tier 2)
-   ├── vendor/                # pdf.min.js + pdf.worker.min.js
-   ├── shared/
-   │   ├── api.js             # fetch wrapper around the GAS Web App
-   │   ├── storage.js         # chrome.storage.local + sync queue
-   │   └── ids.js             # UUID generation
-   └── config.js              # WEB_APP_URL + OAUTH_CLIENT_ID
-   ```
-6. Build the offline buffer (`shared/storage.js`) FIRST — every highlight
-   must write to `chrome.storage.local` synchronously before any network
-   call. This is what kills the Scrible "lost work" bug.
-7. Build the sync queue (`background.js`) SECOND. Drains the buffer with
-   retry/backoff to the GAS `doPost`. Idempotent because IDs are UUIDs
-   generated client-side.
+5. Extension scaffold is already in place under [`extension/`](extension/) —
+   manifest, shared/, background.js, content/, popup/ are all written and
+   wire together. PDF.js Tier 2 (`extension/pdf/` + `extension/vendor/`)
+   is NOT yet implemented.
+6. Next implementation work in Phase 2:
+   - PDF.js Tier 2: detect PDF URLs in the background → fetch the file →
+     `pdfjsLib.getDocument().getTextContent()` per page → render extracted
+     text in a panel where the toolbar applies normally. Scanned PDFs (no
+     text layer) get a clear message + Tier 1 fallback (manual citation).
+   - Add a `web_accessible_resources` entry in the manifest for the PDF.js
+     worker (`vendor/pdf.worker.min.js`) so it can be loaded.
+   - The "click an in-session mark to focus its sidebar entry" handler
+     in [`extension/content/marks.js`](extension/content/marks.js) sends a
+     `focusHighlight` message that nothing currently listens for. Wire it
+     to the Docs sidebar in Phase 3.
+   - Real-page QA: try the toolbar on news sites (paywalled + free),
+     subscription databases (after authenticated), Wikipedia. Most likely
+     edge cases: shadow-DOM-heavy pages, ContentEditable surfaces, very
+     restrictive CSPs that block injected style.
 
 ## 10. Out-of-scope reminders (don't drift)
 

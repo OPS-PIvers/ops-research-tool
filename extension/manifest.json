@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "OPS Research Tool",
+  "version": "0.1.0",
+  "description": "Highlight web sources, categorize by NHD phase, and capture citations. Internal to Orono Public Schools.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "identity",
+    "unlimitedStorage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "exclude_matches": [
+        "https://accounts.google.com/*",
+        "https://script.google.com/*",
+        "*://*.google.com/recaptcha/*"
+      ],
+      "js": [
+        "config.js",
+        "shared/ids.js",
+        "shared/url.js",
+        "content/scrape.js",
+        "content/marks.js",
+        "content/toolbar.js"
+      ],
+      "css": ["content/toolbar.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "OPS Research Tool",
+    "default_popup": "popup/popup.html"
+  },
+  "oauth2": {
+    "client_id": "REPLACE_WITH_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/userinfo.email",
+      "openid"
+    ]
+  }
+}
