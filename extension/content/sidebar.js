@@ -416,8 +416,13 @@ const OpsSidebar = (function () {
 
   function render_() {
     if (!state.shadowRoot) return;
+    // Preserve the list's scroll position across re-renders. renderPanel_
+    // replaces innerHTML, which destroys the .list element and resets scroll
+    // — annoying when a user is mid-list and toggles the Alt picker or Edit.
+    const prevScrollTop = state.listEl ? state.listEl.scrollTop : 0;
     renderLauncher_();
     renderPanel_();
+    if (state.listEl) state.listEl.scrollTop = prevScrollTop;
   }
 
   function renderLauncher_() {
