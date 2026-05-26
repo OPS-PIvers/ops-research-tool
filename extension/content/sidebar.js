@@ -335,19 +335,25 @@ const OpsSidebar = (function () {
   }
 
   /**
-   * Public: load any server-persisted highlights for the current page into
-   * the sidebar (called on page-load bootstrap). No-op if nothing's saved.
-   * Doesn't re-anchor anything on the page — sidebar-only.
+   * Public: bootstrap the sidebar on every page load. Always inits the
+   * shadow host + shows the right-edge launcher so the student has a
+   * visible "OPS Research Tool is active here" signal even on pages
+   * they haven't highlighted anything on yet. Then fetches any
+   * server-persisted highlights for the page's URL and loads them in.
    */
   async function loadForCurrentPage() {
+    await ensureInit_();
+    state.launcherEl.style.display = 'flex';
+    state.launcherEl.title = 'OPS Research Tool — click to open the research panel';
+    render_();
+
     let resp;
     try {
       resp = await chrome.runtime.sendMessage({ type: 'loadPageHighlights', rawUrl: location.href });
     } catch (e) {
-      return; // offline / backend down; nothing to do
+      return; // offline / backend down; launcher already visible, nothing more to do
     }
     if (!resp || !resp.ok || !resp.highlights || resp.highlights.length === 0) return;
-    await ensureInit_();
     resp.highlights.forEach((h) => {
       if (state.pageHighlights.some((x) => x.highlightId === h.highlightId)) return;
       state.pageHighlights.push({
@@ -373,10 +379,6 @@ const OpsSidebar = (function () {
       });
     }
 
-    // Make the launcher visible so the student knows their work is still
-    // there. Don't auto-open the full panel — they may not want it on
-    // every page reload.
-    state.launcherEl.style.display = 'flex';
     render_();
   }
 
