@@ -202,7 +202,10 @@ function arrayBufferToBase64_(buf) {
 async function loadPageHighlights_(rawUrl) {
   if (!rawUrl) return { ok: false, error: 'rawUrl required' };
   const projectId = await getActiveProjectId();
-  if (!projectId) return { ok: true, highlights: [] };
+  if (!projectId) {
+    console.log('[OPS] loadPageHighlights: no active project');
+    return { ok: true, highlights: [] };
+  }
   const normalized = normalizeUrl(rawUrl);
   try {
     const [sourcesResp, highlightsResp] = await Promise.all([
@@ -210,16 +213,26 @@ async function loadPageHighlights_(rawUrl) {
       apiGet({ action: 'myHighlights', projectId }),
     ]);
     if (!sourcesResp.ok || !highlightsResp.ok) {
+      console.warn('[OPS] loadPageHighlights backend not-ok:', { sourcesResp, highlightsResp });
       return { ok: false, error: 'backend returned not-ok' };
     }
-    const matchingSourceIds = new Set(
-      (sourcesResp.sources || [])
-        .filter((s) => s.normalizedUrl === normalized)
-        .map((s) => s.sourceId)
-    );
-    const highlights = (highlightsResp.highlights || []).filter((h) => matchingSourceIds.has(h.sourceId));
+    const allSources = sourcesResp.sources || [];
+    const allHighlights = highlightsResp.highlights || [];
+    const matching = allSources.filter((s) => s.normalizedUrl === normalized);
+    const matchingSourceIds = new Set(matching.map((s) => s.sourceId));
+    const highlights = allHighlights.filter((h) => matchingSourceIds.has(h.sourceId));
+    console.log('[OPS] loadPageHighlights:', {
+      rawUrl,
+      normalized,
+      totalSources: allSources.length,
+      totalHighlights: allHighlights.length,
+      matchingSources: matching.length,
+      matchingHighlights: highlights.length,
+      sourceNormalizedUrls: allSources.map((s) => s.normalizedUrl).slice(0, 5),
+    });
     return { ok: true, highlights, sourceCount: matchingSourceIds.size };
   } catch (e) {
+    console.warn('[OPS] loadPageHighlights threw:', e);
     return { ok: false, error: e.message || String(e) };
   }
 }
