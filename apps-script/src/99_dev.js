@@ -80,6 +80,42 @@ function devValidateRoster() {
   return validateRoster();
 }
 
+/**
+ * Dump everything stored for the caller across all projects. Use to verify
+ * whether saved highlights are actually on the server (vs. lost to "extension
+ * context invalidated" errors when the extension was reloaded mid-session).
+ */
+function devDumpMyData() {
+  const me = Session.getActiveUser().getEmail();
+  const projects = listProjects_();
+  console.log('Actor: ' + me);
+  console.log('Projects (' + projects.length + '):');
+  projects.forEach((p) => {
+    console.log('  ' + p.projectId + ' — ' + p.name + ' [' + p.status + ']');
+  });
+  projects.forEach((p) => {
+    const sources = readSourcesForActor_(me, p.projectId);
+    const highlights = readHighlightsForActor_(me, p.projectId);
+    console.log('---');
+    console.log('Project: ' + p.name + '  (' + p.projectId + ')');
+    console.log('  Sources (' + sources.length + '):');
+    sources.forEach((s) => {
+      console.log('    sourceId=' + s.sourceId
+        + '  normalizedUrl=' + s.normalizedUrl
+        + '  title="' + (s.scrapedTitle || '').slice(0, 60) + '"');
+    });
+    console.log('  Highlights (' + highlights.length + '):');
+    highlights.forEach((h) => {
+      console.log('    highlightId=' + h.highlightId
+        + '  sourceId=' + h.sourceId
+        + '  primary="' + h.primaryCategory + '"'
+        + '  secondary="' + h.secondaryCategory + '"'
+        + '  text="' + (h.highlightedText || '').slice(0, 50) + '"'
+        + '  note="' + (h.note || '').slice(0, 30) + '"');
+    });
+  });
+}
+
 /** Diagnostic: confirms whether the URL constructor works in this GAS runtime. */
 function devProbeUrlConstructor() {
   try {
