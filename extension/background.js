@@ -189,7 +189,15 @@ async function openPdfPanel_(url) {
 
 /**
  * Source dedup. Content script sends rawUrl + scrape; we return a sourceId.
- * Order: in-session local cache → remote findSource → mint new + enqueue.
+ * Order: in-session local cache → mint new + enqueue. NO remote round-trip,
+ * so the call is instant.
+ *
+ * The cost: if two devices first-highlight the same page in parallel, each
+ * mints its own sourceId and the project ends up with two source rows for
+ * the same normalized URL. Acceptable per build plan §2 ("Backend writes
+ * are idempotent" / "data created offline … is stranded" was the worse case
+ * already accepted; cross-device dup is a milder version). Manual cleanup
+ * possible in the sidebar later.
  */
 async function getOrCreateSourceId(rawUrl, scrape) {
   const projectId = await getActiveProjectId();
@@ -198,20 +206,6 @@ async function getOrCreateSourceId(rawUrl, scrape) {
 
   const cached = await getCachedSourceId(projectId, normalized);
   if (cached) return { ok: true, sourceId: cached, normalizedUrl: normalized, source: 'cache' };
-
-  // Try remote findSource — cheap and authoritative.
-  try {
-    const resp = await apiGet({ action: 'findSource', projectId, rawUrl });
-    if (resp.ok && resp.source) {
-      await setCachedSourceId(projectId, normalized, resp.source.sourceId);
-      return { ok: true, sourceId: resp.source.sourceId, normalizedUrl: normalized, source: 'remote' };
-    }
-  } catch (e) {
-    // Offline or backend down — just mint a new one. The backend upsert keys
-    // on sourceId, so a duplicate per-(project, normalizedUrl) source is the
-    // worst-case outcome. Acceptable; resolvable later.
-    console.debug('findSource failed, minting new sourceId:', e.message);
-  }
 
   const sourceId = newUuid();
   await setCachedSourceId(projectId, normalized, sourceId);

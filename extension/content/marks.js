@@ -62,14 +62,14 @@ function collectTextNodesInRange_(range) {
   return nodes;
 }
 
-// Click on an in-session mark → message the sidebar to focus that highlight.
-// No-op if no sidebar is listening; the message just goes nowhere.
+// Click on an in-session mark → focus its entry in the in-page sidebar
+// (OpsSidebar is defined in sidebar.js, loaded earlier in the content_scripts list).
 document.addEventListener('click', (e) => {
   const span = e.target.closest && e.target.closest('.' + MARK_CLASS);
   if (!span) return;
   const highlightId = span.getAttribute(MARK_ATTR);
   if (!highlightId) return;
-  chrome.runtime.sendMessage({ type: 'focusHighlight', highlightId }).catch(() => {});
+  if (self.OpsSidebar) self.OpsSidebar.focus(highlightId);
 });
 
 self.wrapRangeWithMark = wrapRangeWithMark;

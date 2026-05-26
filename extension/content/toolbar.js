@@ -150,21 +150,38 @@ function renderToolbar_() {
   }
 }
 
-async function saveHighlight_(primaryCategory, color) {
+function saveHighlight_(primaryCategory, color) {
   const text = toolbarEl.__selectedText;
   const range = toolbarEl.__range;
   if (!text || !range) { hideToolbar(); return; }
   const noteInput = toolbarEl.querySelector('#ops-research-toolbar-note-input');
   const note = noteInput ? noteInput.value : '';
 
-  // Show in-flight status; remove the toolbar UI but don't reset the
-  // selection wrapping until we get the sourceId back.
-  toolbarEl.innerHTML = '';
-  const status = document.createElement('div');
-  status.className = 'ops-research-toolbar-status';
-  status.textContent = 'Saving…';
-  toolbarEl.appendChild(status);
+  // Optimistic: visual mark + sidebar entry land BEFORE any await. The
+  // student sees the highlight appear instantly; the network sync happens
+  // in the background and the sidebar's status pill ("saving…" → "saved"
+  // → "error") reflects the real state.
+  const highlightId = newUuid();
+  wrapRangeWithMark(range, color, highlightId);
+  if (self.OpsSidebar) {
+    self.OpsSidebar.addHighlight({
+      highlightId,
+      sourceId: null, // filled in once getOrCreateSourceId resolves; the
+                     // sidebar's update path uses the same UUID, so the
+                     // sourceId is just metadata for editing later
+      primaryCategory,
+      color,
+      text,
+      note,
+    });
+  }
+  hideToolbar();
 
+  // Async save — fire and forget; result updates the sidebar status pill.
+  syncHighlight_(highlightId, primaryCategory, text, note);
+}
+
+async function syncHighlight_(highlightId, primaryCategory, text, note) {
   try {
     const scrape = scrapePageMeta();
     const srcResp = await chrome.runtime.sendMessage({
@@ -173,26 +190,25 @@ async function saveHighlight_(primaryCategory, color) {
       scrape,
     });
     if (!srcResp || !srcResp.ok) throw new Error((srcResp && srcResp.error) || 'no sourceId');
-    const sourceId = srcResp.sourceId;
-
-    const highlightId = newUuid();
-    wrapRangeWithMark(range, color, highlightId);
-
+    // Backfill sourceId into the sidebar entry so the editor's re-enqueue
+    // path includes it.
+    if (self.OpsSidebar && self.OpsSidebar._setSourceId) {
+      self.OpsSidebar._setSourceId(highlightId, srcResp.sourceId);
+    }
     const hlResp = await chrome.runtime.sendMessage({
       type: 'enqueueHighlight',
       highlight: {
         highlightId,
-        sourceId,
+        sourceId: srcResp.sourceId,
         primaryCategory,
         highlightedText: text,
         note,
       },
     });
     if (!hlResp || !hlResp.ok) throw new Error((hlResp && hlResp.error) || 'enqueue failed');
-    hideToolbar();
+    if (self.OpsSidebar) self.OpsSidebar.markSynced(highlightId);
   } catch (e) {
-    status.textContent = 'Save failed: ' + (e.message || e);
-    status.classList.add('ops-research-toolbar-error');
-    setTimeout(hideToolbar, 3000);
+    console.warn('[OPS] save failed:', e);
+    if (self.OpsSidebar) self.OpsSidebar.markError(highlightId, e.message || String(e));
   }
 }
