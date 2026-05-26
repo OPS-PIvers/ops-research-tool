@@ -79,6 +79,14 @@ async function onSelectionMaybeChanged() {
   const text = sel.toString();
   if (!text || text.trim().length === 0) return;
   if (isSelectionInEditable_(sel)) { hideToolbar(); return; }
+  if (sel.rangeCount === 0) return;
+  // Snapshot range + rect BEFORE any await. The user's selection may
+  // collapse during the async getActiveProject roundtrip (e.g. a parent
+  // page script fires a click handler that clears selection), and a later
+  // sel.getRangeAt(0) would throw IndexSizeError.
+  const capturedRange = sel.getRangeAt(0).cloneRange();
+  const rect = capturedRange.getBoundingClientRect();
+  if (!rect.width && !rect.height) return;
 
   try {
     const ctx = await chrome.runtime.sendMessage({ type: 'getActiveProject' });
@@ -92,10 +100,7 @@ async function onSelectionMaybeChanged() {
     console.warn('[OPS] getActiveProject failed:', e);
   }
 
-  const range = sel.getRangeAt(0);
-  const rect = range.getBoundingClientRect();
-  if (!rect.width && !rect.height) return;
-  showToolbar(rect, sel, text);
+  showToolbar(rect, capturedRange, text);
 }
 
 function isSelectionInEditable_(sel) {
@@ -111,7 +116,7 @@ function isSelectionInEditable_(sel) {
   return false;
 }
 
-function showToolbar(rect, sel, text) {
+function showToolbar(rect, range, text) {
   if (!toolbarEl) toolbarEl = buildToolbarEl_();
   document.body.appendChild(toolbarEl);
 
@@ -124,7 +129,7 @@ function showToolbar(rect, sel, text) {
     draftNote = '';
     noteOpen = false;
   }
-  draftSnapshot = { text, range: sel.getRangeAt(0).cloneRange() };
+  draftSnapshot = { text, range };
   renderToolbar_();
 
   const top = rect.bottom + window.scrollY + 6;
