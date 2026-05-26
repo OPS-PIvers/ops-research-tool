@@ -38,6 +38,7 @@ function handlePost_(e) {
     // Stamp the actor email onto every payload row — never trust the client's claim.
     const sources = (body.sources || []).map((s) => ({ ...s, createdByEmail: actorEmail, projectId: body.projectId }));
     const highlights = (body.highlights || []).map((h) => ({ ...h, createdByEmail: actorEmail, projectId: body.projectId }));
+    const deletes = body.deletes || [];
 
     // One Sheet open per request — provisioning is lazy.
     const studentSheet = findOrCreateStudentSheet_(actorEmail, project);
@@ -45,6 +46,8 @@ function handlePost_(e) {
     const errors = [];
     let writtenSources = 0;
     let writtenHighlights = 0;
+    let deletedHighlights = 0;
+    let deletedSources = 0;
     sources.forEach((s) => {
       try { upsertSource_(studentSheet, s); writtenSources++; }
       catch (err) { errors.push({ kind: 'source', id: s.sourceId, error: String(err) }); }
@@ -53,12 +56,26 @@ function handlePost_(e) {
       try { upsertHighlight_(studentSheet, h); writtenHighlights++; }
       catch (err) { errors.push({ kind: 'highlight', id: h.highlightId, error: String(err) }); }
     });
+    deletes.forEach((d) => {
+      try {
+        if (d.kind === 'highlight') {
+          const removedSourceId = deleteHighlightById_(studentSheet, d.id);
+          if (removedSourceId !== null) deletedHighlights++;
+          if (d.cascadeSource && removedSourceId) {
+            if (deleteSourceIfOrphaned_(studentSheet, removedSourceId)) deletedSources++;
+          }
+        }
+      } catch (err) {
+        errors.push({ kind: 'delete', id: d.id, error: String(err) });
+      }
+    });
 
     return {
       ok: errors.length === 0,
       actor: actorEmail,
       projectId: body.projectId,
       written: { sources: writtenSources, highlights: writtenHighlights },
+      deleted: { highlights: deletedHighlights, sources: deletedSources },
       errors,
     };
   } catch (err) {

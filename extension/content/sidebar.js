@@ -198,6 +198,15 @@ const SIDEBAR_CSS = `
   background: none; border: none; color: #1a73e8;
   font-size: 11px; padding: 2px 6px;
 }
+.entry__delete-toggle {
+  background: none; border: none; color: #d93025;
+  font-size: 11px; padding: 2px 6px;
+}
+.entry__delete-toggle--confirming {
+  background: #d93025; color: #fff;
+  border-radius: 4px; font-weight: 500;
+  padding: 2px 8px;
+}
 .entry--flash { animation: opsFlash 1.2s ease-out; }
 @keyframes opsFlash { 0% { background: #fff4a3; } 100% { background: #fff; } }
 
@@ -252,6 +261,8 @@ const OpsSidebar = (function () {
     filter: null,         // null | category label
     editingId: null,      // highlightId currently being edited
     altPickerOpenId: null, // highlightId whose alt-pill picker is open
+    confirmingDeleteId: null, // highlightId whose Delete button is showing "Confirm?"
+    confirmingDeleteTimer: null,
     initialized: false,
   };
 
@@ -579,6 +590,32 @@ const OpsSidebar = (function () {
     });
     right.appendChild(edit);
 
+    // Two-step Delete: first click → "Confirm?" (red filled), second click
+    // within 3s → actually deletes. Click anywhere else cancels.
+    const del = el_('button', 'entry__delete-toggle');
+    del.type = 'button';
+    const confirming = state.confirmingDeleteId === h.highlightId;
+    del.textContent = confirming ? 'Confirm?' : 'Delete';
+    if (confirming) del.classList.add('entry__delete-toggle--confirming');
+    del.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (confirming) {
+        deleteHighlight_(h);
+      } else {
+        if (state.confirmingDeleteTimer) clearTimeout(state.confirmingDeleteTimer);
+        state.confirmingDeleteId = h.highlightId;
+        state.confirmingDeleteTimer = setTimeout(() => {
+          if (state.confirmingDeleteId === h.highlightId) {
+            state.confirmingDeleteId = null;
+            state.confirmingDeleteTimer = null;
+            render_();
+          }
+        }, 3000);
+        render_();
+      }
+    });
+    right.appendChild(del);
+
     actions.appendChild(right);
     entry.appendChild(actions);
 
@@ -622,6 +659,38 @@ const OpsSidebar = (function () {
       picker.appendChild(sw);
     }
     return picker;
+  }
+
+  async function deleteHighlight_(h) {
+    // If no other in-page highlight references this source, ask the server
+    // to cascade-delete the source too — "as if it was never saved".
+    const stillReferenced = state.pageHighlights.some(
+      (x) => x.highlightId !== h.highlightId && x.sourceId && x.sourceId === h.sourceId
+    );
+    const cascadeSource = !stillReferenced;
+
+    if (self.unwrapMark) self.unwrapMark(h.highlightId);
+    const idx = state.pageHighlights.findIndex((x) => x.highlightId === h.highlightId);
+    if (idx >= 0) state.pageHighlights.splice(idx, 1);
+    if (state.editingId === h.highlightId) state.editingId = null;
+    if (state.altPickerOpenId === h.highlightId) state.altPickerOpenId = null;
+    state.confirmingDeleteId = null;
+    if (state.confirmingDeleteTimer) {
+      clearTimeout(state.confirmingDeleteTimer);
+      state.confirmingDeleteTimer = null;
+    }
+    render_();
+
+    try {
+      await chrome.runtime.sendMessage({
+        type: 'deleteHighlight',
+        highlightId: h.highlightId,
+        sourceId: h.sourceId || '',
+        cascadeSource,
+      });
+    } catch (e) {
+      console.warn('[OPS sidebar] delete failed:', e);
+    }
   }
 
   function setSecondary_(h, label) {

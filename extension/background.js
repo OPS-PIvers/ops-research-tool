@@ -73,8 +73,16 @@ async function drain() {
         const batch = items.slice(i, i + CONFIG.MAX_BATCH_SIZE);
         const sources = batch.filter((b) => b.kind === 'source').map((b) => b.payload);
         const highlights = batch.filter((b) => b.kind === 'highlight').map((b) => b.payload);
+        const deletes = batch
+          .filter((b) => b.kind === 'deleteHighlight')
+          .map((b) => ({
+            kind: 'highlight',
+            id: b.payload.highlightId,
+            cascadeSource: b.payload.cascadeSource,
+            sourceId: b.payload.sourceId,
+          }));
         try {
-          const resp = await apiPost({ projectId, sources, highlights });
+          const resp = await apiPost({ projectId, sources, highlights, deletes });
           anyOnline = true;
           if (resp.ok) {
             await removeQueueItems(batch.map((b) => b.id));
@@ -149,6 +157,8 @@ async function handleMessage(msg, sender) {
       return openPdfPanel_(msg.url);
     case 'loadPageHighlights':
       return loadPageHighlights_(msg.rawUrl);
+    case 'deleteHighlight':
+      return deleteHighlightRequest_(msg.highlightId, msg.sourceId, msg.cascadeSource);
     default:
       return { ok: false, error: 'unknown message type: ' + msg.type };
   }
@@ -255,6 +265,35 @@ async function getOrCreateSourceId(rawUrl, scrape) {
     scrapedAuthor: scrape.author || '',
   });
   return { ok: true, sourceId, normalizedUrl: normalized, source: 'new' };
+}
+
+/**
+ * Enqueue a highlight deletion + (optionally) cascade-delete the source if
+ * this was its last referencing highlight. Also clears any local
+ * pageSource:<projectId>:<normalizedUrl> cache entry whose value is the
+ * deleted sourceId, so a subsequent highlight on the same page mints a
+ * fresh source rather than reusing an ID that the server has already
+ * cascade-deleted.
+ */
+async function deleteHighlightRequest_(highlightId, sourceId, cascadeSource) {
+  const projectId = await getActiveProjectId();
+  if (!projectId) throw new Error('No active project.');
+  if (!highlightId) throw new Error('highlightId required');
+  await enqueue('deleteHighlight', {
+    projectId,
+    highlightId,
+    sourceId: sourceId || '',
+    cascadeSource: !!cascadeSource,
+  });
+  if (cascadeSource && sourceId) {
+    const all = await chrome.storage.local.get(null);
+    const toRemove = [];
+    for (const k of Object.keys(all)) {
+      if (k.startsWith(PAGE_SOURCE_PREFIX) && all[k] === sourceId) toRemove.push(k);
+    }
+    if (toRemove.length) await chrome.storage.local.remove(toRemove);
+  }
+  return { ok: true };
 }
 
 async function enqueueHighlight(h) {

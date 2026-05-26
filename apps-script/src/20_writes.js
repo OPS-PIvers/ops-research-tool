@@ -61,6 +61,42 @@ function validateSourcePayload_(s) {
   }
 }
 
+/**
+ * Delete a highlight row by highlightId. Returns the sourceId that the
+ * highlight referenced, so the caller can cascade-delete the source if
+ * it's now orphaned. Returns null if the highlight wasn't found.
+ */
+function deleteHighlightById_(studentSheet, highlightId) {
+  const tab = getTab_(studentSheet, TABS.HIGHLIGHTS);
+  const rowIdx = findRowByKey_(tab, HEADERS.HIGHLIGHTS, 'highlightId', highlightId);
+  if (rowIdx < 0) return null;
+  const sourceIdCol = HEADERS.HIGHLIGHTS.indexOf('sourceId') + 1;
+  const sourceId = tab.getRange(rowIdx, sourceIdCol).getValue();
+  tab.deleteRow(rowIdx);
+  return sourceId;
+}
+
+/**
+ * Remove the source row IFF no remaining highlights reference its sourceId.
+ * Returns true if removed, false if still referenced or not found.
+ */
+function deleteSourceIfOrphaned_(studentSheet, sourceId) {
+  if (!sourceId) return false;
+  const highlightsTab = getTab_(studentSheet, TABS.HIGHLIGHTS);
+  const sourceIdCol = HEADERS.HIGHLIGHTS.indexOf('sourceId');
+  if (highlightsTab.getLastRow() >= 2) {
+    const values = highlightsTab.getRange(2, sourceIdCol + 1, highlightsTab.getLastRow() - 1, 1).getValues();
+    for (const row of values) {
+      if (row[0] === sourceId) return false;
+    }
+  }
+  const sourcesTab = getTab_(studentSheet, TABS.SOURCES);
+  const rowIdx = findRowByKey_(sourcesTab, HEADERS.SOURCES, 'sourceId', sourceId);
+  if (rowIdx < 0) return false;
+  sourcesTab.deleteRow(rowIdx);
+  return true;
+}
+
 function validateHighlightPayload_(h) {
   if (!h.highlightId) throw new Error('highlight.highlightId required');
   if (!h.sourceId) throw new Error('highlight.sourceId required');

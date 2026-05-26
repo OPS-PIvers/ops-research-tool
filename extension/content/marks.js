@@ -115,6 +115,28 @@ self.MARK_CLASS = MARK_CLASS;
 self.MARK_ATTR = MARK_ATTR;
 
 /**
+ * Reverse of wrapRangeWithMark. For every span tagged with the given
+ * highlightId, pull its child nodes back out into the parent and delete
+ * the span. Then normalize() the affected parents to merge the text
+ * nodes we previously split during wrap — the DOM ends up looking
+ * identical to its pre-highlight state.
+ */
+function unwrapMark(highlightId) {
+  const spans = document.querySelectorAll(`.${MARK_CLASS}[${MARK_ATTR}="${highlightId}"]`);
+  const parents = new Set();
+  spans.forEach((span) => {
+    const parent = span.parentNode;
+    if (!parent) return;
+    parents.add(parent);
+    while (span.firstChild) parent.insertBefore(span.firstChild, span);
+    parent.removeChild(span);
+  });
+  parents.forEach((p) => p.normalize());
+}
+
+self.unwrapMark = unwrapMark;
+
+/**
  * Re-anchor a batch of server-loaded highlights onto the current page.
  *
  * Approach: walk all eligible text nodes once, build a flat concatenated
