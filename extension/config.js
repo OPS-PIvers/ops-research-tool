@@ -11,7 +11,7 @@ const CONFIG = {
   // Deployed GAS Web App URL ending in /exec. Paste after the first deploy
   // from the GAS editor. The CI workflow updates the underlying version but
   // never changes this URL — once published, it's stable.
-  WEB_APP_URL: 'https://script.google.com/a/macros/orono.k12.mn.us/s/AKfycbx4ycn4YmZ5m9TBKr9N6YM4GnJqRvrlhvTc3vdujfxfw_9a3DQ9nLxD9t-gy1Kz2KbK/exec',
+  WEB_APP_URL: 'https://script.google.com/a/macros/orono.k12.mn.us/s/AKfycbwaWJe2cbmS3C0-HeKVI_Q0vALI8Jq-ivNZTcFZT_UuHHvBdBxSN0nwCwTpQrOI8FA/exec',
 
   // OAuth client ID from the GCP project. Also set in manifest.json (must
   // match). Used by chrome.identity.getAuthToken.
