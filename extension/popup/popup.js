@@ -23,7 +23,7 @@ const els = {
 };
 
 maybeShowPdfCta_();
-bootstrap();
+bootstrapFromCache_().then(() => bootstrapFromNetwork_());
 
 async function maybeShowPdfCta_() {
   try {
@@ -53,25 +53,47 @@ function isPdfUrl_(url) {
   return false;
 }
 
-async function bootstrap() {
-  renderSyncStatus(await sendMessage({ type: 'getSyncStatus' }));
+// Cache-first: paint whatever we have in chrome.storage immediately so the
+// popup feels snappy and doesn't appear to "reload" every time. This also
+// guarantees that the activeProjectId auto-set persists even if the user
+// closes the popup the instant they open it.
+async function bootstrapFromCache_() {
+  const cached = await chrome.storage.local.get([
+    'cachedMe', 'cachedProjects', 'cachedBundles', 'activeProjectId',
+    'syncStatus', 'lastSyncAt',
+  ]);
+  renderSyncStatus({ status: cached.syncStatus || 'idle', lastSyncAt: cached.lastSyncAt || null });
+  const me = cached.cachedMe || null;
+  const projects = cached.cachedProjects || [];
+  const bundles = cached.cachedBundles || [];
+  renderIdentity(me);
+  let activeProjectId = cached.activeProjectId || null;
+  if (!activeProjectId && projects.length > 0) {
+    activeProjectId = projects[0].projectId;
+    // Persist BEFORE doing anything async, so even if the popup closes a
+    // millisecond later, the value survives.
+    await chrome.storage.local.set({ activeProjectId });
+  }
+  renderProjectPicker(projects, activeProjectId);
+  renderBundleForActive(projects, bundles, activeProjectId);
+}
 
-  // Refresh roster + projects + bundles from the GAS. If that fails, fall
-  // back to whatever's in cache from a previous successful load.
+// Then refresh from the network in the background. Updates the UI in place
+// if anything changed.
+async function bootstrapFromNetwork_() {
   let refresh;
   try {
     refresh = await sendMessage({ type: 'refreshContext' });
   } catch (e) {
     showError('Could not reach the backend: ' + (e.message || e));
+    return;
   }
-
-  const me = (refresh && refresh.me) || null;
-  const projects = (refresh && refresh.projects && refresh.projects.projects) || [];
-  const bundles = (refresh && refresh.bundles && refresh.bundles.bundles) || [];
-
+  if (!refresh || !refresh.ok) return;
+  const me = refresh.me || null;
+  const projects = (refresh.projects && refresh.projects.projects) || [];
+  const bundles = (refresh.bundles && refresh.bundles.bundles) || [];
   renderIdentity(me);
-
-  const activeProjectId = await getActiveProjectIdFromBg_();
+  const activeProjectId = (await chrome.storage.local.get('activeProjectId')).activeProjectId || null;
   renderProjectPicker(projects, activeProjectId);
   renderBundleForActive(projects, bundles, activeProjectId);
 }
@@ -125,17 +147,15 @@ function renderProjectPicker(projects, activeProjectId) {
     els.select.appendChild(opt);
   });
   els.select.disabled = false;
-  if (!activeProjectId && projects.length > 0) {
-    // First-run: stickily pick the top one and persist.
-    els.select.value = projects[0].projectId;
-    sendMessage({ type: 'setActiveProject', projectId: projects[0].projectId });
-  }
+  // bootstrapFromCache_ already persisted the auto-select, so we don't need
+  // to send setActiveProject again here.
   els.select.addEventListener('change', async () => {
-    await sendMessage({ type: 'setActiveProject', projectId: els.select.value });
-    const refresh = await sendMessage({ type: 'refreshContext' }).catch(() => null);
-    const bundlesAfter = (refresh && refresh.bundles && refresh.bundles.bundles) || [];
-    const projectsAfter = (refresh && refresh.projects && refresh.projects.projects) || projects;
-    renderBundleForActive(projectsAfter, bundlesAfter, els.select.value);
+    const id = els.select.value;
+    // Write directly to storage so the value survives even if the popup
+    // closes before the round-trip to the service worker completes.
+    await chrome.storage.local.set({ activeProjectId: id });
+    const cached = await chrome.storage.local.get(['cachedProjects', 'cachedBundles']);
+    renderBundleForActive(cached.cachedProjects || [], cached.cachedBundles || [], id);
   });
 }
 

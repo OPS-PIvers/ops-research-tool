@@ -35,10 +35,18 @@ async function onSelectionMaybeChanged() {
   if (!text || text.trim().length === 0) { hideToolbar(); return; }
   if (isSelectionInEditable_(sel)) { hideToolbar(); return; }
 
-  // Lazy-load bundle + project context the first time we need it.
-  if (!bundleCache || !projectCache) {
-    const ctx = await chrome.runtime.sendMessage({ type: 'getActiveProject' }).catch(() => null);
-    if (ctx && ctx.ok) { projectCache = ctx.project; bundleCache = ctx.bundle; }
+  // Always re-fetch project/bundle on selection: cheap, and avoids staleness
+  // after the student changes the active project in the popup.
+  try {
+    const ctx = await chrome.runtime.sendMessage({ type: 'getActiveProject' });
+    if (ctx && ctx.ok) {
+      projectCache = ctx.project;
+      bundleCache = ctx.bundle;
+    } else {
+      console.warn('[OPS] getActiveProject returned:', ctx);
+    }
+  } catch (e) {
+    console.warn('[OPS] getActiveProject failed:', e);
   }
 
   const range = sel.getRangeAt(0);
