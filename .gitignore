@@ -6,8 +6,8 @@ yarn-error.log*
 .npm/
 
 # clasp (Google Apps Script)
-# .clasp.json is per-environment — track .clasp.example.json instead
-.clasp.json
+# .clasp.json IS committed — only contains scriptId, which CI needs.
+# .clasprc.json contains OAuth tokens — never commit.
 .clasprc.json
 *.local.json
 

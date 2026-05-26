@@ -1,0 +1,85 @@
+name: Deploy Apps Script
+
+# Push apps-script/ source to the GAS project and update the active Web App
+# deployment. Runs on every push to main that touches apps-script/, or on
+# manual trigger via the Actions tab.
+#
+# Required configuration (Settings → Secrets and variables → Actions):
+#   - Secret  CLASPRC_JSON       : full contents of your local ~/.clasprc.json
+#                                  (the file `clasp login` writes; contains the
+#                                  refresh token clasp uses to mint access
+#                                  tokens). On Windows the file is at
+#                                  %USERPROFILE%\.clasprc.json.
+#   - Variable GAS_DEPLOYMENT_ID : the Web App deployment ID to redeploy. From
+#                                  the GAS editor: Deploy → Manage deployments
+#                                  → the deployment's ID (NOT its version
+#                                  number, NOT the /exec URL). Looks like
+#                                  AKfycb...50 characters long.
+#
+# If GAS_DEPLOYMENT_ID is unset, the workflow still pushes code but skips the
+# redeploy step (useful while you're still iterating before the first Web App
+# is published).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps-script/**'
+      - '.github/workflows/deploy-apps-script.yml'
+  workflow_dispatch:
+
+# Serialize deploys — two overlapping deploys would race for the same
+# deployment slot. Never cancel in-flight; let each one finish.
+concurrency:
+  group: gas-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install clasp
+        run: npm install -g @google/clasp@3.3.0
+
+      - name: Write clasp credentials
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ]; then
+            echo "::error::CLASPRC_JSON secret is not set. On your machine run \`type %USERPROFILE%\.clasprc.json\` (PowerShell: \`Get-Content $HOME\.clasprc.json\`), copy the JSON, and paste it into the CLASPRC_JSON repo secret."
+            exit 1
+          fi
+          # clasp 3.x reads either of these locations depending on platform — write both.
+          echo "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          mkdir -p "$HOME/.config/clasp"
+          cp "$HOME/.clasprc.json" "$HOME/.config/clasp/.clasprc.json"
+          chmod 600 "$HOME/.config/clasp/.clasprc.json"
+
+      - name: Push source to Apps Script
+        working-directory: apps-script
+        run: clasp push -f
+
+      - name: Redeploy active Web App
+        working-directory: apps-script
+        env:
+          DEPLOYMENT_ID: ${{ vars.GAS_DEPLOYMENT_ID }}
+        run: |
+          if [ -z "$DEPLOYMENT_ID" ]; then
+            echo "::warning::GAS_DEPLOYMENT_ID variable not set — code pushed but no Web App was redeployed."
+            echo "Once you publish a Web App deployment from the GAS editor, add its deployment ID as a repo *variable* (not secret) named GAS_DEPLOYMENT_ID."
+            exit 0
+          fi
+          DESC="auto-deploy ${GITHUB_SHA:0:7} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Redeploying $DEPLOYMENT_ID with description: $DESC"
+          clasp deploy --deploymentId "$DEPLOYMENT_ID" --description "$DESC"

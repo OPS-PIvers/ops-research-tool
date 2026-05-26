@@ -92,18 +92,18 @@ These supersede or refine the spec — apply them before defaulting to plan text
 
 ## 7. Open items / blockers before Phase 2 can fully work
 
-1. **Deploy the GAS as a Web App.** Required before the extension can call
-   anything. Click Deploy → New deployment → type Web app → Execute as: **Me**,
-   Who has access: **Anyone within domain** (orono.k12.mn.us). Copy the
-   `/exec` URL. Paste it somewhere committable (e.g. an `extension/config.js`
-   that the extension reads).
-2. **Grab the OAuth client ID** from the GCP project linked to the GAS, for
-   the manifest's `oauth2` block. May require enabling the Apps Script API
-   in the linked GCP project (separate from the per-user toggle Paul already
-   did).
-3. **Decide where the deployed Web App URL lives in the extension.** Suggest
-   `extension/config.js` (gitignored if treated as per-environment, or
-   committed since it's not a secret).
+1. **Publish the first Web App deployment from the GAS editor** (one-time
+   manual step — the CI workflow can only *update* an existing deployment,
+   not create it). Editor → **Deploy → New deployment → Web app**, Execute
+   as: **Me**, Access: **Anyone within `orono.k12.mn.us`**. Save. Then:
+   - Copy the `/exec` URL → it goes in `extension/config.js`.
+   - Copy the deployment ID (looks like `AKfycb...`, ~50 chars) → add it as
+     a repo *variable* named `GAS_DEPLOYMENT_ID` (see §12 for setup).
+2. **Configure CI secrets** so the deploy workflow can run — see §12.
+3. **Grab the OAuth client ID** from the GCP project linked to the GAS, for
+   the extension manifest's `oauth2` block. May require enabling the Apps
+   Script API in the linked GCP project (separate from the per-user toggle
+   Paul already did).
 4. **Confirm Class strings** when Paul has a real roster sample —
    `validateRoster()` only checks blank/duplicate emails today; consistency
    of Class strings (no leading/trailing whitespace, casing) hasn't been
@@ -189,7 +189,31 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
 - **Teacher dashboard counts primary category only.** Secondary tags affect
   sidebar filtering, never dashboard stats.
 
-## 11. Paul
+## 11. CI / deployment
+
+GitHub Actions workflow: [`.github/workflows/deploy-apps-script.yml`](.github/workflows/deploy-apps-script.yml).
+
+**What it does:** on every push to `main` that touches `apps-script/**`,
+installs clasp, pushes the source, and (if a deployment ID is configured)
+redeploys the active Web App with a new version. Also triggerable manually
+from the Actions tab.
+
+**One-time secrets/variables setup** (Settings → Secrets and variables → Actions):
+
+| Kind | Name | Where to get it |
+| --- | --- | --- |
+| Secret | `CLASPRC_JSON` | Run `Get-Content $HOME\.clasprc.json` in PowerShell after a local `clasp login`. Paste the full JSON. Contains the refresh token clasp needs to mint access tokens in CI. Rotate by running `clasp login` again locally and updating the secret. |
+| Variable | `GAS_DEPLOYMENT_ID` | GAS editor → **Deploy → Manage deployments** → pick the Web App deployment → copy the **Deployment ID** (NOT the version number, NOT the `/exec` URL). |
+
+If `GAS_DEPLOYMENT_ID` is unset the workflow still pushes code but skips
+the deploy step — useful while iterating before the first Web App exists.
+
+**Manual trigger:** Actions tab → "Deploy Apps Script" → Run workflow.
+
+**Concurrency:** the workflow is grouped (`gas-deploy`) so overlapping
+deploys serialize instead of racing.
+
+## 12. Paul
 
 Builder-of-one for district internal tools. Experienced with Apps Script —
 don't over-explain GAS-side things. Comfortable delegating environment setup
