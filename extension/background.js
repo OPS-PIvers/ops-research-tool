@@ -147,6 +147,8 @@ async function handleMessage(msg, sender) {
       return fetchPdfAsBase64_(msg.url);
     case 'openPdfPanel':
       return openPdfPanel_(msg.url);
+    case 'loadPageHighlights':
+      return loadPageHighlights_(msg.rawUrl);
     default:
       return { ok: false, error: 'unknown message type: ' + msg.type };
   }
@@ -178,6 +180,38 @@ function arrayBufferToBase64_(buf) {
     binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
   }
   return btoa(binary);
+}
+
+/**
+ * Sidebar persistence after page reload. Returns highlights whose source has
+ * the same normalized URL as the calling page, so the in-page sidebar can
+ * show the student's saved work for this page even after a refresh.
+ * (On-page colored marks deliberately do NOT come back — re-anchoring is
+ * out of scope per build plan §2. The sidebar is a record, not a re-render.)
+ */
+async function loadPageHighlights_(rawUrl) {
+  if (!rawUrl) return { ok: false, error: 'rawUrl required' };
+  const projectId = await getActiveProjectId();
+  if (!projectId) return { ok: true, highlights: [] };
+  const normalized = normalizeUrl(rawUrl);
+  try {
+    const [sourcesResp, highlightsResp] = await Promise.all([
+      apiGet({ action: 'mySources', projectId }),
+      apiGet({ action: 'myHighlights', projectId }),
+    ]);
+    if (!sourcesResp.ok || !highlightsResp.ok) {
+      return { ok: false, error: 'backend returned not-ok' };
+    }
+    const matchingSourceIds = new Set(
+      (sourcesResp.sources || [])
+        .filter((s) => s.normalizedUrl === normalized)
+        .map((s) => s.sourceId)
+    );
+    const highlights = (highlightsResp.highlights || []).filter((h) => matchingSourceIds.has(h.sourceId));
+    return { ok: true, highlights, sourceCount: matchingSourceIds.size };
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
 }
 
 async function openPdfPanel_(url) {

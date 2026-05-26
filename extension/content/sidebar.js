@@ -310,6 +310,40 @@ const OpsSidebar = (function () {
     render_();
   }
 
+  /**
+   * Public: load any server-persisted highlights for the current page into
+   * the sidebar (called on page-load bootstrap). No-op if nothing's saved.
+   * Doesn't re-anchor anything on the page — sidebar-only.
+   */
+  async function loadForCurrentPage() {
+    let resp;
+    try {
+      resp = await chrome.runtime.sendMessage({ type: 'loadPageHighlights', rawUrl: location.href });
+    } catch (e) {
+      return; // offline / backend down; nothing to do
+    }
+    if (!resp || !resp.ok || !resp.highlights || resp.highlights.length === 0) return;
+    await ensureInit_();
+    resp.highlights.forEach((h) => {
+      if (state.pageHighlights.some((x) => x.highlightId === h.highlightId)) return;
+      state.pageHighlights.push({
+        highlightId: h.highlightId,
+        sourceId: h.sourceId,
+        primaryCategory: h.primaryCategory,
+        secondaryCategory: h.secondaryCategory || '',
+        text: h.highlightedText,
+        note: h.note || '',
+        color: colorForLabel_(h.primaryCategory),
+        syncStatus: 'saved',
+      });
+    });
+    // Make the launcher visible so the student knows their work is still
+    // there. Don't auto-open the full panel — they may not want it on
+    // every page reload.
+    state.launcherEl.style.display = 'flex';
+    render_();
+  }
+
   async function loadContext_() {
     try {
       const ctx = await chrome.runtime.sendMessage({ type: 'getActiveProject' });
@@ -661,11 +695,58 @@ const OpsSidebar = (function () {
     const mark = document.querySelector(`.${MARK_CLASS}[${MARK_ATTR}="${highlightId}"]`);
     if (mark) {
       mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      // Brief outline flash so the user can tell what they jumped to.
       const oldOutline = mark.style.outline;
       mark.style.outline = '2px solid #1a73e8';
       mark.style.outlineOffset = '2px';
       setTimeout(() => { mark.style.outline = oldOutline; }, 1200);
+      return;
+    }
+    // No live mark (server-loaded highlight after a reload) — best-effort
+    // text search so the student can still find their highlight on the page.
+    const h = state.pageHighlights.find((x) => x.highlightId === highlightId);
+    if (h && h.text) scrollToHighlightText_(h.text);
+  }
+
+  function scrollToHighlightText_(text) {
+    const needle = (text || '').slice(0, 80).trim();
+    if (!needle) return;
+    const walker = document.createTreeWalker(
+      document.body, NodeFilter.SHOW_TEXT,
+      { acceptNode: (n) => {
+        const parent = n.parentNode;
+        if (!parent) return NodeFilter.FILTER_REJECT;
+        const tag = parent.nodeName;
+        if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;
+        return n.textContent.includes(needle) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }}
+    );
+    const node = walker.nextNode();
+    if (!node) return;
+    const idx = node.textContent.indexOf(needle);
+    try {
+      const range = document.createRange();
+      range.setStart(node, idx);
+      range.setEnd(node, idx + Math.min(needle.length, node.length - idx));
+      const rect = range.getBoundingClientRect();
+      if (rect.height > 0) {
+        window.scrollTo({
+          top: window.scrollY + rect.top - window.innerHeight / 2,
+          behavior: 'smooth',
+        });
+      }
+      const target = node.parentElement;
+      if (target) {
+        const oldBg = target.style.backgroundColor;
+        const oldTransition = target.style.transition;
+        target.style.transition = 'background-color 0.8s';
+        target.style.backgroundColor = '#fff4a3';
+        setTimeout(() => {
+          target.style.backgroundColor = oldBg;
+          target.style.transition = oldTransition;
+        }, 1200);
+      }
+    } catch (e) {
+      // ignore
     }
   }
 
@@ -711,7 +792,12 @@ const OpsSidebar = (function () {
     if (h) h.sourceId = sourceId;
   }
 
-  return { addHighlight, markSynced, markError, focus, show, hide, toggle, _setSourceId };
+  return { addHighlight, markSynced, markError, focus, show, hide, toggle, _setSourceId, loadForCurrentPage };
 })();
 
 self.OpsSidebar = OpsSidebar;
+
+// Kick a server load on every page load so the sidebar reflects saved work
+// even after the page reloads. Fires once per content script instance. Best-
+// effort — fails silently if offline or no active project.
+OpsSidebar.loadForCurrentPage();
