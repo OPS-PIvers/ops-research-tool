@@ -18,9 +18,40 @@ const els = {
   error: document.getElementById('error'),
   forceDrain: document.getElementById('force-drain'),
   lastSync: document.getElementById('last-sync'),
+  pdfCta: document.getElementById('pdf-cta'),
+  openPdfPanel: document.getElementById('open-pdf-panel'),
 };
 
+maybeShowPdfCta_();
 bootstrap();
+
+async function maybeShowPdfCta_() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.url) return;
+    if (!isPdfUrl_(tab.url)) return;
+    els.pdfCta.hidden = false;
+    els.openPdfPanel.addEventListener('click', async () => {
+      els.openPdfPanel.disabled = true;
+      await sendMessage({ type: 'openPdfPanel', url: tab.url });
+      window.close();
+    });
+  } catch (e) {
+    // Tab query can fail for restricted pages; just suppress CTA.
+  }
+}
+
+function isPdfUrl_(url) {
+  if (!url) return false;
+  if (url.startsWith('file:') && url.toLowerCase().endsWith('.pdf')) return true;
+  try {
+    const u = new URL(url);
+    if (u.pathname.toLowerCase().endsWith('.pdf')) return true;
+  } catch (e) {
+    // ignore
+  }
+  return false;
+}
 
 async function bootstrap() {
   renderSyncStatus(await sendMessage({ type: 'getSyncStatus' }));

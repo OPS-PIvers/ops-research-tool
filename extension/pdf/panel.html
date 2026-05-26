@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>OPS Research Tool — PDF</title>
+  <link rel="stylesheet" href="panel.css" />
+  <link rel="stylesheet" href="../content/toolbar.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__title" id="title">PDF</div>
+    <div class="topbar__actions">
+      <a id="open-original" target="_blank" rel="noopener">Open original</a>
+      <button id="save-source" type="button" disabled>Save as source</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <div id="loading" class="state">Loading PDF…</div>
+    <div id="empty" class="state state--empty" hidden>
+      <strong>No extractable text in this PDF.</strong><br />
+      It's likely scanned (an image of pages, not text). Save it as a source
+      and take notes manually — there's no OCR step in this tool.
+    </div>
+    <div id="error" class="state state--error" hidden></div>
+    <article id="text" class="text" hidden></article>
+  </main>
+
+  <!-- Shared utilities (must load before panel.js uses them) -->
+  <script src="../config.js"></script>
+  <script src="../shared/ids.js"></script>
+  <script src="../shared/url.js"></script>
+
+  <!-- Content-script equivalents so the toolbar works inside the panel.
+       Loaded as plain scripts; functions become globals. -->
+  <script src="../content/scrape.js"></script>
+  <script src="../content/marks.js"></script>
+  <script src="../content/toolbar.js"></script>
+
+  <!-- Panel logic. Uses PDF.js as an ES module. -->
+  <script type="module" src="panel.js"></script>
+</body>
+</html>

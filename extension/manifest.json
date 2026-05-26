@@ -41,6 +41,16 @@
     "default_title": "OPS Research Tool",
     "default_popup": "popup/popup.html"
   },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "pdf/panel.html",
+        "vendor/pdf.min.mjs",
+        "vendor/pdf.worker.min.mjs"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "oauth2": {
     "client_id": "REPLACE_WITH_OAUTH_CLIENT_ID.apps.googleusercontent.com",
     "scopes": [

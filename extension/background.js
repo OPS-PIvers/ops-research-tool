@@ -143,9 +143,48 @@ async function handleMessage(msg, sender) {
     case 'forceDrain':
       drain().catch(() => {});
       return { ok: true };
+    case 'fetchPdf':
+      return fetchPdfAsBase64_(msg.url);
+    case 'openPdfPanel':
+      return openPdfPanel_(msg.url);
     default:
       return { ok: false, error: 'unknown message type: ' + msg.type };
   }
+}
+
+/**
+ * Fetch a PDF and return its bytes base64-encoded so chrome.runtime.sendMessage
+ * (JSON-only) can ferry them to the panel. Service worker has the
+ * host_permissions to bypass CORS.
+ */
+async function fetchPdfAsBase64_(url) {
+  if (!url) return { ok: false, error: 'url required' };
+  try {
+    const resp = await fetch(url, { credentials: 'include' });
+    if (!resp.ok) return { ok: false, error: 'HTTP ' + resp.status };
+    const buf = await resp.arrayBuffer();
+    return { ok: true, base64: arrayBufferToBase64_(buf), byteLength: buf.byteLength };
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+function arrayBufferToBase64_(buf) {
+  // Chunked to avoid stack overflow on very large PDFs.
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+async function openPdfPanel_(url) {
+  if (!url) return { ok: false, error: 'url required' };
+  const panelUrl = chrome.runtime.getURL('pdf/panel.html') + '?src=' + encodeURIComponent(url);
+  const tab = await chrome.tabs.create({ url: panelUrl });
+  return { ok: true, tabId: tab.id };
 }
 
 /**

@@ -61,9 +61,18 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     on mark messages a sidebar to focus (no-op if absent).
   - Popup: identity surface, project picker (sticky), sync status pill,
     bundle preview, "Sync now" button.
-  - **Still TODO in Phase 2:** PDF.js Tier 2 (fetch + getTextContent + own
-    panel for selecting/categorizing); roster-not-found UX polish; force-
-    install setup with the district Admin console; QA on real pages.
+  - PDF Tier 2: [`extension/pdf/panel.html`](extension/pdf/panel.html) — own
+    panel page. Background fetches PDF bytes (base64-shipped to panel),
+    PDF.js v4.7.76 self-hosted in [`extension/vendor/`](extension/vendor/),
+    text extracted per page with `getTextContent` + `hasEOL`, rendered as
+    selectable paragraphs. Toolbar works inside the panel (same scripts).
+    Empty-state for scanned PDFs ("no extractable text — save manually");
+    "Save as source" button = Tier 1 fallback (creates source row, no
+    highlights). Popup detects PDF tabs and shows a CTA button.
+  - **Code-complete.** Still TODO in Phase 2 (not blocking handoff):
+    real-page QA (news sites, databases, PDFs, edge cases like
+    shadow-DOM-heavy pages); force-install setup with the district Admin
+    console; possible polish on roster-not-found UX.
 - **Phase 3 — Google Docs sidebar — not started.**
 - **Phase 4 — Teacher Console + pilot — not started.**
 

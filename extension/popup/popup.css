@@ -107,6 +107,20 @@ select {
   margin-bottom: 10px;
 }
 
+.pdf-cta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+  padding: 10px;
+  background: #e8f0fe;
+  border-radius: 4px;
+}
+.pdf-cta__hint {
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
 footer {
   display: flex;
   align-items: center;
