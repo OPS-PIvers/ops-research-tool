@@ -104,21 +104,37 @@ const SIDEBAR_CSS = `
   font-size: 10px; background: #f1f3f4; padding: 1px 6px; border-radius: 3px;
 }
 
+/* Same shape language as .filter-chip — gray pill with a colored dot
+   indicating the current secondary tag. */
 .entry__alt-pill {
-  font-size: 10px;
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f1f3f4;
+  border: 1px solid transparent;
   border-radius: 999px;
-  border: 1px solid #dadce0;
-  background: #fff;
+  padding: 4px 10px 4px 6px;
+  font-size: 11px;
   color: #5f6368;
-  margin-left: auto;
   white-space: nowrap;
   line-height: 1.4;
 }
-.entry__alt-pill:hover { background: #f8f9fa; }
+.entry__alt-pill:hover { border-color: #dadce0; }
 .entry__alt-pill--set {
-  color: #202124;
+  background: #fff;
+  border-color: #1a73e8;
+  color: #1a73e8;
   font-weight: 500;
+}
+.entry__alt-pill__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px dashed #5f6368;
+}
+.entry__alt-pill__dot--set {
+  border: none;
 }
 
 .entry__alt-picker {
@@ -157,6 +173,9 @@ const SIDEBAR_CSS = `
 }
 .entry__actions {
   display: flex; justify-content: space-between; gap: 6px; align-items: center;
+}
+.entry__actions-right {
+  display: flex; gap: 8px; align-items: center;
 }
 .entry__sync { font-size: 10px; color: #5f6368; }
 .entry__sync--pending { color: #b06000; }
@@ -435,24 +454,8 @@ const OpsSidebar = (function () {
     entry.appendChild(bar);
 
     const cat = el_('div', 'entry__cat');
-    const primaryLabel = el_('span', null, h.primaryCategory || '(uncategorized)');
-    cat.appendChild(primaryLabel);
-    // Quick-pick pill for the secondary tag — opens an inline swatch row.
-    const altPill = el_('button', 'entry__alt-pill');
-    altPill.type = 'button';
-    altPill.textContent = 'Alt: ' + (h.secondaryCategory || 'None');
-    if (h.secondaryCategory) altPill.classList.add('entry__alt-pill--set');
-    altPill.addEventListener('click', (e) => {
-      e.stopPropagation();
-      state.altPickerOpenId = state.altPickerOpenId === h.highlightId ? null : h.highlightId;
-      render_();
-    });
-    cat.appendChild(altPill);
+    cat.textContent = h.primaryCategory || '(uncategorized)';
     entry.appendChild(cat);
-
-    if (state.altPickerOpenId === h.highlightId && state.bundle) {
-      entry.appendChild(renderAltPicker_(h));
-    }
 
     const text = el_('div', 'entry__text');
     text.textContent = truncate_(h.text || '', 220);
@@ -475,6 +478,28 @@ const OpsSidebar = (function () {
     })[h.syncStatus || 'pending'];
     actions.appendChild(sync);
 
+    const right = el_('div', 'entry__actions-right');
+
+    // Alt pill — same shape as filter chips, with a colored dot showing
+    // the current secondary tag. Click to open the inline picker.
+    const altPill = el_('button', 'entry__alt-pill');
+    altPill.type = 'button';
+    const altDot = el_('span', 'entry__alt-pill__dot');
+    if (h.secondaryCategory) {
+      altDot.classList.add('entry__alt-pill__dot--set');
+      const c = colorForLabel_(h.secondaryCategory);
+      if (c) altDot.style.setProperty('background-color', c, 'important');
+    }
+    altPill.appendChild(altDot);
+    altPill.appendChild(document.createTextNode('Alt: ' + (h.secondaryCategory || 'None')));
+    if (h.secondaryCategory) altPill.classList.add('entry__alt-pill--set');
+    altPill.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.altPickerOpenId = state.altPickerOpenId === h.highlightId ? null : h.highlightId;
+      render_();
+    });
+    right.appendChild(altPill);
+
     const edit = el_('button', 'entry__edit-toggle');
     edit.type = 'button';
     edit.textContent = state.editingId === h.highlightId ? 'Done' : 'Edit';
@@ -482,14 +507,27 @@ const OpsSidebar = (function () {
       state.editingId = state.editingId === h.highlightId ? null : h.highlightId;
       render_();
     });
-    actions.appendChild(edit);
+    right.appendChild(edit);
+
+    actions.appendChild(right);
     entry.appendChild(actions);
 
+    if (state.altPickerOpenId === h.highlightId && state.bundle) {
+      entry.appendChild(renderAltPicker_(h));
+    }
     if (state.editingId === h.highlightId) {
       entry.appendChild(renderEditor_(h));
     }
 
     return entry;
+  }
+
+  function colorForLabel_(label) {
+    if (!state.bundle) return null;
+    for (let i = 1; i <= 5; i++) {
+      if (state.bundle['label' + i] === label) return state.bundle['color' + i];
+    }
+    return null;
   }
 
   function renderAltPicker_(h) {
