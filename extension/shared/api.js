@@ -41,38 +41,61 @@ async function apiGet(params) {
   return doFetchWithRetry({ method: 'GET', params });
 }
 
+/**
+ * Get a valid OAuth token. Try the cached/non-interactive path first; if
+ * that throws (no cached token, first-ever request), fall back to the
+ * interactive consent prompt exactly once.
+ */
+async function ensureToken_(forceInteractive) {
+  if (!forceInteractive) {
+    try { return await getAuthTokenAsync(false); }
+    catch (_) { /* fall through to interactive */ }
+  }
+  return getAuthTokenAsync(true);
+}
+
 async function doFetchWithRetry({ method, body, params }) {
-  let token = await getAuthTokenAsync(false).catch(() => null);
-  // One retry on 401: invalidate and re-fetch interactively only if needed.
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (!token) token = await getAuthTokenAsync(attempt === 1);
-    const url = method === 'GET' && params
-      ? CONFIG.WEB_APP_URL + '?' + new URLSearchParams(params).toString()
-      : CONFIG.WEB_APP_URL;
+    const token = await ensureToken_(attempt === 1);
+    // Belt-and-suspenders auth: Apps Script web apps redirect from
+    // script.google.com → script.googleusercontent.com. Chrome strips the
+    // Authorization header on cross-origin redirects, so include the token
+    // as a query param too — that survives the redirect.
+    const qs = new URLSearchParams(params || {});
+    qs.set('access_token', token);
+    const url = CONFIG.WEB_APP_URL + '?' + qs.toString();
     const init = {
       method,
       headers: { 'Authorization': 'Bearer ' + token },
-      // Apps Script Web Apps follow a redirect to script.googleusercontent.com —
-      // the Authorization header survives because host_permissions covers both.
       redirect: 'follow',
     };
     if (method === 'POST') {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body || {});
     }
-    const resp = await fetch(url, init);
+    let resp;
+    try {
+      resp = await fetch(url, init);
+    } catch (e) {
+      throw new Error('fetch failed: ' + (e && e.message || e));
+    }
     if (resp.status === 401 && attempt === 0) {
+      console.warn('apiFetch: 401, invalidating token and retrying interactively');
       await invalidateAuthToken(token);
-      token = null;
       continue;
     }
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
-      throw new Error(`HTTP ${resp.status}: ${text.slice(0, 200)}`);
+      throw new Error('HTTP ' + resp.status + ': ' + text.slice(0, 200));
+    }
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('json')) {
+      const text = await resp.text().catch(() => '');
+      throw new Error('Expected JSON, got ' + ct + '. First 200 chars: ' + text.slice(0, 200));
     }
     return resp.json();
   }
-  throw new Error('Auth failed after retry');
+  throw new Error('Auth failed after interactive retry');
 }
 
 if (typeof self !== 'undefined') {
