@@ -29,6 +29,12 @@ function handlePost_(e) {
   try {
     const actorEmail = getActorEmail_();
     const body = JSON.parse(e.postData.contents);
+    // Special-case lightweight actions that don't need a projectId / sheet open.
+    if (body.action === 'setActiveProject') {
+      setActiveProjectForActor_(actorEmail, body.projectId || '');
+      return { ok: true, actor: actorEmail, activeProjectId: body.projectId || null };
+    }
+
     if (!body.projectId) throw new Error('projectId required');
     const project = getProject_(body.projectId);
     if (!project) throw new Error(`Unknown projectId ${body.projectId}`);
@@ -136,6 +142,12 @@ function handleGet_(e) {
         const normalized = normalizeUrl_(params.rawUrl);
         const existing = findSourceByNormalizedUrl_(actorEmail, params.projectId, normalized);
         return { ok: true, normalizedUrl: normalized, source: existing };
+      }
+
+      case 'getActiveProject': {
+        // Server-side activeProjectId so the Docs sidebar and the Chrome
+        // extension stay in sync without each side maintaining its own.
+        return { ok: true, activeProjectId: getActiveProjectForActor_(actorEmail) };
       }
 
       default:

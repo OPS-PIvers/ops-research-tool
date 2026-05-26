@@ -143,6 +143,12 @@ async function handleMessage(msg, sender) {
       return getActiveProjectInfo();
     case 'setActiveProject':
       await setActiveProjectId(msg.projectId);
+      // Best-effort sync to the server so the Docs sidebar (Phase 3) sees
+      // the same active project. Failures are non-fatal — local storage is
+      // still the canonical extension-side value.
+      apiPost({ action: 'setActiveProject', projectId: msg.projectId || '' }).catch((e) => {
+        console.debug('[OPS] setActiveProject server sync failed:', e.message || e);
+      });
       return { ok: true };
     case 'refreshContext':
       return refreshContext();

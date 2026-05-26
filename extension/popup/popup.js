@@ -73,6 +73,8 @@ async function bootstrapFromCache_() {
     // Persist BEFORE doing anything async, so even if the popup closes a
     // millisecond later, the value survives.
     await chrome.storage.local.set({ activeProjectId });
+    // Sync to server (best-effort) so the Docs sidebar sees the same pick.
+    sendMessage({ type: 'setActiveProject', projectId: activeProjectId }).catch(() => {});
   }
   renderProjectPicker(projects, activeProjectId);
   renderBundleForActive(projects, bundles, activeProjectId);
@@ -100,6 +102,7 @@ async function bootstrapFromNetwork_() {
   if (!activeProjectId && projects.length > 0) {
     activeProjectId = projects[0].projectId;
     await chrome.storage.local.set({ activeProjectId });
+    sendMessage({ type: 'setActiveProject', projectId: activeProjectId }).catch(() => {});
   }
   renderProjectPicker(projects, activeProjectId);
   renderBundleForActive(projects, bundles, activeProjectId);
@@ -161,6 +164,8 @@ function renderProjectPicker(projects, activeProjectId) {
     // Write directly to storage so the value survives even if the popup
     // closes before the round-trip to the service worker completes.
     await chrome.storage.local.set({ activeProjectId: id });
+    // Server sync so the Docs sidebar's pick matches the extension's.
+    sendMessage({ type: 'setActiveProject', projectId: id }).catch(() => {});
     const cached = await chrome.storage.local.get(['cachedProjects', 'cachedBundles']);
     renderBundleForActive(cached.cachedProjects || [], cached.cachedBundles || [], id);
   });

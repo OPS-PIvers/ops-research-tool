@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top" />
+    <?!= includeFile_('sidebar_css') ?>
+  </head>
+  <body>
+    <header class="sb-header">
+      <h1 class="sb-title">OPS Research Tool</h1>
+      <div id="sb-actor" class="sb-actor"></div>
+    </header>
+
+    <section class="sb-project-picker">
+      <label for="sb-project">Project</label>
+      <select id="sb-project" disabled>
+        <option>Loading…</option>
+      </select>
+    </section>
+
+    <section id="sb-filter" class="sb-filter" hidden>
+      <div class="sb-filter__row sb-filter__row--cats" id="sb-filter-cats"></div>
+      <div class="sb-filter__row sb-filter__row--ps">
+        <label class="sb-ps-chip">
+          <input type="checkbox" id="sb-flt-primary" checked /> Primary
+        </label>
+        <label class="sb-ps-chip">
+          <input type="checkbox" id="sb-flt-secondary" checked /> Secondary
+        </label>
+        <label class="sb-ps-chip">
+          <input type="checkbox" id="sb-flt-unset" checked /> Unset
+        </label>
+      </div>
+    </section>
+
+    <main id="sb-main" class="sb-main">
+      <div class="sb-empty">Pick a project to begin.</div>
+    </main>
+
+    <footer class="sb-footer">
+      <button id="sb-insert" type="button" disabled>Insert Annotated Bibliography</button>
+      <div id="sb-status" class="sb-status"></div>
+    </footer>
+
+    <?!= includeFile_('sidebar_js') ?>
+  </body>
+</html>
