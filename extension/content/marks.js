@@ -113,3 +113,105 @@ document.addEventListener('click', (e) => {
 self.wrapRangeWithMark = wrapRangeWithMark;
 self.MARK_CLASS = MARK_CLASS;
 self.MARK_ATTR = MARK_ATTR;
+
+/**
+ * Re-anchor a batch of server-loaded highlights onto the current page.
+ *
+ * Approach: walk all eligible text nodes once, build a flat concatenated
+ * string + a segment map (node, start, end in flat). For each highlight,
+ * indexOf its highlightedText in flat — that gives the absolute position;
+ * map back to (startNode, startOffset, endNode, endOffset), build a Range,
+ * wrap it.
+ *
+ * Limitations (acceptable failure modes — sidebar surfaces a "not found"
+ * indicator instead of silently misanchoring):
+ *  - Exact match only. If the page's whitespace differs from the saved
+ *    text (rare — most pages serialize whitespace consistently), no match.
+ *  - Picks the FIRST occurrence. If the highlighted phrase appears 5 times
+ *    on the page and the original was the 3rd, we'd anchor the 1st. To
+ *    disambiguate later we'd need to also store some surrounding context;
+ *    not worth the schema change for the rate this happens with long-form
+ *    research-style highlights.
+ *  - Overlapping highlights: the second one's range may be partially
+ *    inside the first's span tree after the first wrap. Currently we
+ *    compute all ranges UP FRONT against the unmutated DOM, then apply
+ *    wraps; live Range updates do most of the right thing, but a perfect
+ *    nested-highlight result isn't guaranteed.
+ */
+function reAnchorHighlights(highlights, colorForLabel) {
+  const segments = [];
+  let flat = '';
+  const walker = document.createTreeWalker(
+    document.body, NodeFilter.SHOW_TEXT,
+    { acceptNode: (n) => {
+      const parent = n.parentNode;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      const tag = parent.nodeName;
+      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;
+      // Skip text inside our own sidebar host (it's in the page DOM too).
+      let p = parent;
+      while (p) {
+        if (p.id === '__ops_research_sidebar_host') return NodeFilter.FILTER_REJECT;
+        p = p.parentNode;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    }}
+  );
+  let n;
+  while ((n = walker.nextNode())) {
+    const t = n.textContent;
+    if (!t) continue;
+    segments.push({ node: n, start: flat.length, end: flat.length + t.length });
+    flat += t;
+  }
+
+  // Compute all Ranges against the unmutated DOM, THEN wrap each (so the
+  // first wrap's text-node splits don't invalidate the segments map).
+  // Live Range adjustment then carries the boundaries through subsequent
+  // splits for the remaining wraps.
+  const tasks = [];
+  const failed = [];
+  for (const h of highlights) {
+    const text = h.highlightedText;
+    if (!text) { failed.push(h.highlightId); continue; }
+    const idx = flat.indexOf(text);
+    if (idx === -1) { failed.push(h.highlightId); continue; }
+    const endIdx = idx + text.length;
+    let startSeg = null, startOff = 0;
+    let endSeg = null, endOff = 0;
+    for (const s of segments) {
+      if (!startSeg && idx >= s.start && idx < s.end) {
+        startSeg = s;
+        startOff = idx - s.start;
+      }
+      if (!endSeg && endIdx > s.start && endIdx <= s.end) {
+        endSeg = s;
+        endOff = endIdx - s.start;
+      }
+      if (startSeg && endSeg) break;
+    }
+    if (!startSeg || !endSeg) { failed.push(h.highlightId); continue; }
+    try {
+      const range = document.createRange();
+      range.setStart(startSeg.node, startOff);
+      range.setEnd(endSeg.node, endOff);
+      tasks.push({ h, range });
+    } catch (e) {
+      failed.push(h.highlightId);
+    }
+  }
+
+  const anchored = [];
+  for (const t of tasks) {
+    try {
+      const color = colorForLabel(t.h.primaryCategory);
+      wrapRangeWithMark(t.range, color, t.h.highlightId);
+      anchored.push(t.h.highlightId);
+    } catch (e) {
+      failed.push(t.h.highlightId);
+    }
+  }
+  return { anchored, failed };
+}
+
+self.reAnchorHighlights = reAnchorHighlights;

@@ -181,6 +181,19 @@ const SIDEBAR_CSS = `
 .entry__sync--pending { color: #b06000; }
 .entry__sync--saved   { color: #0f9d58; }
 .entry__sync--error   { color: #d93025; }
+
+.entry__warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: #b06000;
+  background: #fff4e5;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  cursor: help;
+}
 .entry__edit-toggle {
   background: none; border: none; color: #1a73e8;
   font-size: 11px; padding: 2px 6px;
@@ -337,6 +350,17 @@ const OpsSidebar = (function () {
         syncStatus: 'saved',
       });
     });
+
+    // Try to re-anchor on the page so the colored spans come back too.
+    // Failures are surfaced per-entry in the sidebar; no silent misanchoring.
+    if (self.reAnchorHighlights) {
+      const { failed } = self.reAnchorHighlights(resp.highlights, colorForLabel_);
+      const failedSet = new Set(failed);
+      state.pageHighlights.forEach((h) => {
+        if (failedSet.has(h.highlightId)) h.notFoundOnPage = true;
+      });
+    }
+
     // Make the launcher visible so the student knows their work is still
     // there. Don't auto-open the full panel — they may not want it on
     // every page reload.
@@ -488,7 +512,13 @@ const OpsSidebar = (function () {
     entry.appendChild(bar);
 
     const cat = el_('div', 'entry__cat');
-    cat.textContent = h.primaryCategory || '(uncategorized)';
+    cat.appendChild(document.createTextNode(h.primaryCategory || '(uncategorized)'));
+    if (h.notFoundOnPage) {
+      const warn = el_('span', 'entry__warn');
+      warn.textContent = '↯ page changed';
+      warn.title = 'Could not locate this exact text on the page. It may have been edited or moved since the highlight was saved. The highlight is still in your project — only the on-page mark is missing.';
+      cat.appendChild(warn);
+    }
     entry.appendChild(cat);
 
     const text = el_('div', 'entry__text');
