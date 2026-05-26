@@ -346,7 +346,7 @@ const OpsSidebar = (function () {
         secondaryCategory: h.secondaryCategory || '',
         text: h.highlightedText,
         note: h.note || '',
-        color: colorForLabel_(h.primaryCategory),
+        color: colorForLabel_(h.primaryCategory) || '#fff8c4',
         syncStatus: 'saved',
       });
     });
@@ -354,7 +354,8 @@ const OpsSidebar = (function () {
     // Try to re-anchor on the page so the colored spans come back too.
     // Failures are surfaced per-entry in the sidebar; no silent misanchoring.
     if (self.reAnchorHighlights) {
-      const { failed } = self.reAnchorHighlights(resp.highlights, colorForLabel_);
+      const colorWithFallback = (label) => colorForLabel_(label) || '#fff8c4';
+      const { failed } = self.reAnchorHighlights(resp.highlights, colorWithFallback);
       const failedSet = new Set(failed);
       state.pageHighlights.forEach((h) => {
         if (failedSet.has(h.highlightId)) h.notFoundOnPage = true;

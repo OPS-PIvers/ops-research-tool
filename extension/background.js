@@ -260,15 +260,17 @@ async function getOrCreateSourceId(rawUrl, scrape) {
 async function enqueueHighlight(h) {
   const projectId = await getActiveProjectId();
   if (!projectId) throw new Error('No active project.');
-  if (!h.sourceId || !h.primaryCategory || !h.highlightedText) {
-    throw new Error('highlight must have sourceId, primaryCategory, highlightedText');
+  if (!h.sourceId || !h.highlightedText) {
+    throw new Error('highlight must have sourceId and highlightedText');
   }
+  // primaryCategory may be empty for note-only highlights — student can
+  // categorize later from the sidebar.
   const highlightId = h.highlightId || newUuid();
   await enqueue('highlight', {
     highlightId,
     sourceId: h.sourceId,
     projectId,
-    primaryCategory: h.primaryCategory,
+    primaryCategory: h.primaryCategory || '',
     secondaryCategory: h.secondaryCategory || '',
     highlightedText: h.highlightedText,
     note: h.note || '',

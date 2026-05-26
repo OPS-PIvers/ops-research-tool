@@ -65,7 +65,10 @@ function validateHighlightPayload_(h) {
   if (!h.highlightId) throw new Error('highlight.highlightId required');
   if (!h.sourceId) throw new Error('highlight.sourceId required');
   if (!h.projectId) throw new Error('highlight.projectId required');
-  if (!h.primaryCategory) throw new Error('highlight.primaryCategory required');
+  // primaryCategory is optional — students can save a note-only highlight
+  // and categorize later in the sidebar. (Build plan §2 originally required
+  // it at capture time, but Paul relaxed this 2026-05-26 so the act of
+  // saving a useful note doesn't block on choosing a category.)
   if (!h.highlightedText) throw new Error('highlight.highlightedText required');
   if (!h.createdByEmail) throw new Error('highlight.createdByEmail required');
 }

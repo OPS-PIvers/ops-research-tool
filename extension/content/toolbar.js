@@ -1,22 +1,36 @@
 /**
  * Selection toolbar — the most-repeated action.
  *
- * Flow (build plan §2):
- *   1. User selects text on the page.
- *   2. A floating panel appears near the selection with the 5 category
- *      swatches (colors + labels from the active bundle) and an optional
- *      note affordance.
- *   3. Click a swatch → save the highlight (background.js handles
- *      sourceId allocation + enqueue) and wrap the selected text in a
- *      colored span (marks.js). Toolbar closes.
- *   4. If no active project is set, the toolbar shows a prompt to open
- *      the extension popup instead of swatches.
+ * Persistent-draft UX (replaces the original "click-swatch-and-commit"):
+ *   1. Selecting text opens the toolbar.
+ *   2. Clicking a swatch toggles that category as the *draft* — visible
+ *      outline on the chosen swatch — but does NOT save yet.
+ *   3. "Add note" expands a textarea. The user can type freely; the toolbar
+ *      stays open through every keystroke.
+ *   4. The toolbar commits and closes on:
+ *        - click outside the toolbar
+ *        - Enter (without Shift) inside the note textarea
+ *   5. Esc discards the draft and closes without saving.
+ *   6. If only a note (no category) was drafted, the highlight saves with an
+ *      empty primary category — they can categorize it later in the sidebar.
+ *
+ * Build plan §2 originally required a primary category at capture time
+ * ("the act of choosing is the learning"). Paul relaxed that 2026-05-26 so
+ * a useful note doesn't block on a category decision.
  */
+
+const UNCATEGORIZED_COLOR = '#fff8c4'; // pale sticky-note yellow
 
 let toolbarEl = null;
 let bundleCache = null;
 let projectCache = null;
 let noteOpen = false;
+
+// Draft state — accumulates between toolbar open and commit/discard.
+let draftSnapshot = null;   // { text, range } captured when the toolbar opened
+let draftCategory = null;   // currently chosen primary category label or null
+let draftColor = null;
+let draftNote = '';
 
 function eventInOurUI_(e) {
   if (!e || !e.target) return false;
@@ -32,28 +46,40 @@ document.addEventListener('mouseup', (e) => {
   if (eventInOurUI_(e)) return;
   onSelectionMaybeChanged();
 }, true);
+
+document.addEventListener('keydown', (e) => {
+  // Enter (no Shift) inside the toolbar's note textarea = commit.
+  if (e.key === 'Enter' && !e.shiftKey && toolbarEl && toolbarEl.contains(e.target)) {
+    if (e.target.tagName === 'TEXTAREA') {
+      e.preventDefault();
+      commitDraft_();
+    }
+  }
+}, true);
+
 document.addEventListener('keyup', (e) => {
-  if (e.key === 'Escape') { hideToolbar(); return; }
-  // Typing inside our own toolbar/sidebar must not trigger the
-  // selection-driven hide path — the user's page selection has collapsed
-  // because focus moved into a textarea, which would otherwise close the
-  // toolbar mid-keystroke.
+  if (e.key === 'Escape') { discardDraft_(); return; }
   if (eventInOurUI_(e)) return;
   onSelectionMaybeChanged();
 }, true);
+
 document.addEventListener('mousedown', (e) => {
-  if (toolbarEl && !toolbarEl.contains(e.target)) hideToolbar();
+  // Click outside the toolbar = commit any in-flight draft, then hide.
+  if (toolbarEl && !toolbarEl.contains(e.target)) commitDraft_();
 }, true);
 
 async function onSelectionMaybeChanged() {
   const sel = window.getSelection();
-  if (!sel || sel.isCollapsed) { hideToolbar(); return; }
+  if (!sel || sel.isCollapsed) {
+    // Selection went away — if we have a draft, leave it open (user might
+    // still want to commit via outside click). If no draft yet, close.
+    if (toolbarEl && !draftCategory && !draftNote.trim()) hideToolbar();
+    return;
+  }
   const text = sel.toString();
-  if (!text || text.trim().length === 0) { hideToolbar(); return; }
+  if (!text || text.trim().length === 0) return;
   if (isSelectionInEditable_(sel)) { hideToolbar(); return; }
 
-  // Always re-fetch project/bundle on selection: cheap, and avoids staleness
-  // after the student changes the active project in the popup.
   try {
     const ctx = await chrome.runtime.sendMessage({ type: 'getActiveProject' });
     if (ctx && ctx.ok) {
@@ -88,22 +114,63 @@ function isSelectionInEditable_(sel) {
 function showToolbar(rect, sel, text) {
   if (!toolbarEl) toolbarEl = buildToolbarEl_();
   document.body.appendChild(toolbarEl);
+
+  // If we're freshly opening (no in-flight draft), reset state. If a draft
+  // already exists and the user just extended/changed their selection, keep
+  // their category/note choices but point at the new range.
+  if (!draftSnapshot) {
+    draftCategory = null;
+    draftColor = null;
+    draftNote = '';
+    noteOpen = false;
+  }
+  draftSnapshot = { text, range: sel.getRangeAt(0).cloneRange() };
   renderToolbar_();
-  // Position just below the selection, scroll-corrected.
+
   const top = rect.bottom + window.scrollY + 6;
   const left = Math.max(8, rect.left + window.scrollX);
   toolbarEl.style.top = top + 'px';
   toolbarEl.style.left = left + 'px';
-  // Stash the selected text + range so the swatch click can use them even
-  // if the user releases the selection before clicking.
-  toolbarEl.__selectedText = text;
-  toolbarEl.__range = sel.getRangeAt(0).cloneRange();
 }
 
 function hideToolbar() {
   if (!toolbarEl) return;
   if (toolbarEl.parentNode) toolbarEl.parentNode.removeChild(toolbarEl);
+  draftSnapshot = null;
+  draftCategory = null;
+  draftColor = null;
+  draftNote = '';
   noteOpen = false;
+}
+
+function discardDraft_() {
+  hideToolbar();
+}
+
+function commitDraft_() {
+  const snapshot = draftSnapshot;
+  const category = draftCategory;
+  const note = (draftNote || '').trim();
+  if (!snapshot || (!category && !note)) {
+    hideToolbar();
+    return;
+  }
+  const color = draftColor || UNCATEGORIZED_COLOR;
+  const highlightId = newUuid();
+  // Optimistic: wrap + sidebar entry land before any await.
+  wrapRangeWithMark(snapshot.range, color, highlightId);
+  if (self.OpsSidebar) {
+    self.OpsSidebar.addHighlight({
+      highlightId,
+      sourceId: null,
+      primaryCategory: category || '',
+      color,
+      text: snapshot.text,
+      note,
+    });
+  }
+  hideToolbar();
+  syncHighlight_(highlightId, category || '', snapshot.text, note);
 }
 
 function buildToolbarEl_() {
@@ -124,13 +191,11 @@ function renderToolbar_() {
     return;
   }
 
-  // Project label
   const pLabel = document.createElement('div');
   pLabel.className = 'ops-research-toolbar-project';
   pLabel.textContent = 'Saving to: ' + projectCache.name;
   toolbarEl.appendChild(pLabel);
 
-  // Swatch row
   const row = document.createElement('div');
   row.className = 'ops-research-toolbar-row';
   for (let i = 1; i <= 5; i++) {
@@ -138,20 +203,42 @@ function renderToolbar_() {
     const color = bundleCache['color' + i];
     if (!label) continue;
     const sw = document.createElement('button');
+    sw.type = 'button';
     sw.className = 'ops-research-swatch';
+    if (draftCategory === label) sw.classList.add('ops-research-swatch--selected');
     sw.style.backgroundColor = color;
     sw.title = label;
     sw.setAttribute('aria-label', label);
-    sw.addEventListener('click', () => saveHighlight_(label, color));
+    sw.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (draftCategory === label) {
+        draftCategory = null;
+        draftColor = null;
+      } else {
+        draftCategory = label;
+        draftColor = color;
+      }
+      renderToolbar_();
+    });
     row.appendChild(sw);
   }
   toolbarEl.appendChild(row);
 
-  // Note toggle + textarea (optional)
+  if (draftCategory) {
+    const selDiv = document.createElement('div');
+    selDiv.className = 'ops-research-toolbar-selected';
+    selDiv.textContent = '✓ ' + draftCategory;
+    toolbarEl.appendChild(selDiv);
+  }
+
   const noteToggle = document.createElement('button');
   noteToggle.className = 'ops-research-toolbar-note-toggle';
-  noteToggle.textContent = noteOpen ? 'Hide note' : 'Add note';
-  noteToggle.addEventListener('click', () => {
+  noteToggle.type = 'button';
+  noteToggle.textContent = noteOpen ? 'Hide note' : (draftNote.trim() ? 'Edit note' : 'Add note');
+  noteToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
     noteOpen = !noteOpen;
     renderToolbar_();
   });
@@ -161,43 +248,24 @@ function renderToolbar_() {
     const ta = document.createElement('textarea');
     ta.className = 'ops-research-toolbar-note';
     ta.placeholder = 'optional note…';
-    ta.id = 'ops-research-toolbar-note-input';
+    ta.value = draftNote;
+    ta.addEventListener('input', () => { draftNote = ta.value; });
     toolbarEl.appendChild(ta);
-    // preventScroll avoids the page yanking to bring the textarea into view
-    // when the toolbar is near the bottom of the viewport.
-    setTimeout(() => ta.focus({ preventScroll: true }), 0);
+    // Restore focus + caret across re-renders so swatch clicks don't
+    // interrupt typing flow.
+    setTimeout(() => {
+      ta.focus({ preventScroll: true });
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    }, 0);
   }
-}
 
-function saveHighlight_(primaryCategory, color) {
-  const text = toolbarEl.__selectedText;
-  const range = toolbarEl.__range;
-  if (!text || !range) { hideToolbar(); return; }
-  const noteInput = toolbarEl.querySelector('#ops-research-toolbar-note-input');
-  const note = noteInput ? noteInput.value : '';
-
-  // Optimistic: visual mark + sidebar entry land BEFORE any await. The
-  // student sees the highlight appear instantly; the network sync happens
-  // in the background and the sidebar's status pill ("saving…" → "saved"
-  // → "error") reflects the real state.
-  const highlightId = newUuid();
-  wrapRangeWithMark(range, color, highlightId);
-  if (self.OpsSidebar) {
-    self.OpsSidebar.addHighlight({
-      highlightId,
-      sourceId: null, // filled in once getOrCreateSourceId resolves; the
-                     // sidebar's update path uses the same UUID, so the
-                     // sourceId is just metadata for editing later
-      primaryCategory,
-      color,
-      text,
-      note,
-    });
-  }
-  hideToolbar();
-
-  // Async save — fire and forget; result updates the sidebar status pill.
-  syncHighlight_(highlightId, primaryCategory, text, note);
+  const hasDraft = !!draftCategory || !!draftNote.trim();
+  const hint = document.createElement('div');
+  hint.className = 'ops-research-toolbar-hint';
+  hint.textContent = hasDraft
+    ? 'Click outside or press Enter to save · Esc to cancel'
+    : 'Pick a color or add a note';
+  toolbarEl.appendChild(hint);
 }
 
 async function syncHighlight_(highlightId, primaryCategory, text, note) {
@@ -209,8 +277,6 @@ async function syncHighlight_(highlightId, primaryCategory, text, note) {
       scrape,
     });
     if (!srcResp || !srcResp.ok) throw new Error((srcResp && srcResp.error) || 'no sourceId');
-    // Backfill sourceId into the sidebar entry so the editor's re-enqueue
-    // path includes it.
     if (self.OpsSidebar && self.OpsSidebar._setSourceId) {
       self.OpsSidebar._setSourceId(highlightId, srcResp.sourceId);
     }

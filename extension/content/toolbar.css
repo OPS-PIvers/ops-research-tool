@@ -51,6 +51,11 @@
   outline-offset: 2px;
 }
 
+.ops-research-swatch--selected {
+  outline: 2px solid #202124;
+  outline-offset: 2px;
+}
+
 .ops-research-swatch-label {
   font-size: 11px;
   color: #5f6368;
@@ -92,4 +97,16 @@
 
 .ops-research-toolbar-error {
   color: #d93025;
+}
+
+.ops-research-toolbar-selected {
+  font-size: 11px;
+  color: #202124;
+  font-weight: 500;
+}
+
+.ops-research-toolbar-hint {
+  font-size: 10px;
+  color: #5f6368;
+  font-style: italic;
 }
