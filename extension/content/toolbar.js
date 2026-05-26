@@ -18,10 +18,27 @@ let bundleCache = null;
 let projectCache = null;
 let noteOpen = false;
 
-document.addEventListener('mouseup', onSelectionMaybeChanged, true);
+function eventInOurUI_(e) {
+  if (!e || !e.target) return false;
+  if (toolbarEl && toolbarEl.contains(e.target)) return true;
+  // Sidebar lives in a shadow root; its host element is the retargeted
+  // target for any event that originated inside the shadow tree.
+  const sidebarHost = document.getElementById('__ops_research_sidebar_host');
+  if (sidebarHost && sidebarHost.contains(e.target)) return true;
+  return false;
+}
+
+document.addEventListener('mouseup', (e) => {
+  if (eventInOurUI_(e)) return;
+  onSelectionMaybeChanged();
+}, true);
 document.addEventListener('keyup', (e) => {
-  // Show on keyboard selection too (shift+arrow). Hide on Escape.
   if (e.key === 'Escape') { hideToolbar(); return; }
+  // Typing inside our own toolbar/sidebar must not trigger the
+  // selection-driven hide path — the user's page selection has collapsed
+  // because focus moved into a textarea, which would otherwise close the
+  // toolbar mid-keystroke.
+  if (eventInOurUI_(e)) return;
   onSelectionMaybeChanged();
 }, true);
 document.addEventListener('mousedown', (e) => {
@@ -146,7 +163,9 @@ function renderToolbar_() {
     ta.placeholder = 'optional note…';
     ta.id = 'ops-research-toolbar-note-input';
     toolbarEl.appendChild(ta);
-    setTimeout(() => ta.focus(), 0);
+    // preventScroll avoids the page yanking to bring the textarea into view
+    // when the toolbar is near the bottom of the viewport.
+    setTimeout(() => ta.focus({ preventScroll: true }), 0);
   }
 }
 
