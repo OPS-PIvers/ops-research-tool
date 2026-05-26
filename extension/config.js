@@ -13,9 +13,9 @@ const CONFIG = {
   // never changes this URL — once published, it's stable.
   WEB_APP_URL: 'https://script.google.com/a/macros/orono.k12.mn.us/s/AKfycbx4ycn4YmZ5m9TBKr9N6YM4GnJqRvrlhvTc3vdujfxfw_9a3DQ9nLxD9t-gy1Kz2KbK/exec',
 
-  // OAuth client ID from the GCP project linked to the GAS. Also set in
-  // manifest.json (must match). Used by chrome.identity.getAuthToken.
-  OAUTH_CLIENT_ID: '',
+  // OAuth client ID from the GCP project. Also set in manifest.json (must
+  // match). Used by chrome.identity.getAuthToken.
+  OAUTH_CLIENT_ID: '251187181508-37t9ogl23osddoan29vjjq12331kh8un.apps.googleusercontent.com',
 
   // How often the background service worker drains the offline queue.
   // chrome.alarms minimum is 1 minute on production extensions.
