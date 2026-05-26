@@ -103,6 +103,51 @@ const SIDEBAR_CSS = `
 .entry__secondary {
   font-size: 10px; background: #f1f3f4; padding: 1px 6px; border-radius: 3px;
 }
+
+.entry__alt-pill {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #dadce0;
+  background: #fff;
+  color: #5f6368;
+  margin-left: auto;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.entry__alt-pill:hover { background: #f8f9fa; }
+.entry__alt-pill--set {
+  color: #202124;
+  font-weight: 500;
+}
+
+.entry__alt-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 6px 4px 2px;
+  border-top: 1px dashed #dadce0;
+}
+.entry__alt-pick-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+  background-clip: padding-box;
+}
+.entry__alt-pick-btn--active { border-color: #202124; }
+.entry__alt-pick-btn--none {
+  font-size: 10px;
+  color: #5f6368;
+  background: #fff;
+  border: 2px dashed #5f6368;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
 .entry__text {
   font-size: 12px; line-height: 1.45; margin-bottom: 6px; cursor: pointer;
 }
@@ -174,6 +219,7 @@ const OpsSidebar = (function () {
     bundle: null,
     filter: null,         // null | category label
     editingId: null,      // highlightId currently being edited
+    altPickerOpenId: null, // highlightId whose alt-pill picker is open
     initialized: false,
   };
 
@@ -389,13 +435,24 @@ const OpsSidebar = (function () {
     entry.appendChild(bar);
 
     const cat = el_('div', 'entry__cat');
-    cat.textContent = h.primaryCategory || '(uncategorized)';
-    if (h.secondaryCategory) {
-      const sec = el_('span', 'entry__secondary');
-      sec.textContent = '+ ' + h.secondaryCategory;
-      cat.appendChild(sec);
-    }
+    const primaryLabel = el_('span', null, h.primaryCategory || '(uncategorized)');
+    cat.appendChild(primaryLabel);
+    // Quick-pick pill for the secondary tag — opens an inline swatch row.
+    const altPill = el_('button', 'entry__alt-pill');
+    altPill.type = 'button';
+    altPill.textContent = 'Alt: ' + (h.secondaryCategory || 'None');
+    if (h.secondaryCategory) altPill.classList.add('entry__alt-pill--set');
+    altPill.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.altPickerOpenId = state.altPickerOpenId === h.highlightId ? null : h.highlightId;
+      render_();
+    });
+    cat.appendChild(altPill);
     entry.appendChild(cat);
+
+    if (state.altPickerOpenId === h.highlightId && state.bundle) {
+      entry.appendChild(renderAltPicker_(h));
+    }
 
     const text = el_('div', 'entry__text');
     text.textContent = truncate_(h.text || '', 220);
@@ -433,6 +490,37 @@ const OpsSidebar = (function () {
     }
 
     return entry;
+  }
+
+  function renderAltPicker_(h) {
+    const picker = el_('div', 'entry__alt-picker');
+    const none = el_('button', 'entry__alt-pick-btn entry__alt-pick-btn--none');
+    none.type = 'button';
+    none.textContent = '∅';
+    none.title = 'No alternative tag';
+    if (!h.secondaryCategory) none.classList.add('entry__alt-pick-btn--active');
+    none.addEventListener('click', () => setSecondary_(h, ''));
+    picker.appendChild(none);
+    for (let i = 1; i <= 5; i++) {
+      const label = state.bundle['label' + i];
+      const color = state.bundle['color' + i];
+      if (!label) continue;
+      const sw = el_('button', 'entry__alt-pick-btn');
+      sw.type = 'button';
+      sw.title = label;
+      sw.style.setProperty('background-color', color, 'important');
+      if (h.secondaryCategory === label) sw.classList.add('entry__alt-pick-btn--active');
+      sw.addEventListener('click', () => setSecondary_(h, label));
+      picker.appendChild(sw);
+    }
+    return picker;
+  }
+
+  function setSecondary_(h, label) {
+    h.secondaryCategory = label;
+    state.altPickerOpenId = null;
+    enqueueUpdate_(h);
+    render_();
   }
 
   function renderEditor_(h) {
