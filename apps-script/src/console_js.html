@@ -926,14 +926,15 @@ function buildCompletionCell_(comp) {
 function buildGapsCell_(gaps) {
   const wrap = document.createElement('div');
   wrap.className = 'db-gaps';
+  const labels = { citation: 'Cite', classification: 'Tag', annotation: 'Note' };
+  const fulls  = { citation: 'citation', classification: 'classification', annotation: 'annotation' };
   ['citation', 'classification', 'annotation'].forEach((kind) => {
     const n = gaps[kind] || 0;
     const chip = document.createElement('span');
     const klass = n === 0 ? '' : (n <= 3 ? 'db-gap--warn' : 'db-gap--bad');
     chip.className = 'db-gap ' + klass;
-    const short = kind === 'citation' ? 'cit' : (kind === 'classification' ? 'cls' : 'ann');
-    chip.textContent = short + ':' + n;
-    chip.title = kind + ': ' + n + ' missing';
+    chip.textContent = labels[kind] + ' ' + n;
+    chip.title = n + ' source' + (n === 1 ? '' : 's') + ' missing ' + fulls[kind];
     wrap.appendChild(chip);
   });
   return wrap;
