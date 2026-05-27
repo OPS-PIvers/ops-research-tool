@@ -379,4 +379,68 @@ select, input, textarea { font: inherit; }
   width: 70px; white-space: nowrap;
 }
 .db-activity--never { color: var(--c-muted); font-style: italic; }
+
+/* ---- Drill-down ---- */
+.dd-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+@media (max-width: 800px) {
+  .dd-grid { grid-template-columns: 1fr; }
+}
+.dd-block {
+  background: var(--c-bg);
+  border: 1px solid var(--c-line);
+  border-radius: 8px;
+  padding: 16px 18px;
+}
+.dd-block__title {
+  font-family: var(--font-display);
+  font-size: 13px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--c-muted);
+  margin: 0 0 12px;
+}
+.dd-block--wide { grid-column: 1 / -1; }
+.dd-chart-canvas { width: 100% !important; max-height: 260px; }
+
+/* Source-count tiles */
+.dd-counts {
+  display: flex; gap: 12px;
+}
+.dd-count-tile {
+  flex: 1; padding: 14px 16px;
+  background: var(--c-soft); border-radius: 6px;
+  text-align: center;
+}
+.dd-count-tile__n {
+  font-family: var(--font-display);
+  font-size: 32px; font-weight: 600;
+  color: var(--c-text);
+}
+.dd-count-tile__label {
+  font-size: 11px; color: var(--c-muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.dd-unclassified {
+  margin-top: 8px; font-size: 12px; color: var(--c-muted); text-align: right;
+}
+
+/* Completion bars */
+.dd-comp-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 100px;
+  gap: 12px;
+  align-items: center;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.dd-comp-label { color: var(--c-text); }
+.dd-comp-bar {
+  height: 8px; background: var(--c-line); border-radius: 4px; overflow: hidden;
+}
+.dd-comp-fill { height: 100%; }
+.dd-comp-pct { font-size: 12px; color: var(--c-muted); text-align: right; }
 </style>

@@ -949,7 +949,305 @@ function formatLastFirst_(name) {
 }
 
 // View render functions — placeholders filled in Tasks 10+.
-function renderStudentDetail_(main) { main.innerHTML = '<div class="console-empty">Drill-down (Tasks 16–18).</div>'; }
+// STUDENT view-local state.
+const studentDetail = {
+  loadedFor: null,    // 'projectId|email'
+  data: null,
+  chartInstances: { categoryBar: null, activityLine: null },
+};
+
+function renderStudentDetail_(main) {
+  const key = state.projectId + '|' + state.studentEmail;
+  if (studentDetail.loadedFor !== key) {
+    studentDetail.loadedFor = null;
+    studentDetail.data = null;
+    destroyDrillCharts_();
+  }
+
+  // Toolbar (back link + name + refresh + asOf)
+  const toolbar = document.createElement('div');
+  toolbar.className = 'db-toolbar';
+  const back = document.createElement('button');
+  back.className = 'db-back';
+  back.textContent = '← ' + (dashboard.data && dashboard.data.project ? dashboard.data.project.name : 'Dashboard');
+  back.addEventListener('click', () => navigate_('/projects/' + encodeURIComponent(state.projectId)));
+  toolbar.appendChild(back);
+
+  const title = document.createElement('div');
+  title.className = 'db-title';
+  title.id = 'dd-title';
+  title.textContent = 'Loading…';
+  toolbar.appendChild(title);
+
+  const refresh = document.createElement('button');
+  refresh.className = 'db-refresh';
+  refresh.id = 'dd-refresh';
+  refresh.textContent = '↻ Refresh';
+  refresh.addEventListener('click', () => fetchStudentDetail_(state.projectId, state.studentEmail));
+  toolbar.appendChild(refresh);
+
+  const asof = document.createElement('div');
+  asof.className = 'db-asof';
+  asof.id = 'dd-asof';
+  toolbar.appendChild(asof);
+
+  main.appendChild(toolbar);
+
+  const body = document.createElement('div');
+  body.id = 'dd-body';
+  main.appendChild(body);
+
+  if (studentDetail.data) {
+    paintStudentDetail_();
+  } else {
+    body.innerHTML = '';
+    const loader = document.createElement('div');
+    loader.className = 'mp-loading';
+    const sp = document.createElement('div');
+    sp.className = 'console-spinner';
+    loader.appendChild(sp);
+    const txt = document.createElement('div');
+    txt.textContent = 'Loading student detail…';
+    loader.appendChild(txt);
+    body.appendChild(loader);
+    fetchStudentDetail_(state.projectId, state.studentEmail);
+  }
+}
+
+function fetchStudentDetail_(projectId, email) {
+  const btn = document.getElementById('dd-refresh');
+  if (btn) { btn.disabled = true; btn.textContent = '↻ Refreshing…'; }
+  google.script.run
+    .withSuccessHandler((resp) => {
+      const btn2 = document.getElementById('dd-refresh');
+      if (btn2) { btn2.disabled = false; btn2.textContent = '↻ Refresh'; }
+      if (!resp || !resp.ok) {
+        setStatus('Could not load student.', 'bad', 4000);
+        return;
+      }
+      studentDetail.loadedFor = projectId + '|' + email;
+      studentDetail.data = resp;
+      paintStudentDetail_();
+    })
+    .withFailureHandler((e) => {
+      const btn2 = document.getElementById('dd-refresh');
+      if (btn2) { btn2.disabled = false; btn2.textContent = '↻ Refresh'; }
+      onFail_('loading student detail')(e);
+    })
+    .consoleGetStudentDetail(projectId, email);
+}
+
+function paintStudentDetail_() {
+  const d = studentDetail.data;
+  if (!d) return;
+  const title = document.getElementById('dd-title');
+  if (title) title.textContent = formatLastFirst_(d.student.name);
+
+  const asof = document.getElementById('dd-asof');
+  if (asof) asof.textContent = 'Refreshed ' + relativeTime_(d.asOf);
+
+  const body = document.getElementById('dd-body');
+  if (!body) return;
+  body.innerHTML = '';
+  body.appendChild(buildDrillGrid_());
+
+  // Chart blocks need their canvas elements in the DOM first. Build the
+  // Chart.js instances after this microtask so the canvas refs resolve.
+  setTimeout(buildDrillCharts_, 0);
+}
+
+function buildDrillGrid_() {
+  const d = studentDetail.data;
+  const grid = document.createElement('div');
+  grid.className = 'dd-grid';
+
+  // 1. Highlights by category — bar chart (the star)
+  const barBlock = document.createElement('div');
+  barBlock.className = 'dd-block dd-block--wide';
+  const barTitle = document.createElement('h3');
+  barTitle.className = 'dd-block__title';
+  barTitle.textContent = 'Highlights by category';
+  barBlock.appendChild(barTitle);
+  const barCanvas = document.createElement('canvas');
+  barCanvas.id = 'dd-chart-bar';
+  barCanvas.className = 'dd-chart-canvas';
+  barBlock.appendChild(barCanvas);
+  grid.appendChild(barBlock);
+
+  // 2. Source counts
+  const countsBlock = document.createElement('div');
+  countsBlock.className = 'dd-block';
+  const countsTitle = document.createElement('h3');
+  countsTitle.className = 'dd-block__title';
+  countsTitle.textContent = 'Sources';
+  countsBlock.appendChild(countsTitle);
+  countsBlock.appendChild(buildDrillCountsTiles_(d.aggregates.sourceCounts));
+  grid.appendChild(countsBlock);
+
+  // 3. Completion breakdown
+  const compBlock = document.createElement('div');
+  compBlock.className = 'dd-block';
+  const compTitle = document.createElement('h3');
+  compTitle.className = 'dd-block__title';
+  compTitle.textContent = 'Completion';
+  compBlock.appendChild(compTitle);
+  compBlock.appendChild(buildDrillCompletion_(d.aggregates.completion));
+  grid.appendChild(compBlock);
+
+  // 4. Activity over time
+  const actBlock = document.createElement('div');
+  actBlock.className = 'dd-block dd-block--wide';
+  const actTitle = document.createElement('h3');
+  actTitle.className = 'dd-block__title';
+  actTitle.textContent = 'Activity over time';
+  actBlock.appendChild(actTitle);
+  const actCanvas = document.createElement('canvas');
+  actCanvas.id = 'dd-chart-activity';
+  actCanvas.className = 'dd-chart-canvas';
+  actBlock.appendChild(actCanvas);
+  grid.appendChild(actBlock);
+
+  return grid;
+}
+
+function buildDrillCountsTiles_(c) {
+  const wrap = document.createElement('div');
+  wrap.className = 'dd-counts';
+  const tile = (n, label) => {
+    const t = document.createElement('div');
+    t.className = 'dd-count-tile';
+    const num = document.createElement('div');
+    num.className = 'dd-count-tile__n';
+    num.textContent = n;
+    t.appendChild(num);
+    const lab = document.createElement('div');
+    lab.className = 'dd-count-tile__label';
+    lab.textContent = label;
+    t.appendChild(lab);
+    return t;
+  };
+  wrap.appendChild(tile(c.primary, 'Primary'));
+  wrap.appendChild(tile(c.secondary, 'Secondary'));
+  const outer = document.createElement('div');
+  outer.appendChild(wrap);
+  if (c.unset > 0) {
+    const un = document.createElement('div');
+    un.className = 'dd-unclassified';
+    un.textContent = 'Unclassified: ' + c.unset;
+    outer.appendChild(un);
+  }
+  return outer;
+}
+
+function buildDrillCompletion_(comp) {
+  const wrap = document.createElement('div');
+  ['citation', 'classification', 'annotation'].forEach((kind) => {
+    const c = comp[kind];
+    const pct = c.total === 0 ? 0 : Math.round((c.complete / c.total) * 100);
+    const row = document.createElement('div');
+    row.className = 'dd-comp-row';
+    const lab = document.createElement('div');
+    lab.className = 'dd-comp-label';
+    lab.textContent = kind.charAt(0).toUpperCase() + kind.slice(1);
+    row.appendChild(lab);
+    const bar = document.createElement('div');
+    bar.className = 'dd-comp-bar';
+    const fill = document.createElement('div');
+    const klass = pct >= 80 ? 'db-completion-fill--good'
+               : pct >= 40 ? 'db-completion-fill--warn'
+               : 'db-completion-fill--bad';
+    fill.className = 'dd-comp-fill ' + klass;
+    fill.style.width = pct + '%';
+    bar.appendChild(fill);
+    row.appendChild(bar);
+    const pctTxt = document.createElement('div');
+    pctTxt.className = 'dd-comp-pct';
+    pctTxt.textContent = c.complete + ' / ' + c.total;
+    row.appendChild(pctTxt);
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+function buildDrillCharts_() {
+  destroyDrillCharts_();
+  if (typeof Chart === 'undefined') return;
+  const d = studentDetail.data;
+
+  // Bar chart — highlights by category
+  const barEl = document.getElementById('dd-chart-bar');
+  if (barEl) {
+    studentDetail.chartInstances.categoryBar = new Chart(barEl, {
+      type: 'bar',
+      data: {
+        labels: d.aggregates.categoryMix.map((m) => m.label),
+        datasets: [{
+          label: 'Highlights',
+          data: d.aggregates.categoryMix.map((m) => m.count),
+          backgroundColor: d.aggregates.categoryMix.map((m) => m.color),
+          borderWidth: 0,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } },
+          x: { ticks: { autoSkip: false } },
+        },
+      },
+    });
+  }
+
+  // Line chart — activity over time
+  const lineEl = document.getElementById('dd-chart-activity');
+  if (lineEl) {
+    studentDetail.chartInstances.activityLine = new Chart(lineEl, {
+      type: 'line',
+      data: {
+        labels: d.aggregates.activityByDay.map((a) => a.date),
+        datasets: [
+          {
+            label: 'Highlights',
+            data: d.aggregates.activityByDay.map((a) => a.highlights),
+            borderColor: '#1a73e8',
+            backgroundColor: 'rgba(26, 115, 232, 0.15)',
+            tension: 0.2,
+            fill: true,
+          },
+          {
+            label: 'Sources',
+            data: d.aggregates.activityByDay.map((a) => a.sources),
+            borderColor: '#d62728',
+            backgroundColor: 'rgba(214, 39, 40, 0.15)',
+            tension: 0.2,
+            fill: true,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom' } },
+        scales: {
+          y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } },
+        },
+      },
+    });
+  }
+}
+
+function destroyDrillCharts_() {
+  if (studentDetail.chartInstances.categoryBar) {
+    studentDetail.chartInstances.categoryBar.destroy();
+    studentDetail.chartInstances.categoryBar = null;
+  }
+  if (studentDetail.chartInstances.activityLine) {
+    studentDetail.chartInstances.activityLine.destroy();
+    studentDetail.chartInstances.activityLine = null;
+  }
+}
 
 function buildHeader_() {
   const h = document.createElement('header');
