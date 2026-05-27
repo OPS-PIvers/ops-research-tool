@@ -176,3 +176,97 @@ function sidebarInsertBibliography(projectId) {
 function sidebarInsertInlineCitation(projectId, sourceId, page) {
   return insertInlineCitation(projectId, sourceId, page);
 }
+
+/**
+ * Delete a source AND every highlight that references it, in one shot.
+ * Idempotent: deleting a sourceId that no longer exists returns
+ * { ok: true, deletedHighlights: 0, deletedSource: false } — never throws.
+ *
+ * Implementation strategy: read all rows for each tab, filter out the
+ * matches, write the kept rows back. Doing one batched setValues per tab
+ * (rather than row-by-row deleteRow calls) keeps us under the GAS script
+ * timeout for sources with many highlights, and avoids the half-deleted
+ * states deleteRow can leave on partial failures.
+ */
+function sidebarDeleteSource(projectId, sourceId) {
+  const actorEmail = getActorEmail_();
+  if (!projectId || !sourceId) throw new Error('projectId and sourceId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  const studentSheet = findOrCreateStudentSheet_(actorEmail, project);
+
+  const deletedHighlights = deleteAllRowsWhere_(
+    getTab_(studentSheet, TABS.HIGHLIGHTS),
+    HEADERS.HIGHLIGHTS,
+    'sourceId',
+    sourceId
+  );
+  const deletedSource = deleteAllRowsWhere_(
+    getTab_(studentSheet, TABS.SOURCES),
+    HEADERS.SOURCES,
+    'sourceId',
+    sourceId
+  ) > 0;
+  return { ok: true, deletedHighlights, deletedSource };
+}
+
+/**
+ * Batched filter-then-rewrite delete. Returns the number of rows removed.
+ * Preserves header row + any trailing blank rows that were already there.
+ * Safe to call on a tab with zero data rows.
+ */
+function deleteAllRowsWhere_(tab, headers, keyCol, keyValue) {
+  if (tab.getLastRow() < 2) return 0;
+  const keyIdx = headers.indexOf(keyCol);
+  if (keyIdx < 0) throw new Error('Unknown column ' + keyCol);
+  const dataRows = tab.getRange(2, 1, tab.getLastRow() - 1, headers.length).getValues();
+  const kept = dataRows.filter((row) => row[keyIdx] !== keyValue);
+  const removed = dataRows.length - kept.length;
+  if (removed === 0) return 0;
+
+  // Clear the old data range, then write back the kept rows (if any).
+  tab.getRange(2, 1, dataRows.length, headers.length).clearContent();
+  if (kept.length > 0) {
+    tab.getRange(2, 1, kept.length, headers.length).setValues(kept);
+  }
+  return removed;
+}
+
+/**
+ * Open the per-source editor modal. The sidebar dispatches here when the
+ * student clicks "Open in editor" on a source or evidence card.
+ *
+ * Template bindings: projectId, sourceId, focusHighlightId, and the active
+ * bundle (serialized to JSON so the modal has color swatches without an
+ * extra round trip).
+ *
+ * The modal opens at 820x720 — empirically validated as comfortable in
+ * Docs at typical laptop resolutions.
+ */
+function sidebarOpenSourceEditor(projectId, sourceId, focusHighlightId) {
+  const actorEmail = getActorEmail_();
+  if (!projectId || !sourceId) throw new Error('projectId and sourceId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+
+  // Verify the source belongs to this caller.
+  const ss = getStudentSheetIfExists_(actorEmail, project);
+  if (!ss) throw new Error('No data for this project yet');
+  const sourcesTab = getTab_(ss, TABS.SOURCES);
+  if (findRowByKey_(sourcesTab, HEADERS.SOURCES, 'sourceId', sourceId) < 0) {
+    throw new Error('Source not found');
+  }
+
+  const bundle = listBundles_().find((b) => b.bundleId === project.bundleId) || null;
+
+  const t = HtmlService.createTemplateFromFile('source_editor');
+  t.projectId = projectId;
+  t.sourceId = sourceId;
+  t.focusHighlightId = focusHighlightId || '';
+  t.bundleJson = JSON.stringify(bundle);
+  const html = t.evaluate()
+    .setWidth(820)
+    .setHeight(720);
+  DocumentApp.getUi().showModalDialog(html, 'Edit source');
+  return { ok: true };
+}

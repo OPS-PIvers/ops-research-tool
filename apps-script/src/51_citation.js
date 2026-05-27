@@ -16,8 +16,26 @@
 
 function formatCitation(fields, style) {
   const s = (style || 'mla').toLowerCase();
-  if (s === 'mla') return formatMLA_(fields || {});
+  if (s === 'mla') return formatMLA_(coerceFieldsToStrings_(fields));
   throw new Error('Unsupported citation style: ' + style);
+}
+
+/**
+ * Defensive: Sheets autocoerces numeric-looking cells to numbers and date
+ * cells to Date objects, and a round-tripped JSON.parse on citationFields
+ * may surface those native types too. Everything downstream assumes strings,
+ * so normalize here once. Returns a NEW object (does not mutate the input).
+ */
+function coerceFieldsToStrings_(fields) {
+  const out = {};
+  const src = fields || {};
+  Object.keys(src).forEach((k) => {
+    const v = src[k];
+    if (v === null || v === undefined) out[k] = '';
+    else if (typeof v === 'string') out[k] = v;
+    else out[k] = String(v);
+  });
+  return out;
 }
 
 /**
@@ -35,7 +53,7 @@ function formatCitation(fields, style) {
 function formatInlineCitation(fields, style, page) {
   const s = (style || 'mla').toLowerCase();
   if (s !== 'mla') throw new Error('Unsupported citation style: ' + style);
-  return formatMlaInline_(fields || {}, page);
+  return formatMlaInline_(coerceFieldsToStrings_(fields), page);
 }
 
 function formatMlaInline_(f, page) {

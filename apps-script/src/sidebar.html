@@ -3,15 +3,11 @@
   <head>
     <base target="_top" />
     <?!= includeFile_('sidebar_css') ?>
-    <script>window.OPS_MODE = '<?= mode || "sidebar" ?>';</script>
   </head>
-  <body class="sb-body sb-body--<?= mode || "sidebar" ?>">
+  <body class="sb-body">
     <header class="sb-header">
       <div class="sb-header__row">
         <h1 class="sb-title">OPS Research Tool</h1>
-        <? if ((mode || 'sidebar') === 'sidebar') { ?>
-          <button id="sb-popout" type="button" class="sb-popout" title="Pop out to a wider window">⇱ Pop out</button>
-        <? } ?>
       </div>
       <div id="sb-actor" class="sb-actor"></div>
     </header>
@@ -50,6 +46,7 @@
     </main>
 
     <footer class="sb-footer">
+      <button id="sb-open-editor" type="button" class="sb-footer-btn sb-footer-btn--secondary" disabled>Open Editor</button>
       <button id="sb-insert" type="button" disabled>Insert Annotated Bibliography</button>
       <div id="sb-status" class="sb-status"></div>
     </footer>

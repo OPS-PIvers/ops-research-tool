@@ -1,0 +1,703 @@
+<script>
+const SRC_TYPES = ['website', 'article', 'book', 'primary'];
+const PS_OPTS = ['primary', 'secondary', 'unset'];
+
+const ctx = window.OPS_EDITOR_CTX;
+const editor = {
+  source: null,            // the source currently being edited
+  highlights: [],          // highlights for the currently-edited source
+  allSources: [],          // full list — drives the source-switcher dropdown
+  allHighlights: [],       // full list — used when switching sources
+  bundle: ctx.bundle || null,
+  perSourceFilter: null,
+  editingHighlightId: null,
+  confirmingHighlightDeleteId: null,
+  confirmingSourceDelete: false,
+};
+
+const els = {
+  sourceSelect: document.getElementById('ed-source-select'),
+  close:        document.getElementById('ed-close'),
+  citation:     document.getElementById('ed-citation'),
+  evHeader:     document.getElementById('ed-evheader'),
+  filter:       document.getElementById('ed-filter'),
+  evidence:     document.getElementById('ed-evidence'),
+  status:       document.getElementById('ed-status'),
+};
+
+els.close.addEventListener('click', () => google.script.host.close());
+els.sourceSelect.addEventListener('change', () => switchSource_(els.sourceSelect.value));
+
+bootstrap();
+
+function bootstrap() {
+  google.script.run
+    .withSuccessHandler(onData)
+    .withFailureHandler(onFail('loading source'))
+    .sidebarGetProjectData(ctx.projectId);
+}
+
+function onData(resp) {
+  if (!resp || !resp.ok) {
+    renderEmpty('Could not load this source.');
+    return;
+  }
+  editor.allSources = resp.sources || [];
+  editor.allHighlights = resp.highlights || [];
+  editor.source = editor.allSources.find((s) => s.sourceId === ctx.sourceId) || null;
+  editor.highlights = editor.allHighlights.filter((h) => h.sourceId === ctx.sourceId);
+  if (!editor.source) {
+    renderEmpty('This source no longer exists. Close this window.');
+    return;
+  }
+  setStatus('');
+  populateSourceSelect_();
+  render();
+  if (ctx.focusHighlightId) {
+    // Pre-expand the editor for the target highlight, then re-render and scroll.
+    if (editor.highlights.find((h) => h.highlightId === ctx.focusHighlightId)) {
+      editor.editingHighlightId = ctx.focusHighlightId;
+      render();
+      const target = document.getElementById('hl-' + ctx.focusHighlightId);
+      if (target) target.scrollIntoView({ behavior: 'auto', block: 'center' });
+    }
+  }
+}
+
+/**
+ * Switch the modal to a different source without closing/reopening. Resets
+ * per-source editor state so the new source starts clean.
+ */
+function switchSource_(newSourceId) {
+  if (!newSourceId || newSourceId === ctx.sourceId) return;
+  const next = editor.allSources.find((s) => s.sourceId === newSourceId);
+  if (!next) {
+    setStatus('That source is no longer available.', 'bad', 3000);
+    populateSourceSelect_();   // re-sync the select back to ctx.sourceId
+    return;
+  }
+  ctx.sourceId = newSourceId;
+  editor.source = next;
+  editor.highlights = editor.allHighlights.filter((h) => h.sourceId === newSourceId);
+  // Reset per-source UI state.
+  editor.perSourceFilter = null;
+  editor.editingHighlightId = null;
+  editor.confirmingHighlightDeleteId = null;
+  editor.confirmingSourceDelete = false;
+  render();
+}
+
+function sourceLabel_(s) {
+  const parsed = s.citationFieldsParsed || {};
+  return parsed.title || s.scrapedTitle || '(untitled)';
+}
+
+function populateSourceSelect_() {
+  els.sourceSelect.innerHTML = '';
+  editor.allSources.forEach((s) => {
+    const opt = document.createElement('option');
+    opt.value = s.sourceId;
+    opt.textContent = sourceLabel_(s);
+    if (s.sourceId === ctx.sourceId) opt.selected = true;
+    els.sourceSelect.appendChild(opt);
+  });
+  els.sourceSelect.disabled = editor.allSources.length <= 1;
+}
+
+function render() {
+  // Keep the select label in sync with whatever's currently shown — citation
+  // title edits should ripple into the dropdown option text.
+  if (editor.source) {
+    const opt = els.sourceSelect.querySelector('option[value="' + ctx.sourceId + '"]');
+    if (opt) opt.textContent = sourceLabel_(editor.source);
+  }
+
+  els.evHeader.textContent = 'Evidence (' + editor.highlights.length + ')';
+
+  els.citation.innerHTML = '';
+  els.citation.appendChild(renderCitationForm());
+  renderFilterChips_();
+  renderEvidenceList_();
+}
+
+function renderEmpty(message) {
+  els.sourceSelect.innerHTML = '<option>(no source)</option>';
+  els.sourceSelect.disabled = true;
+  els.citation.innerHTML = '';
+  els.filter.innerHTML = '';
+  els.evidence.innerHTML = '<div class="sb-empty">' + esc_(message) + '</div>';
+  setStatus('');
+}
+
+function setStatus(text, kind, autoClearMs) {
+  els.status.textContent = text || '';
+  els.status.className = 'sb-modal__status' + (kind ? ' sb-modal__status--' + kind : '');
+  if (autoClearMs) {
+    setTimeout(() => {
+      if (els.status.textContent === text) {
+        els.status.textContent = '';
+        els.status.className = 'sb-modal__status';
+      }
+    }, autoClearMs);
+  }
+}
+
+function onFail(stage) {
+  return (e) => setStatus(stage + ': ' + (e && e.message || e), 'bad');
+}
+
+function esc_(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderCitationForm() {
+  const source = editor.source;
+  const fields = Object.assign({}, source.citationFieldsParsed || {});
+  fields.sourceType    = fields.sourceType    || source.sourceType || 'website';
+  fields.title         = fields.title         || source.scrapedTitle || '';
+  fields.siteName      = fields.siteName      || source.scrapedSite || '';
+  fields.publishedDate = fields.publishedDate || source.scrapedDate || '';
+  fields.author        = fields.author        || source.scrapedAuthor || '';
+  fields.url           = fields.url           || source.rawUrl || '';
+  fields.accessDate    = source.accessDate    || fields.accessDate || '';
+
+  const form = document.createElement('div');
+  form.className = 'sb-source__form';
+
+  // Source type
+  form.appendChild(formField_('Source type', selectInput_(SRC_TYPES, fields.sourceType, (v) => {
+    fields.sourceType = v;
+    saveSourcePatch_({ sourceType: v, citationFields: fields });
+    source.sourceType = v;
+    source.citationFieldsParsed = fields;
+    render();   // re-render to swap the field set
+  })));
+
+  // Per-type fields
+  sourceFieldsFor_(fields.sourceType).forEach((def) => {
+    const onChange = (v) => {
+      fields[def.key] = v;
+      saveSourcePatch_({ citationFields: fields });
+      source.citationFieldsParsed = fields;
+      updatePreview_(form, fields);
+    };
+    form.appendChild(formField_(def.label, textInput_(fields[def.key] || '', onChange, def.kind)));
+  });
+
+  // Primary/secondary radios
+  const psRow = document.createElement('div');
+  psRow.className = 'sb-source__form-row';
+  PS_OPTS.forEach((opt) => {
+    const lab = document.createElement('label');
+    const inp = document.createElement('input');
+    inp.type = 'radio'; inp.name = 'ed-ps'; inp.value = opt;
+    if ((source.primarySecondary || 'unset') === opt) inp.checked = true;
+    inp.addEventListener('change', () => {
+      saveSourcePatch_({ primarySecondary: opt });
+      source.primarySecondary = opt;
+    });
+    lab.appendChild(inp);
+    lab.appendChild(document.createTextNode(' ' + opt));
+    psRow.appendChild(lab);
+  });
+  form.appendChild(formField_('Classification', psRow));
+
+  // Annotation
+  const annWrap = document.createElement('div');
+  annWrap.className = 'sb-source__annotation';
+  const annLabel = document.createElement('label'); annLabel.textContent = 'Annotation';
+  const annTa = document.createElement('textarea');
+  annTa.value = source.annotation || '';
+  annTa.placeholder = '2–3 sentence annotation…';
+  let annTimer;
+  annTa.addEventListener('input', () => {
+    clearTimeout(annTimer);
+    annTimer = setTimeout(() => {
+      saveSourcePatch_({ annotation: annTa.value });
+      source.annotation = annTa.value;
+    }, 600);
+  });
+  annWrap.appendChild(annLabel);
+  annWrap.appendChild(annTa);
+  form.appendChild(annWrap);
+
+  // Live preview
+  const preview = document.createElement('div');
+  preview.className = 'sb-source__preview';
+  preview.id = 'ed-preview';
+  preview.innerHTML = '<em>Loading preview…</em>';
+  form.appendChild(preview);
+  updatePreview_(form, fields);
+
+  // Delete source — at the bottom of the left pane, after preview.
+  const dangerWrap = document.createElement('div');
+  dangerWrap.className = 'sb-modal__danger';
+  dangerWrap.appendChild(renderDeleteSourceUi_());
+  form.appendChild(dangerWrap);
+
+  return form;
+}
+
+function sourceFieldsFor_(sourceType) {
+  switch (sourceType) {
+    case 'website':
+      return [
+        { key: 'title', label: 'Title', kind: 'text' },
+        { key: 'siteName', label: 'Site name', kind: 'text' },
+        { key: 'author', label: 'Author', kind: 'text' },
+        { key: 'publishedDate', label: 'Published date', kind: 'text' },
+        { key: 'url', label: 'URL', kind: 'text' },
+      ];
+    case 'article':
+      return [
+        { key: 'title', label: 'Article title', kind: 'text' },
+        { key: 'publication', label: 'Publication name', kind: 'text' },
+        { key: 'author', label: 'Author', kind: 'text' },
+        { key: 'publishedDate', label: 'Published date', kind: 'text' },
+        { key: 'volume', label: 'Volume (opt.)', kind: 'text' },
+        { key: 'issue', label: 'Issue (opt.)', kind: 'text' },
+        { key: 'pages', label: 'Pages (opt.)', kind: 'text' },
+        { key: 'url', label: 'URL', kind: 'text' },
+      ];
+    case 'book':
+      return [
+        { key: 'title', label: 'Book title', kind: 'text' },
+        { key: 'author', label: 'Author', kind: 'text' },
+        { key: 'publisher', label: 'Publisher', kind: 'text' },
+        { key: 'publishedDate', label: 'Year', kind: 'text' },
+      ];
+    case 'primary':
+      return [
+        { key: 'title', label: 'Title', kind: 'text' },
+        { key: 'author', label: 'Author / creator', kind: 'text' },
+        { key: 'publishedDate', label: 'Date', kind: 'text' },
+        { key: 'archive', label: 'Archive / repository', kind: 'text' },
+        { key: 'url', label: 'URL', kind: 'text' },
+      ];
+    default:
+      return [];
+  }
+}
+
+function formField_(labelText, control) {
+  const wrap = document.createElement('div');
+  const lab = document.createElement('label');
+  lab.textContent = labelText;
+  wrap.appendChild(lab);
+  wrap.appendChild(control);
+  return wrap;
+}
+
+function textInput_(value, onCommit, kind) {
+  const i = document.createElement('input');
+  i.type = kind === 'date' ? 'date' : 'text';
+  i.value = value || '';
+  i.addEventListener('change', () => onCommit(i.value));
+  i.addEventListener('blur', () => onCommit(i.value));
+  return i;
+}
+
+function selectInput_(options, value, onChange) {
+  const s = document.createElement('select');
+  options.forEach((o) => {
+    const opt = document.createElement('option');
+    opt.value = o; opt.textContent = o;
+    if (o === value) opt.selected = true;
+    s.appendChild(opt);
+  });
+  s.addEventListener('change', () => onChange(s.value));
+  return s;
+}
+
+function updatePreview_(form, fields) {
+  const previewEl = form.querySelector('#ed-preview') || form.querySelector('.sb-source__preview');
+  if (!previewEl) return;
+  google.script.run
+    .withSuccessHandler((res) => {
+      if (!res || !res.text) { previewEl.textContent = ''; return; }
+      previewEl.innerHTML = renderPreviewHtml_(res);
+    })
+    .withFailureHandler(() => { /* ignore preview errors */ })
+    .sidebarPreviewCitation(fields, 'mla');
+}
+
+function renderPreviewHtml_(formatted) {
+  const text = formatted.text || '';
+  const italics = formatted.italics || [];
+  let html = '';
+  let cursor = 0;
+  italics.forEach(([s, e]) => {
+    if (s > cursor) html += esc_(text.slice(cursor, s));
+    html += '<em>' + esc_(text.slice(s, e)) + '</em>';
+    cursor = e;
+  });
+  if (cursor < text.length) html += esc_(text.slice(cursor));
+  return html;
+}
+
+function saveSourcePatch_(patch) {
+  const merged = Object.assign({}, patch, { sourceId: ctx.sourceId, projectId: ctx.projectId });
+  google.script.run
+    .withSuccessHandler(() => setStatus('Saved.', 'good', 1500))
+    .withFailureHandler(onFail('saving source'))
+    .sidebarUpdateSource(merged);
+}
+
+function renderEvidenceList_() {
+  els.evidence.innerHTML = '';
+  if (editor.highlights.length === 0 && editor.source) {
+    const banner = document.createElement('div');
+    banner.className = 'sb-modal__banner';
+    banner.textContent =
+      'This source has no evidence. The source still exists — close the editor, or click "Delete source" below to remove it.';
+    els.evidence.appendChild(banner);
+  }
+  const visible = editor.highlights.filter(highlightPassesFilter_);
+  if (visible.length === 0) {
+    const e = document.createElement('div');
+    e.className = 'sb-empty';
+    e.textContent = editor.highlights.length === 0
+      ? 'No evidence yet for this source.'
+      : 'No evidence matches the current filter.';
+    els.evidence.appendChild(e);
+    return;
+  }
+  visible.forEach((h) => els.evidence.appendChild(renderEvidenceCard(h)));
+}
+
+function highlightPassesFilter_(h) {
+  if (!editor.perSourceFilter) return true;
+  return h.primaryCategory === editor.perSourceFilter || h.secondaryCategory === editor.perSourceFilter;
+}
+
+function renderEvidenceCard(h) {
+  const card = document.createElement('div');
+  card.className = 'sb-highlight';
+  card.id = 'hl-' + h.highlightId;
+  card.setAttribute('data-highlight-id', h.highlightId);
+
+  const color = colorForLabel_(h.primaryCategory) || '#dadce0';
+  const bar = document.createElement('div');
+  bar.className = 'sb-highlight__bar';
+  bar.style.backgroundColor = color;
+  card.appendChild(bar);
+
+  const cat = document.createElement('div');
+  cat.className = 'sb-highlight__cat';
+  cat.appendChild(document.createTextNode(h.primaryCategory || '(no category)'));
+  if (h.secondaryCategory) {
+    const sec = document.createElement('span');
+    sec.className = 'sb-highlight__secondary';
+    sec.textContent = '+ ' + h.secondaryCategory;
+    cat.appendChild(sec);
+  }
+  card.appendChild(cat);
+
+  // Full text — no truncation in the modal.
+  const t = document.createElement('div');
+  t.className = 'sb-highlight__text';
+  t.textContent = h.highlightedText || '';
+  card.appendChild(t);
+
+  if (h.note) {
+    const n = document.createElement('div');
+    n.className = 'sb-highlight__note';
+    n.textContent = h.note;
+    card.appendChild(n);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'sb-highlight__actions';
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.className = 'sb-highlight__btn sb-highlight__btn--edit';
+  editBtn.textContent = editor.editingHighlightId === h.highlightId ? 'Done' : 'Edit';
+  editBtn.addEventListener('click', () => {
+    editor.editingHighlightId = editor.editingHighlightId === h.highlightId ? null : h.highlightId;
+    render();
+  });
+  actions.appendChild(editBtn);
+  if (editor.confirmingHighlightDeleteId === h.highlightId) {
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'sb-highlight__btn sb-highlight__btn--cancel';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => {
+      editor.confirmingHighlightDeleteId = null;
+      render();
+    });
+    actions.appendChild(cancelBtn);
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'sb-highlight__btn sb-highlight__btn--confirm';
+    confirmBtn.textContent = 'Confirm delete';
+    confirmBtn.addEventListener('click', () => optimisticallyDeleteHighlight_(h));
+    actions.appendChild(confirmBtn);
+  } else {
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'sb-highlight__btn sb-highlight__btn--delete';
+    delBtn.textContent = 'Delete';
+    delBtn.addEventListener('click', () => {
+      editor.confirmingHighlightDeleteId = h.highlightId;
+      render();
+    });
+    actions.appendChild(delBtn);
+  }
+  card.appendChild(actions);
+
+  if (editor.editingHighlightId === h.highlightId) {
+    card.appendChild(renderHighlightMiniEditor_(h));
+  }
+  return card;
+}
+
+function colorForLabel_(label) {
+  if (!editor.bundle || !label) return null;
+  for (let i = 1; i <= 5; i++) {
+    if (editor.bundle['label' + i] === label) return editor.bundle['color' + i];
+  }
+  return null;
+}
+
+function renderHighlightMiniEditor_(h) {
+  const editorEl = document.createElement('div');
+  editorEl.style.marginTop = '8px';
+  editorEl.style.paddingTop = '8px';
+  editorEl.style.borderTop = '1px dashed var(--c-line)';
+
+  if (!editor.bundle) {
+    editorEl.textContent = '(bundle not loaded — cannot edit)';
+    return editorEl;
+  }
+
+  // Primary category swatches.
+  const primRow = document.createElement('div');
+  primRow.style.cssText = 'display:flex; gap:4px; align-items:center; margin-bottom:6px; flex-wrap:wrap;';
+  const primLabel = document.createElement('span');
+  primLabel.style.cssText = 'font-size:10px; color:var(--c-muted); min-width:70px; text-transform:uppercase;';
+  primLabel.textContent = 'Category';
+  primRow.appendChild(primLabel);
+  for (let i = 1; i <= 5; i++) {
+    const label = editor.bundle['label' + i];
+    const color = editor.bundle['color' + i];
+    if (!label) continue;
+    primRow.appendChild(swatch_(label, color, h.primaryCategory === label, () => {
+      saveHighlightPatch_(h, { primaryCategory: label });
+      h.primaryCategory = label;
+      render();
+    }));
+  }
+  editorEl.appendChild(primRow);
+
+  // Secondary category swatches.
+  const secRow = document.createElement('div');
+  secRow.style.cssText = 'display:flex; gap:4px; align-items:center; margin-bottom:6px; flex-wrap:wrap;';
+  const secLabel = document.createElement('span');
+  secLabel.style.cssText = 'font-size:10px; color:var(--c-muted); min-width:70px; text-transform:uppercase;';
+  secLabel.textContent = 'Secondary';
+  secRow.appendChild(secLabel);
+  for (let i = 1; i <= 5; i++) {
+    const label = editor.bundle['label' + i];
+    const color = editor.bundle['color' + i];
+    if (!label) continue;
+    secRow.appendChild(swatch_(label, color, h.secondaryCategory === label, () => {
+      const next = h.secondaryCategory === label ? '' : label;
+      saveHighlightPatch_(h, { secondaryCategory: next });
+      h.secondaryCategory = next;
+      render();
+    }));
+  }
+  const noneBtn = document.createElement('button');
+  noneBtn.type = 'button';
+  noneBtn.style.cssText = 'width:22px; height:22px; border-radius:50%; border:2px dashed var(--c-muted); background:#fff; font-size:10px; color:var(--c-muted);';
+  noneBtn.textContent = '∅';
+  noneBtn.title = 'No secondary';
+  noneBtn.addEventListener('click', () => {
+    saveHighlightPatch_(h, { secondaryCategory: '' });
+    h.secondaryCategory = '';
+    render();
+  });
+  secRow.appendChild(noneBtn);
+  editorEl.appendChild(secRow);
+
+  // Note textarea.
+  const noteWrap = document.createElement('div');
+  const noteLabel = document.createElement('div');
+  noteLabel.style.cssText = 'font-size:10px; color:var(--c-muted); text-transform:uppercase;';
+  noteLabel.textContent = 'Note';
+  const ta = document.createElement('textarea');
+  ta.style.cssText = 'width:100%; border:1px solid var(--c-line); border-radius:4px; padding:4px 6px; font-size:12px; resize:vertical; min-height:40px;';
+  ta.value = h.note || '';
+  let timer;
+  ta.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      saveHighlightPatch_(h, { note: ta.value });
+      h.note = ta.value;
+    }, 600);
+  });
+  noteWrap.appendChild(noteLabel);
+  noteWrap.appendChild(ta);
+  editorEl.appendChild(noteWrap);
+
+  return editorEl;
+}
+
+function swatch_(label, color, active, onClick) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.title = label;
+  b.style.cssText = 'width:22px; height:22px; border-radius:50%; border:2px solid ' + (active ? '#202124' : 'transparent') + '; padding:0; background:' + color + '; cursor:pointer; background-clip:padding-box;';
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function saveHighlightPatch_(highlight, patch) {
+  const merged = Object.assign({}, patch, { highlightId: highlight.highlightId, projectId: ctx.projectId });
+  google.script.run
+    .withSuccessHandler(() => setStatus('Saved.', 'good', 1500))
+    .withFailureHandler(onFail('saving highlight'))
+    .sidebarUpdateHighlight(merged);
+}
+
+/**
+ * Same snapshot/restore pattern the sidebar uses today, scoped to the modal's
+ * local state. cascadeSource is ALWAYS false from the modal — the modal has
+ * its own explicit "Delete source" button, so it never triggers an implicit
+ * source-cascade when the last highlight goes away.
+ */
+function optimisticallyDeleteHighlight_(highlight) {
+  const snapshotIdx = editor.highlights.findIndex((h) => h.highlightId === highlight.highlightId);
+  const snapshot = highlight;
+
+  editor.highlights = editor.highlights.filter((h) => h.highlightId !== highlight.highlightId);
+  editor.confirmingHighlightDeleteId = null;
+  if (editor.editingHighlightId === highlight.highlightId) editor.editingHighlightId = null;
+  render();
+  setStatus('Deleted.', 'good', 1500);
+
+  google.script.run
+    .withSuccessHandler(() => { /* already reflected */ })
+    .withFailureHandler((e) => {
+      const insertAt = (arr, idx, item) => {
+        if (idx < 0 || idx > arr.length) arr.push(item);
+        else arr.splice(idx, 0, item);
+      };
+      insertAt(editor.highlights, snapshotIdx, snapshot);
+      render();
+      setStatus('Delete failed: ' + (e && e.message || e), 'bad');
+    })
+    .sidebarDeleteHighlight(highlight.highlightId, ctx.projectId, false);
+}
+
+function renderFilterChips_() {
+  els.filter.innerHTML = '';
+  if (!editor.bundle) return;
+  const breakdown = categoryBreakdown_();
+  if (breakdown.length === 0) return;
+
+  // "All" chip.
+  const allCount = editor.highlights.length;
+  els.filter.appendChild(makeFilterChip_(null, 'All', '#dadce0', allCount, editor.perSourceFilter === null));
+
+  // Per-category chips.
+  breakdown.forEach((b) => {
+    els.filter.appendChild(
+      makeFilterChip_(b.label, b.label, b.color, b.count, editor.perSourceFilter === b.label)
+    );
+  });
+}
+
+function categoryBreakdown_() {
+  if (!editor.bundle) return [];
+  const counts = {};
+  editor.highlights.forEach((h) => {
+    if (h.primaryCategory) counts[h.primaryCategory] = (counts[h.primaryCategory] || 0) + 1;
+  });
+  const out = [];
+  for (let i = 1; i <= 5; i++) {
+    const label = editor.bundle['label' + i];
+    if (!label) continue;
+    if (counts[label]) out.push({ label, color: editor.bundle['color' + i], count: counts[label] });
+  }
+  return out;
+}
+
+function makeFilterChip_(value, label, color, count, active) {
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'sb-filter-chip sb-filter-chip--mini' + (active ? ' sb-filter-chip--active' : '');
+  const dot = document.createElement('span');
+  dot.className = 'sb-filter-chip__dot';
+  dot.style.backgroundColor = color;
+  chip.appendChild(dot);
+  chip.appendChild(document.createTextNode(label));
+  const c = document.createElement('span');
+  c.className = 'sb-filter-chip__count';
+  c.textContent = count;
+  chip.appendChild(c);
+  chip.addEventListener('click', () => {
+    editor.perSourceFilter = editor.perSourceFilter === value ? null : value;
+    render();
+  });
+  return chip;
+}
+
+function renderDeleteSourceUi_() {
+  const wrap = document.createElement('div');
+  if (editor.confirmingSourceDelete) {
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'sb-modal__btn sb-modal__btn--cancel';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', () => {
+      editor.confirmingSourceDelete = false;
+      render();
+    });
+    wrap.appendChild(cancel);
+
+    const confirm = document.createElement('button');
+    confirm.type = 'button';
+    confirm.className = 'sb-modal__btn sb-modal__btn--danger';
+    const n = editor.highlights.length;
+    confirm.textContent = n > 0
+      ? 'Confirm — delete source and ' + n + ' piece' + (n === 1 ? '' : 's') + ' of evidence'
+      : 'Confirm — delete source';
+    confirm.addEventListener('click', performDeleteSource_);
+    wrap.appendChild(confirm);
+  } else {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'sb-modal__btn sb-modal__btn--danger-outline';
+    btn.textContent = '🗑  Delete source';
+    btn.addEventListener('click', () => {
+      editor.confirmingSourceDelete = true;
+      render();
+    });
+    wrap.appendChild(btn);
+  }
+  return wrap;
+}
+
+/**
+ * Non-optimistic delete — modal stays open until the server confirms. On
+ * success, close the modal; the sidebar's polling loop picks up the
+ * deletion on its next tick. On failure, revert to the initial single-button
+ * state and surface the error.
+ */
+function performDeleteSource_() {
+  setStatus('Deleting…');
+  google.script.run
+    .withSuccessHandler(() => {
+      google.script.host.close();
+    })
+    .withFailureHandler((e) => {
+      editor.confirmingSourceDelete = false;
+      render();
+      setStatus('Delete failed: ' + (e && e.message || e), 'bad');
+    })
+    .sidebarDeleteSource(ctx.projectId, ctx.sourceId);
+}
+</script>
