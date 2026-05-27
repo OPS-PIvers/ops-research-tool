@@ -268,4 +268,36 @@ select, input, textarea { font: inherit; }
 .modal__error {
   color: var(--c-bad); font-size: 12px; margin-top: 6px;
 }
+
+/* ---- Dashboard scaffolding ---- */
+.db-toolbar {
+  display: flex; align-items: center; gap: 16px;
+  margin-bottom: 16px;
+}
+.db-back {
+  background: transparent; border: 1px solid var(--c-line);
+  border-radius: 4px; padding: 6px 12px;
+  font-size: 13px; color: var(--c-muted);
+}
+.db-back:hover { color: var(--c-text); }
+.db-title {
+  font-family: var(--font-display);
+  font-size: 22px; font-weight: 600;
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.db-refresh {
+  background: var(--c-bg); border: 1px solid var(--c-line);
+  border-radius: 4px; padding: 6px 12px;
+  font-size: 13px; color: var(--c-accent);
+}
+.db-refresh:hover:not(:disabled) { background: var(--c-soft); }
+.db-asof {
+  font-size: 12px; color: var(--c-muted);
+  white-space: nowrap;
+}
+.db-body { background: var(--c-bg); border: 1px solid var(--c-line); border-radius: 8px; }
+.db-empty {
+  padding: 48px 24px; text-align: center; color: var(--c-muted);
+}
 </style>

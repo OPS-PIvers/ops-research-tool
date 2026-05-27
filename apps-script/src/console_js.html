@@ -616,8 +616,167 @@ function doUnarchive_(p) {
     .consoleUnarchiveProject(p.projectId);
 }
 
+// DASHBOARD view-local state. Reset when projectId changes.
+const dashboard = {
+  loadedFor: null,         // projectId of currently-loaded data
+  data: null,              // { project, students, asOf }
+  sortKey: 'activity',     // 'name' | 'activity' | 'completion' | 'highlights' | 'sources'
+  sortDir: 'desc',         // 'asc' | 'desc'
+  asOfTickHandle: null,
+};
+
+function renderDashboard_(main) {
+  // Reset cache if we navigated to a different project.
+  if (dashboard.loadedFor !== state.projectId) {
+    dashboard.loadedFor = null;
+    dashboard.data = null;
+  }
+
+  // Toolbar
+  const toolbar = document.createElement('div');
+  toolbar.className = 'db-toolbar';
+  const back = document.createElement('button');
+  back.className = 'db-back';
+  back.textContent = '← My Projects';
+  back.addEventListener('click', () => navigate_('/projects'));
+  toolbar.appendChild(back);
+
+  const title = document.createElement('div');
+  title.className = 'db-title';
+  title.id = 'db-title';
+  title.textContent = 'Loading…';
+  toolbar.appendChild(title);
+
+  const refresh = document.createElement('button');
+  refresh.className = 'db-refresh';
+  refresh.id = 'db-refresh';
+  refresh.textContent = '↻ Refresh';
+  refresh.addEventListener('click', () => fetchDashboard_(state.projectId, true));
+  toolbar.appendChild(refresh);
+
+  const asof = document.createElement('div');
+  asof.className = 'db-asof';
+  asof.id = 'db-asof';
+  asof.textContent = '';
+  toolbar.appendChild(asof);
+
+  main.appendChild(toolbar);
+
+  const body = document.createElement('div');
+  body.className = 'db-body';
+  body.id = 'db-body';
+  main.appendChild(body);
+
+  if (dashboard.data) {
+    paintDashboard_();
+  } else {
+    body.innerHTML = '';
+    const loader = document.createElement('div');
+    loader.className = 'mp-loading';
+    const sp = document.createElement('div');
+    sp.className = 'console-spinner';
+    loader.appendChild(sp);
+    const txt = document.createElement('div');
+    txt.textContent = 'Loading dashboard…';
+    loader.appendChild(txt);
+    body.appendChild(loader);
+    fetchDashboard_(state.projectId, false);
+  }
+
+  // Refresh on tab focus, but only while we are on the dashboard view.
+  if (!window.__opsConsoleFocusBound) {
+    window.__opsConsoleFocusBound = true;
+    window.addEventListener('focus', () => {
+      if (state.view === 'DASHBOARD' && state.projectId) fetchDashboard_(state.projectId, true);
+      if (state.view === 'STUDENT' && state.projectId && state.studentEmail) {
+        // Student detail focus refresh is added in Task 16; safe to keep here as a hook.
+        if (typeof fetchStudentDetail_ === 'function') fetchStudentDetail_(state.projectId, state.studentEmail);
+      }
+    });
+  }
+
+  // Live "last refreshed" ticker
+  startAsOfTicker_();
+}
+
+function fetchDashboard_(projectId, isRefresh) {
+  if (isRefresh) {
+    const btn = document.getElementById('db-refresh');
+    if (btn) { btn.disabled = true; btn.textContent = '↻ Refreshing…'; }
+  }
+  google.script.run
+    .withSuccessHandler((resp) => {
+      if (!resp || !resp.ok) {
+        setStatus('Could not load dashboard.', 'bad', 4000);
+        return;
+      }
+      dashboard.loadedFor = projectId;
+      dashboard.data = resp;
+      paintDashboard_();
+      const btn = document.getElementById('db-refresh');
+      if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+    })
+    .withFailureHandler((e) => {
+      const btn = document.getElementById('db-refresh');
+      if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+      onFail_('loading dashboard')(e);
+    })
+    .consoleGetProjectDashboard(projectId);
+}
+
+function paintDashboard_() {
+  if (!dashboard.data) return;
+  const proj = dashboard.data.project;
+  const title = document.getElementById('db-title');
+  if (title) {
+    const classes = proj.scopedClasses.join(', ') || '(no classes)';
+    const count = dashboard.data.students.length;
+    title.textContent = proj.name + ' · ' + classes + ' · ' + count + ' student' + (count === 1 ? '' : 's');
+  }
+
+  const body = document.getElementById('db-body');
+  if (!body) return;
+  body.innerHTML = '';
+
+  // Real table render lands in Task 14; for now, just confirm we have data.
+  if (dashboard.data.students.length === 0) {
+    const e = document.createElement('div');
+    e.className = 'db-empty';
+    e.textContent = 'No students enrolled in your classes for this project.';
+    body.appendChild(e);
+  } else {
+    const e = document.createElement('div');
+    e.className = 'db-empty';
+    e.textContent = 'Loaded ' + dashboard.data.students.length + ' students. Table render — Task 14.';
+    body.appendChild(e);
+  }
+
+  updateAsOf_();
+}
+
+function startAsOfTicker_() {
+  if (dashboard.asOfTickHandle) clearInterval(dashboard.asOfTickHandle);
+  dashboard.asOfTickHandle = setInterval(updateAsOf_, 10000);
+}
+
+function updateAsOf_() {
+  if (!dashboard.data) return;
+  const el = document.getElementById('db-asof');
+  if (!el) return;
+  el.textContent = 'Refreshed ' + relativeTime_(dashboard.data.asOf);
+}
+
+function relativeTime_(iso) {
+  if (!iso) return 'never';
+  const d = new Date(iso);
+  const diff = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (diff < 60)    return Math.floor(diff) + 's ago';
+  if (diff < 3600)  return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
 // View render functions — placeholders filled in Tasks 10+.
-function renderDashboard_(main)     { main.innerHTML = '<div class="console-empty">Dashboard (Tasks 13–15).</div>'; }
 function renderStudentDetail_(main) { main.innerHTML = '<div class="console-empty">Drill-down (Tasks 16–18).</div>'; }
 
 function buildHeader_() {
