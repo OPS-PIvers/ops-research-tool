@@ -129,3 +129,81 @@ function projectClassList_(project) {
     .map((s) => s.trim())
     .filter(Boolean);
 }
+
+/**
+ * Create a project from the Console wizard. Server validates inputs and
+ * calls the existing createProject_ helper, which provisions the project
+ * folder. Returns the new project record (same shape as
+ * consoleGetMyProjects but for a single project).
+ */
+function consoleCreateProject(args) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!args) throw new Error('args required');
+  const name = String(args.name || '').trim();
+  const schoolYear = String(args.schoolYear || '').trim();
+  const bundleId = String(args.bundleId || '').trim();
+  const memberClasses = Array.isArray(args.memberClasses)
+    ? args.memberClasses.map((s) => String(s).trim()).filter(Boolean)
+    : [];
+
+  if (!name || name.length > 80)                  throw new Error('Name must be 1–80 characters');
+  if (!schoolYear)                                throw new Error('School year required');
+  if (!bundleId)                                  throw new Error('Bundle required');
+  if (!getBundle_(bundleId))                      throw new Error('Unknown bundle');
+  if (memberClasses.length === 0)                 throw new Error('At least one class required');
+
+  // Teachers can only assign classes they themselves teach.
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    const outside = memberClasses.filter((c) => taught.indexOf(c) < 0);
+    if (outside.length > 0) {
+      throw new Error('You cannot assign classes you do not teach: ' + outside.join(', '));
+    }
+  }
+
+  const project = createProject_({
+    name, schoolYear, bundleId, memberClasses,
+    createdBy: actorEmail,
+  });
+
+  // Return a shape compatible with consoleGetMyProjects entries (sans the
+  // computed studentCount — the client refetches the list anyway).
+  const bundle = getBundle_(bundleId);
+  return {
+    ok: true,
+    project: {
+      projectId: project.projectId,
+      name: project.name,
+      schoolYear: project.schoolYear,
+      bundleId: project.bundleId,
+      bundleName: bundle.name,
+      memberClasses,
+      scopedClasses: memberClasses,
+      studentCount: 0,    // client will refetch for accurate counts
+      status: project.status,
+    },
+  };
+}
+
+/**
+ * Flip a project's status to archived. Anyone on staff can archive any
+ * project. (Authorization is by staff role, not project ownership, per the
+ * Phase 4 spec — admins and teachers both can archive.)
+ */
+function consoleArchiveProject(projectId) {
+  getActorEmail_();   // not used but ensures we throw if no session
+  assertStaff_(getActorEmail_());
+  if (!projectId) throw new Error('projectId required');
+  if (!getProject_(projectId)) throw new Error('Unknown project ' + projectId);
+  archiveProject_(projectId);
+  return { ok: true, projectId };
+}
+
+function consoleUnarchiveProject(projectId) {
+  assertStaff_(getActorEmail_());
+  if (!projectId) throw new Error('projectId required');
+  if (!getProject_(projectId)) throw new Error('Unknown project ' + projectId);
+  unarchiveProject_(projectId);
+  return { ok: true, projectId };
+}

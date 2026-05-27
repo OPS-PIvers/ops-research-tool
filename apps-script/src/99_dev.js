@@ -420,3 +420,82 @@ function devTestConsoleProjectsFilter() {
 
   console.log(pass + '/' + (pass + fail) + ' passed');
 }
+
+/**
+ * Tests consoleCreateProject end-to-end:
+ *   - validates required fields
+ *   - rejects unknown bundle
+ *   - creates a project that lands in listProjects_
+ *   - the project comes back from consoleGetMyProjects
+ *   - archive/unarchive flips status correctly
+ *
+ * Cleans up by archiving the created project at the end.
+ */
+function devTestConsoleCreateProject() {
+  devSeedDevProject();
+  const bundle = listBundles_()[0];
+  if (!bundle) throw new Error('No bundle seeded — run setup()');
+
+  let pass = 0, fail = 0;
+  const check = (label, cond) => {
+    if (cond) { pass++; console.log('PASS ' + label); }
+    else      { fail++; console.log('FAIL ' + label); }
+  };
+
+  // Validation: empty name
+  let threw = false;
+  try { consoleCreateProject({ name: '', schoolYear: '2026-27', bundleId: bundle.bundleId, memberClasses: ['DEV'] }); }
+  catch (e) { threw = true; }
+  check('empty name throws', threw);
+
+  // Validation: zero classes
+  threw = false;
+  try { consoleCreateProject({ name: 'X', schoolYear: '2026-27', bundleId: bundle.bundleId, memberClasses: [] }); }
+  catch (e) { threw = true; }
+  check('zero classes throws', threw);
+
+  // Validation: unknown bundle
+  threw = false;
+  try { consoleCreateProject({ name: 'X', schoolYear: '2026-27', bundleId: 'b-doesnt-exist', memberClasses: ['DEV'] }); }
+  catch (e) { threw = true; }
+  check('unknown bundle throws', threw);
+
+  // Happy path
+  const created = consoleCreateProject({
+    name: 'devTest Project ' + Date.now(),
+    schoolYear: '2026-27',
+    bundleId: bundle.bundleId,
+    memberClasses: ['DEV'],
+  });
+  check('create returned ok',         created && created.ok === true);
+  check('create returned a projectId', !!(created.project && created.project.projectId));
+  const newId = created.project.projectId;
+
+  // Verify it lands in the registry
+  const fromRegistry = getProject_(newId);
+  check('project found in registry',  !!fromRegistry);
+  check('status is active',           fromRegistry && fromRegistry.status === PROJECT_STATUS.ACTIVE);
+
+  // Verify it shows up in consoleGetMyProjects (admin)
+  const list = consoleGetMyProjects('active');
+  const found = list.projects.find((p) => p.projectId === newId);
+  check('list includes new project',  !!found);
+  check('list entry has bundleName',  found && !!found.bundleName);
+
+  // Archive
+  const archResp = consoleArchiveProject(newId);
+  check('archive returned ok',        archResp && archResp.ok === true);
+  const afterArch = getProject_(newId);
+  check('status now archived',        afterArch && afterArch.status === PROJECT_STATUS.ARCHIVED);
+
+  // Unarchive
+  const unArchResp = consoleUnarchiveProject(newId);
+  check('unarchive returned ok',      unArchResp && unArchResp.ok === true);
+  const afterUn = getProject_(newId);
+  check('status active again',        afterUn && afterUn.status === PROJECT_STATUS.ACTIVE);
+
+  // Final cleanup: archive again so the test project doesn't litter the registry
+  consoleArchiveProject(newId);
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
