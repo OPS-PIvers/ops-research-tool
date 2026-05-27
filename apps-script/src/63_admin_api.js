@@ -546,3 +546,130 @@ function analyzeRosterReplace_(rows) {
 
   return { added, removed, changed, unchanged, errors, canonical };
 }
+
+// ============================================================
+// Staff CRUD + last-admin guard
+// ============================================================
+
+/**
+ * Throws 'Cannot remove the only admin — promote another staff member
+ * first' if changing `targetEmail` to `newRole` would leave the Staff
+ * sheet with zero admins.
+ *
+ * Called by adminUpdateStaffRow (when Role changes), adminChangeStaffEmail
+ * (the email change itself doesn't change Role, but the row identity is
+ * being touched — passes the current Role through), and adminDeleteStaffRow
+ * (newRole='__delete__' sentinel — any non-admin value works).
+ */
+function ensureNotLastAdminRemoval_(targetEmail, newRole) {
+  if (newRole === ROLES.ADMIN) return;
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const all = readAllAsObjects_(getTab_(ss, TABS.STAFF), HEADERS.STAFF);
+  const admins = all.filter((r) => r.Role === ROLES.ADMIN);
+  const targetLower = String(targetEmail).toLowerCase();
+  if (admins.length === 1 && String(admins[0].Email).toLowerCase() === targetLower) {
+    throw new Error('Cannot remove the only admin — promote another staff member first');
+  }
+}
+
+function adminGetStaff() {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const rows = readAllAsObjects_(getTab_(ss, TABS.STAFF), HEADERS.STAFF);
+  return {
+    ok: true,
+    rows: rows.map((r) => ({
+      Name:  String(r.Name || ''),
+      Email: String(r.Email || '').toLowerCase(),
+      Role:  String(r.Role || ''),
+    })),
+  };
+}
+
+function adminAddStaffRow(row) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!row) throw new Error('row required');
+  const name = String(row.Name || '').trim();
+  const email = String(row.Email || '').trim().toLowerCase();
+  const role = String(row.Role || '').trim().toLowerCase();
+  if (!name)  throw new Error('Name required');
+  if (!email) throw new Error('Email required');
+  if (role !== ROLES.TEACHER && role !== ROLES.ADMIN) throw new Error('Role must be teacher or admin');
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.STAFF);
+  const all = readAllAsObjects_(tab, HEADERS.STAFF);
+  if (all.some((r) => String(r.Email || '').toLowerCase() === email)) {
+    throw new Error('Email already in staff: ' + email);
+  }
+  const stored = { Name: name, Email: email, Role: role };
+  appendRow_(tab, HEADERS.STAFF, stored);
+  return { ok: true, row: stored };
+}
+
+function adminUpdateStaffRow(email, fields) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!email) throw new Error('email required');
+  if (!fields) throw new Error('fields required');
+  const target = String(email).toLowerCase();
+  const updates = {};
+  if ('Name' in fields) updates.Name = String(fields.Name || '');
+  if ('Role' in fields) {
+    const nr = String(fields.Role || '').toLowerCase();
+    if (nr !== ROLES.TEACHER && nr !== ROLES.ADMIN) throw new Error('Role must be teacher or admin');
+    updates.Role = nr;
+    ensureNotLastAdminRemoval_(target, nr);
+  }
+  if (Object.keys(updates).length === 0) throw new Error('No editable fields supplied');
+
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.STAFF);
+  const rowIdx = findRowByKeyCi_(tab, HEADERS.STAFF, 'Email', target);
+  if (rowIdx < 0) throw new Error('Staff row not found: ' + target);
+  HEADERS.STAFF.forEach((header, i) => {
+    if (header in updates) tab.getRange(rowIdx, i + 1).setValue(updates[header]);
+  });
+  const all = readAllAsObjects_(tab, HEADERS.STAFF);
+  const updated = all.find((r) => String(r.Email || '').toLowerCase() === target);
+  return { ok: true, row: updated };
+}
+
+function adminChangeStaffEmail(oldEmail, newEmail) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!oldEmail) throw new Error('oldEmail required');
+  if (!newEmail) throw new Error('newEmail required');
+  const oldL = String(oldEmail).toLowerCase().trim();
+  const newL = String(newEmail).toLowerCase().trim();
+  if (oldL === newL) throw new Error('Old and new emails are the same');
+
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.STAFF);
+  const all = readAllAsObjects_(tab, HEADERS.STAFF);
+  const target = all.find((r) => String(r.Email || '').toLowerCase() === oldL);
+  if (!target) throw new Error('Staff row not found: ' + oldL);
+  if (all.some((r) => String(r.Email || '').toLowerCase() === newL)) {
+    throw new Error('newEmail already in staff: ' + newL);
+  }
+  const rowIdx = findRowByKeyCi_(tab, HEADERS.STAFF, 'Email', oldL);
+  const emailCol = HEADERS.STAFF.indexOf('Email') + 1;
+  tab.getRange(rowIdx, emailCol).setValue(newL);
+  return { ok: true, oldEmail: oldL, newEmail: newL };
+}
+
+function adminDeleteStaffRow(email) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!email) throw new Error('email required');
+  const target = String(email).toLowerCase();
+  // Treat deletion as "set role to <nothing>" for the guard.
+  ensureNotLastAdminRemoval_(target, '__deleted__');
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.STAFF);
+  const rowIdx = findRowByKeyCi_(tab, HEADERS.STAFF, 'Email', target);
+  if (rowIdx < 0) throw new Error('Staff row not found: ' + target);
+  tab.deleteRow(rowIdx);
+  return { ok: true, email: target };
+}
