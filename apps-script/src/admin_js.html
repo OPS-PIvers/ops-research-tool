@@ -35,8 +35,503 @@ const adminLifecycle = {
 // ---------- View entry points (stubs replaced by Tasks 14-17) ----------
 
 function renderAdminRoster_(main) {
-  // Implemented in Task 14.
-  main.innerHTML = '<div class="console-empty">Admin Roster — coming in Task 14.</div>';
+  // Breadcrumb + actions
+  const importBtn = document.createElement('button');
+  importBtn.className = 'admin-btn-secondary';
+  importBtn.textContent = '⤓ Import roster…';
+  importBtn.addEventListener('click', openRosterImportDialog_);
+  const addBtn = document.createElement('button');
+  addBtn.className = 'admin-btn-primary';
+  addBtn.textContent = '+ Add student';
+  addBtn.style.marginLeft = '8px';
+  addBtn.addEventListener('click', openAddStudentModal_);
+  const actions = document.createElement('div');
+  actions.appendChild(importBtn);
+  actions.appendChild(addBtn);
+
+  main.appendChild(buildAdminBreadcrumb_('Roster', actions));
+
+  // Filter bar
+  const filterBar = document.createElement('div');
+  filterBar.className = 'admin-filter-bar';
+
+  const search = document.createElement('input');
+  search.type = 'text';
+  search.placeholder = 'Search name, email, or ID';
+  search.className = 'admin-search';
+  search.value = adminRoster.search;
+  search.addEventListener('input', () => {
+    adminRoster.search = search.value;
+    renderRosterTable_(tableHost);
+  });
+  filterBar.appendChild(search);
+
+  const classSel = document.createElement('select');
+  classSel.className = 'admin-filter-select';
+  filterBar.appendChild(labeled_('Class', classSel));
+
+  const teacherSel = document.createElement('select');
+  teacherSel.className = 'admin-filter-select';
+  filterBar.appendChild(labeled_('Teacher', teacherSel));
+
+  const count = document.createElement('div');
+  count.className = 'admin-filter-count';
+  filterBar.appendChild(count);
+
+  main.appendChild(filterBar);
+
+  const tableHost = document.createElement('div');
+  tableHost.className = 'admin-table-host';
+  main.appendChild(tableHost);
+
+  // Initial load
+  if (adminRoster.rows === null) {
+    tableHost.innerHTML = '<div class="admin-skeleton">Loading roster…</div>';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        adminRoster.rows = resp.rows || [];
+        populateFilterSelects_(classSel, teacherSel, () => renderRosterTable_(tableHost));
+        renderRosterTable_(tableHost);
+        count.textContent = adminRoster.rows.length + ' students';
+      })
+      .withFailureHandler(onFail_('loading roster'))
+      .adminGetRoster();
+  } else {
+    populateFilterSelects_(classSel, teacherSel, () => renderRosterTable_(tableHost));
+    renderRosterTable_(tableHost);
+    count.textContent = adminRoster.rows.length + ' students';
+  }
+}
+
+function labeled_(label, control) {
+  const wrap = document.createElement('label');
+  wrap.className = 'admin-filter-label';
+  const sp = document.createElement('span');
+  sp.textContent = label + ':';
+  wrap.appendChild(sp);
+  wrap.appendChild(control);
+  return wrap;
+}
+
+function populateFilterSelects_(classSel, teacherSel, onChange) {
+  const classes = ['All'].concat(distinct_(adminRoster.rows.map((r) => r.Class)).sort());
+  const teachers = ['All'].concat(distinct_(adminRoster.rows.map((r) => r.Teacher)).sort());
+  fillSelect_(classSel, classes, adminRoster.classFilter);
+  fillSelect_(teacherSel, teachers, adminRoster.teacherFilter);
+  classSel.addEventListener('change', () => { adminRoster.classFilter = classSel.value; onChange(); });
+  teacherSel.addEventListener('change', () => { adminRoster.teacherFilter = teacherSel.value; onChange(); });
+}
+
+function distinct_(arr) {
+  const seen = {};
+  arr.forEach((v) => { if (v) seen[v] = true; });
+  return Object.keys(seen);
+}
+
+function fillSelect_(sel, values, selected) {
+  sel.innerHTML = '';
+  values.forEach((v) => {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = v;
+    if (v === selected) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+function renderRosterTable_(host) {
+  host.innerHTML = '';
+  const filtered = filterAndSortRoster_(adminRoster.rows);
+  if (filtered.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'console-empty';
+    empty.textContent = adminRoster.rows.length === 0
+      ? 'No roster rows yet. Click + Add student or Import roster to get started.'
+      : 'No rows match the current filters.';
+    host.appendChild(empty);
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'admin-table';
+  const thead = document.createElement('thead');
+  thead.appendChild(buildRosterHeader_(host));
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  filtered.forEach((r) => tbody.appendChild(buildRosterRow_(r, host)));
+  table.appendChild(tbody);
+  host.appendChild(table);
+}
+
+function buildRosterHeader_(host) {
+  const tr = document.createElement('tr');
+  const cols = [
+    { label: 'ID',        sortKey: 'ID' },
+    { label: 'Name',      sortKey: 'Last' },
+    { label: 'Email',     sortKey: 'Email' },
+    { label: 'Class',     sortKey: 'Class' },
+    { label: 'Teacher',   sortKey: 'Teacher' },
+    { label: '',          sortKey: null },   // kebab
+  ];
+  cols.forEach((c) => {
+    const th = document.createElement('th');
+    th.textContent = c.label;
+    if (c.sortKey) {
+      th.classList.add('admin-table__sortable');
+      th.addEventListener('click', () => {
+        if (adminRoster.sort.column === c.sortKey) {
+          adminRoster.sort.dir = adminRoster.sort.dir === 'asc' ? 'desc' : 'asc';
+        } else {
+          adminRoster.sort.column = c.sortKey;
+          adminRoster.sort.dir = 'asc';
+        }
+        renderRosterTable_(host);
+      });
+      if (adminRoster.sort.column === c.sortKey) {
+        th.classList.add(adminRoster.sort.dir === 'asc' ? 'admin-table__sort-asc' : 'admin-table__sort-desc');
+      }
+    }
+    tr.appendChild(th);
+  });
+  return tr;
+}
+
+function filterAndSortRoster_(rows) {
+  const q = adminRoster.search.toLowerCase().trim();
+  let out = rows.slice();
+  if (q) {
+    out = out.filter((r) => {
+      return (r.First + ' ' + r.Last + ' ' + r.Email + ' ' + r.ID).toLowerCase().indexOf(q) >= 0;
+    });
+  }
+  if (adminRoster.classFilter && adminRoster.classFilter !== 'All') {
+    out = out.filter((r) => r.Class === adminRoster.classFilter);
+  }
+  if (adminRoster.teacherFilter && adminRoster.teacherFilter !== 'All') {
+    out = out.filter((r) => r.Teacher === adminRoster.teacherFilter);
+  }
+  const col = adminRoster.sort.column;
+  const dir = adminRoster.sort.dir === 'asc' ? 1 : -1;
+  out.sort((a, b) => String(a[col] || '').localeCompare(String(b[col] || '')) * dir);
+  return out;
+}
+
+function buildRosterRow_(r, host) {
+  const tr = document.createElement('tr');
+  tr.dataset.email = r.Email;
+
+  tr.appendChild(buildIdCell_(r, host));
+
+  const nameCell = document.createElement('td');
+  nameCell.className = 'admin-table__name';
+  const lastCell = inlineEditCell_('Last', r);
+  const firstCell = inlineEditCell_('First', r);
+  nameCell.appendChild(lastCell);
+  nameCell.appendChild(document.createTextNode(', '));
+  nameCell.appendChild(firstCell);
+  tr.appendChild(nameCell);
+
+  // Email — NOT click-to-edit; opens typed-confirm.
+  const emailCell = document.createElement('td');
+  emailCell.className = 'admin-table__email';
+  emailCell.textContent = r.Email;
+  emailCell.addEventListener('click', () => openChangeEmailModal_(r));
+  tr.appendChild(emailCell);
+
+  tr.appendChild(inlineEditTd_('Class', r));
+  tr.appendChild(inlineEditTd_('Teacher', r));
+
+  // Kebab cell
+  const kebabCell = document.createElement('td');
+  kebabCell.className = 'admin-table__kebab';
+  const kebab = document.createElement('button');
+  kebab.className = 'admin-table__kebab-btn';
+  kebab.textContent = '⋯';
+  kebab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    adminRoster.openMenuEmail = adminRoster.openMenuEmail === r.Email ? null : r.Email;
+    renderRosterTable_(host);
+  });
+  kebabCell.appendChild(kebab);
+  if (adminRoster.openMenuEmail === r.Email) {
+    kebabCell.appendChild(buildRosterKebabMenu_(r, host));
+  }
+  tr.appendChild(kebabCell);
+
+  return tr;
+}
+
+function buildIdCell_(r, host) {
+  const td = document.createElement('td');
+  td.className = 'admin-table__id';
+  if (!r.ID) {
+    const setBtn = document.createElement('button');
+    setBtn.className = 'admin-link-btn';
+    setBtn.textContent = 'Set ID';
+    setBtn.addEventListener('click', () => openSetIdModal_(r, host));
+    td.appendChild(document.createTextNode('— '));
+    td.appendChild(setBtn);
+  } else {
+    td.textContent = r.ID;
+  }
+  return td;
+}
+
+function inlineEditTd_(field, r) {
+  const td = document.createElement('td');
+  td.appendChild(inlineEditCell_(field, r));
+  return td;
+}
+
+function inlineEditCell_(field, r) {
+  const span = document.createElement('span');
+  span.className = 'admin-edit';
+  span.textContent = r[field] || '';
+  span.title = 'Click to edit';
+  span.addEventListener('click', () => activateInlineEdit_(span, field, r));
+  return span;
+}
+
+function activateInlineEdit_(span, field, r) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'admin-edit__input';
+  input.value = span.textContent;
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+  let committed = false;
+  const commit = () => {
+    if (committed) return;
+    committed = true;
+    const newVal = input.value;
+    if (newVal === r[field]) {
+      input.replaceWith(span); return;
+    }
+    const fields = {}; fields[field] = newVal;
+    google.script.run
+      .withSuccessHandler((resp) => {
+        r[field] = resp.row[field];
+        span.textContent = r[field] || '';
+        input.replaceWith(span);
+        setStatus('Saved.', 'good', 1500);
+      })
+      .withFailureHandler((e) => {
+        setStatus('Update failed: ' + (e && e.message || e), 'bad', 4000);
+        input.replaceWith(span);
+      })
+      .adminUpdateRosterRow(r.Email, fields);
+  };
+  const cancel = () => {
+    committed = true;
+    input.replaceWith(span);
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+}
+
+function buildRosterKebabMenu_(r, host) {
+  const menu = document.createElement('div');
+  menu.className = 'admin-table__kebab-menu';
+  const editEmail = document.createElement('button');
+  editEmail.textContent = 'Edit email…';
+  editEmail.addEventListener('click', (e) => { e.stopPropagation(); openChangeEmailModal_(r); });
+  menu.appendChild(editEmail);
+
+  if (r.ID) {
+    const editId = document.createElement('button');
+    editId.textContent = 'Change ID…';
+    editId.addEventListener('click', (e) => { e.stopPropagation(); openChangeIdModal_(r, host); });
+    menu.appendChild(editId);
+  }
+
+  const del = document.createElement('button');
+  del.className = 'admin-table__kebab-danger';
+  del.textContent = 'Delete row…';
+  del.addEventListener('click', (e) => { e.stopPropagation(); openDeleteRowModal_(r, host); });
+  menu.appendChild(del);
+  return menu;
+}
+
+// ---------- Roster modals ----------
+
+function openAddStudentModal_() {
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'admin-modal';
+  modal.innerHTML = `
+    <div class="admin-modal__header">Add student</div>
+    <div class="admin-modal__form">
+      <label>ID (optional)<input data-field="ID" type="text"></label>
+      <label>First<input data-field="First" type="text" required></label>
+      <label>Last<input data-field="Last" type="text" required></label>
+      <label>Email<input data-field="Email" type="email" required></label>
+      <label>Class<input data-field="Class" type="text" required></label>
+      <label>Teacher (display)<input data-field="Teacher" type="text"></label>
+      <label>Teacher Email<input data-field="TeacherEmail" type="email" required></label>
+    </div>
+    <div class="admin-modal__actions">
+      <button class="admin-modal__cancel">Cancel</button>
+      <button class="admin-modal__primary" disabled>Add student</button>
+    </div>`;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const inputs = modal.querySelectorAll('input[data-field]');
+  const primary = modal.querySelector('.admin-modal__primary');
+  const checkValid = () => {
+    let ok = true;
+    inputs.forEach((i) => { if (i.required && !i.value.trim()) ok = false; });
+    primary.disabled = !ok;
+  };
+  inputs.forEach((i) => i.addEventListener('input', checkValid));
+
+  const close = () => overlay.parentNode && overlay.parentNode.removeChild(overlay);
+  modal.querySelector('.admin-modal__cancel').addEventListener('click', close);
+  primary.addEventListener('click', () => {
+    const row = {};
+    inputs.forEach((i) => row[i.dataset.field] = i.value.trim());
+    primary.disabled = true;
+    primary.textContent = '…';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        adminRoster.rows.push(Object.assign({ hasWork: false }, resp.row));
+        setStatus('Added.', 'good', 2000);
+        close();
+        applyHash_();   // re-render via hash to pick up new row
+      })
+      .withFailureHandler((e) => {
+        primary.disabled = false;
+        primary.textContent = 'Add student';
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      })
+      .adminAddRosterRow(row);
+  });
+}
+
+function openSetIdModal_(r, host) {
+  plainConfirmModal_({
+    title: 'Set student ID',
+    bodyHtml: `Set the SIS ID for <strong>${esc_(r.Last)}, ${esc_(r.First)}</strong>. Once set, changing it requires a typed confirm.<br><br><label class="admin-modal__form-row">ID:<input id="set-id-input" type="text" style="margin-left: 8px"></label>`,
+    confirmLabel: 'Set ID',
+    onConfirm: () => new Promise((resolve, reject) => {
+      const val = (document.getElementById('set-id-input') || {}).value || '';
+      if (!val.trim()) { reject(new Error('ID required')); return; }
+      google.script.run
+        .withSuccessHandler((resp) => {
+          r.ID = resp.row.ID;
+          renderRosterTable_(host);
+          setStatus('ID set.', 'good', 2000);
+          resolve();
+        })
+        .withFailureHandler((e) => reject(e))
+        .adminSetStudentId(r.Email, val.trim());
+    }),
+  });
+}
+
+function openChangeIdModal_(r, host) {
+  typedConfirmModal_({
+    title: 'Change student ID?',
+    bodyHtml: `<p>The current ID for <strong>${esc_(r.Last)}, ${esc_(r.First)}</strong> is <code>${esc_(r.ID)}</code>.</p>
+               <label class="admin-modal__form-row">New ID:<input id="change-id-input" type="text" style="margin-left: 8px"></label>`,
+    phrase: 'CHANGE ID',
+    dangerLabel: 'Change ID',
+    onConfirm: () => new Promise((resolve, reject) => {
+      const val = (document.getElementById('change-id-input') || {}).value || '';
+      if (!val.trim()) { reject(new Error('New ID required')); return; }
+      google.script.run
+        .withSuccessHandler((resp) => {
+          r.ID = resp.row.ID;
+          renderRosterTable_(host);
+          setStatus('ID changed.', 'good', 2000);
+          resolve();
+        })
+        .withFailureHandler((e) => reject(e))
+        .adminChangeStudentId(r.Email, val.trim());
+    }),
+  });
+}
+
+function openChangeEmailModal_(r) {
+  const workNote = r.hasWork
+    ? `<p>This student has saved research. Changing their email will also:</p>
+       <ul>
+         <li>Rename their per-student Sheet(s) in every project</li>
+         <li>Rewrite <code>createdByEmail</code> on every source + highlight row</li>
+         <li>Rekey their saved active-project preference</li>
+       </ul>`
+    : `<p>This student has no saved research yet. Only the roster row and any active-project preference will change.</p>`;
+  typedConfirmModal_({
+    title: 'Change student email?',
+    bodyHtml: `<p><strong>${esc_(r.Last)}, ${esc_(r.First)}</strong>'s email is <code>${esc_(r.Email)}</code>.</p>
+               ${workNote}
+               <label class="admin-modal__form-row">New email:<input id="change-email-input" type="email" style="margin-left: 8px"></label>`,
+    phrase: 'CHANGE EMAIL',
+    dangerLabel: 'Change email',
+    onConfirm: () => new Promise((resolve, reject) => {
+      const val = (document.getElementById('change-email-input') || {}).value || '';
+      if (!val.trim()) { reject(new Error('New email required')); return; }
+      google.script.run
+        .withSuccessHandler(() => {
+          setStatus('Email changed.', 'good', 2500);
+          adminRoster.rows = null; // force refetch
+          resolve();
+          applyHash_();
+        })
+        .withFailureHandler((e) => reject(e))
+        .adminChangeStudentEmail(r.Email, val.trim().toLowerCase());
+    }),
+  });
+}
+
+function openDeleteRowModal_(r, host) {
+  if (!r.hasWork) {
+    plainConfirmModal_({
+      title: 'Delete roster row?',
+      bodyHtml: `Remove <strong>${esc_(r.Last)}, ${esc_(r.First)}</strong> (${esc_(r.Email)}) from the roster?`,
+      confirmLabel: 'Delete row',
+      danger: true,
+      onConfirm: () => new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(() => {
+            adminRoster.rows = adminRoster.rows.filter((x) => x.Email !== r.Email);
+            renderRosterTable_(host);
+            setStatus('Deleted.', 'good', 2000);
+            resolve();
+          })
+          .withFailureHandler((e) => reject(e))
+          .adminDeleteRosterRow(r.Email);
+      }),
+    });
+  } else {
+    typedConfirmModal_({
+      title: 'Delete roster row?',
+      bodyHtml: `<p><strong>${esc_(r.Last)}, ${esc_(r.First)}</strong> has saved research in one or more projects.</p>
+                 <p>Per-student Sheet(s) will be <strong>preserved</strong> — the data stays in Drive even after the roster row is removed.</p>`,
+      phrase: 'DELETE ROW',
+      dangerLabel: 'Delete row',
+      onConfirm: () => new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(() => {
+            adminRoster.rows = adminRoster.rows.filter((x) => x.Email !== r.Email);
+            renderRosterTable_(host);
+            setStatus('Deleted.', 'good', 2000);
+            resolve();
+          })
+          .withFailureHandler((e) => reject(e))
+          .adminDeleteRosterRow(r.Email);
+      }),
+    });
+  }
+}
+
+// Stub for Task 15 — defined here so the import button compiles.
+function openRosterImportDialog_() {
+  setStatus('Import dialog coming in Task 15.', '', 2500);
 }
 
 function renderAdminStaff_(main) {
