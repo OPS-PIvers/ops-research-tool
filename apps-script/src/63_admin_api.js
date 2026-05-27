@@ -418,3 +418,131 @@ function rewriteEmailInTab_(ss, tabName, cols, oldEmail, newEmail) {
   }
   return changed;
 }
+
+// ============================================================
+// Bulk roster replace
+// ============================================================
+
+/**
+ * Pure diff/validation pass. Never mutates. Used by the import dialog
+ * to show the admin what will change before they commit.
+ *
+ * `rows` is an array of roster row objects (any shape; canonicalized here).
+ *
+ * Returns:
+ *   {
+ *     ok: true,
+ *     added: N,            // emails in `rows` not in current
+ *     removed: N,          // emails in current not in `rows`
+ *     changed: N,          // emails in both but with at least one different field
+ *     unchanged: N,
+ *     errors: [{rowIndex, error}],
+ *   }
+ *
+ * If errors.length > 0, the client must NOT call adminReplaceRoster.
+ */
+function adminPreviewReplaceRoster(rows) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!Array.isArray(rows)) throw new Error('rows must be an array');
+  const result = analyzeRosterReplace_(rows);
+  return Object.assign({ ok: true }, result);
+}
+
+/**
+ * Atomic swap: validates, computes diff, clears existing roster rows,
+ * appends the new ones. Per-student Sheets are NEVER touched.
+ *
+ * If validation errors exist, throws — caller must have run preview first.
+ */
+function adminReplaceRoster(rows) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!Array.isArray(rows)) throw new Error('rows must be an array');
+  const analysis = analyzeRosterReplace_(rows);
+  if (analysis.errors.length > 0) {
+    throw new Error('Validation errors — run adminPreviewReplaceRoster first');
+  }
+
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.ROSTER);
+
+  // Wipe existing rows (preserve header).
+  const lastRow = tab.getLastRow();
+  if (lastRow > 1) {
+    tab.getRange(2, 1, lastRow - 1, HEADERS.ROSTER.length).clearContent();
+    // Delete extra rows so subsequent reads don't see leftover blank rows.
+    if (lastRow > 2) tab.deleteRows(2, lastRow - 2);
+  }
+
+  // Append the new ones in one batched write (faster than per-row appendRow_).
+  const matrix = analysis.canonical.map((r) => HEADERS.ROSTER.map((h) => r[h] || ''));
+  if (matrix.length > 0) {
+    tab.getRange(2, 1, matrix.length, HEADERS.ROSTER.length).setValues(matrix);
+  }
+  return {
+    ok: true,
+    added: analysis.added,
+    removed: analysis.removed,
+    changed: analysis.changed,
+    unchanged: analysis.unchanged,
+  };
+}
+
+/**
+ * Shared logic for preview + commit. Canonicalizes, validates, diffs
+ * against the current roster. Pure.
+ */
+function analyzeRosterReplace_(rows) {
+  const errors = [];
+  const canonical = [];
+  const seenEmail = {};
+  const seenId = {};
+
+  rows.forEach((r, i) => {
+    const idx = i + 1;
+    let c;
+    try { c = canonicalizeRosterRow_(r, /*requireEmail=*/false); }
+    catch (e) { errors.push({ rowIndex: idx, error: String(e.message || e) }); return; }
+
+    if (!c.Email) errors.push({ rowIndex: idx, error: 'blank Email' });
+    if (!c.First) errors.push({ rowIndex: idx, error: 'blank First' });
+    if (!c.Last)  errors.push({ rowIndex: idx, error: 'blank Last' });
+    if (!c.Class) errors.push({ rowIndex: idx, error: 'blank Class' });
+    if (!c.TeacherEmail) errors.push({ rowIndex: idx, error: 'blank TeacherEmail' });
+
+    if (c.Email) {
+      if (seenEmail[c.Email]) errors.push({ rowIndex: idx, error: 'duplicate Email ' + c.Email });
+      seenEmail[c.Email] = true;
+    }
+    if (c.ID) {
+      if (seenId[c.ID]) errors.push({ rowIndex: idx, error: 'duplicate ID ' + c.ID });
+      seenId[c.ID] = true;
+    }
+    canonical.push(c);
+  });
+
+  // Diff vs. current Roster.
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const current = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER)
+    .map((r) => canonicalizeRosterRow_(r, /*requireEmail=*/false));
+
+  const currentByEmail = {};
+  current.forEach((r) => { if (r.Email) currentByEmail[r.Email] = r; });
+  const newByEmail = {};
+  canonical.forEach((r) => { if (r.Email) newByEmail[r.Email] = r; });
+
+  let added = 0, removed = 0, changed = 0, unchanged = 0;
+  Object.keys(newByEmail).forEach((e) => {
+    if (!currentByEmail[e]) { added++; return; }
+    const before = currentByEmail[e];
+    const after = newByEmail[e];
+    const fieldsDiffer = HEADERS.ROSTER.some((h) => String(before[h] || '') !== String(after[h] || ''));
+    if (fieldsDiffer) changed++; else unchanged++;
+  });
+  Object.keys(currentByEmail).forEach((e) => {
+    if (!newByEmail[e]) removed++;
+  });
+
+  return { added, removed, changed, unchanged, errors, canonical };
+}
