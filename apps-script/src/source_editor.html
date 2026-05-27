@@ -5,9 +5,9 @@
     <?!= includeFile_('sidebar_css') ?>
     <script>
       window.OPS_EDITOR_CTX = {
-        projectId:        <?= JSON.stringify(projectId) ?>,
-        sourceId:         <?= JSON.stringify(sourceId) ?>,
-        focusHighlightId: <?= JSON.stringify(focusHighlightId) ?>,
+        projectId:        <?!= JSON.stringify(projectId) ?>,
+        sourceId:         <?!= JSON.stringify(sourceId) ?>,
+        focusHighlightId: <?!= JSON.stringify(focusHighlightId) ?>,
         bundle:           <?!= bundleJson ?>,
       };
     </script>
@@ -21,7 +21,12 @@
     <div class="sb-modal__body">
       <section class="sb-modal__pane sb-modal__pane--left" id="ed-left">
         <h2 class="sb-modal__paneheader">Citation</h2>
-        <div id="ed-citation" class="sb-modal__citation"></div>
+        <div id="ed-citation" class="sb-modal__citation">
+          <div class="sb-loading">
+            <div class="sb-loading__spinner"></div>
+            <div class="sb-loading__label">Loading source…</div>
+          </div>
+        </div>
       </section>
 
       <section class="sb-modal__pane sb-modal__pane--right" id="ed-right">
@@ -29,7 +34,12 @@
           <h2 class="sb-modal__paneheader" id="ed-evheader">Evidence</h2>
         </div>
         <div id="ed-filter" class="sb-modal__filter"></div>
-        <div id="ed-evidence" class="sb-modal__evidence"></div>
+        <div id="ed-evidence" class="sb-modal__evidence">
+          <div class="sb-loading">
+            <div class="sb-loading__spinner"></div>
+            <div class="sb-loading__label">Loading evidence…</div>
+          </div>
+        </div>
       </section>
     </div>
 

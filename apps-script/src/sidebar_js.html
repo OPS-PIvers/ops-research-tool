@@ -39,6 +39,7 @@ bootstrap();
 
 function bootstrap() {
   setStatus('Loading…');
+  renderSidebarLoading_();
   google.script.run
     .withSuccessHandler(onContext)
     .withFailureHandler(onFail('loading context'))
@@ -101,6 +102,7 @@ function populateProjectPicker(projects, activeId) {
 function loadProjectData() {
   if (!state.projectId) return;
   setStatus('Loading project data…');
+  renderSidebarLoading_();
   google.script.run
     .withSuccessHandler(onProjectData)
     .withFailureHandler(onFail('loading data'))
@@ -251,6 +253,29 @@ function sourcePassesPSFilter(source) {
 }
 
 // ---------- main render ----------
+
+/**
+ * Shown by `bootstrap` while the very first `sidebarGetContext` is in flight,
+ * and by `loadProjectData` while project data is being fetched after a
+ * project picker change. Replaced by `render()` on success.
+ */
+function renderSidebarLoading_() {
+  els.main.innerHTML = '';
+  for (let i = 0; i < 3; i++) {
+    const card = document.createElement('div');
+    card.className = 'sb-skeleton';
+    const long = document.createElement('div');
+    long.className = 'sb-skeleton__line sb-skeleton__line--long';
+    const mid = document.createElement('div');
+    mid.className = 'sb-skeleton__line sb-skeleton__line--mid';
+    const short = document.createElement('div');
+    short.className = 'sb-skeleton__line sb-skeleton__line--short';
+    card.appendChild(long);
+    card.appendChild(mid);
+    card.appendChild(short);
+    els.main.appendChild(card);
+  }
+}
 
 function render() {
   els.main.innerHTML = '';
@@ -505,11 +530,14 @@ function truncate_(s, n) {
 function openSourceEditor_(sourceId, focusHighlightId) {
   state.modalOpenForSourceId = sourceId;
   state.lastDataJson = JSON.stringify({ sources: state.sources, highlights: state.highlights });
-  startEditorPolling_();   // defined in Task 12
+  startEditorPolling_();
+  setStatus('Opening editor…');
+  render();   // re-render so the disabled state on Open-in-editor buttons reflects state.modalOpenForSourceId immediately
   google.script.run
+    .withSuccessHandler(() => setStatus(''))
     .withFailureHandler((e) => {
       state.modalOpenForSourceId = null;
-      stopEditorPolling_();   // defined in Task 12
+      stopEditorPolling_();
       onFail('opening editor')(e);
     })
     .sidebarOpenSourceEditor(state.projectId, sourceId, focusHighlightId || '');

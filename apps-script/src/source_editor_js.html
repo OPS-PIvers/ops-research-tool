@@ -28,7 +28,6 @@ els.close.addEventListener('click', () => google.script.host.close());
 bootstrap();
 
 function bootstrap() {
-  setStatus('Loading…');
   google.script.run
     .withSuccessHandler(onData)
     .withFailureHandler(onFail('loading source'))
