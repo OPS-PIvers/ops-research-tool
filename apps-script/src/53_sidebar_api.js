@@ -240,9 +240,8 @@ function deleteAllRowsWhere_(tab, headers, keyCol, keyValue) {
  * bundle (serialized to JSON so the modal has color swatches without an
  * extra round trip).
  *
- * The modal opens at 820x720 — matches the dimensions chosen for the
- * deprecated sidebarOpenAsDialog and known-good in Docs at typical
- * laptop resolutions.
+ * The modal opens at 820x720 — empirically validated as comfortable in
+ * Docs at typical laptop resolutions.
  */
 function sidebarOpenSourceEditor(projectId, sourceId, focusHighlightId) {
   const actorEmail = getActorEmail_();
