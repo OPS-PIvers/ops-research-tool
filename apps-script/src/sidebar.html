@@ -3,10 +3,16 @@
   <head>
     <base target="_top" />
     <?!= includeFile_('sidebar_css') ?>
+    <script>window.OPS_MODE = '<?= mode || "sidebar" ?>';</script>
   </head>
-  <body>
+  <body class="sb-body sb-body--<?= mode || "sidebar" ?>">
     <header class="sb-header">
-      <h1 class="sb-title">OPS Research Tool</h1>
+      <div class="sb-header__row">
+        <h1 class="sb-title">OPS Research Tool</h1>
+        <? if ((mode || 'sidebar') === 'sidebar') { ?>
+          <button id="sb-popout" type="button" class="sb-popout" title="Pop out to a wider window">⇱ Pop out</button>
+        <? } ?>
+      </div>
       <div id="sb-actor" class="sb-actor"></div>
     </header>
 
@@ -15,6 +21,13 @@
       <select id="sb-project" disabled>
         <option>Loading…</option>
       </select>
+    </section>
+
+    <section class="sb-viewmode">
+      <div class="sb-viewmode__pills" role="tablist">
+        <button id="sb-vm-evidence" type="button" class="sb-viewmode__pill sb-viewmode__pill--active" role="tab">By evidence</button>
+        <button id="sb-vm-source" type="button" class="sb-viewmode__pill" role="tab">By source</button>
+      </div>
     </section>
 
     <section id="sb-filter" class="sb-filter" hidden>

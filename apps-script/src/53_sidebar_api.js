@@ -171,3 +171,8 @@ function sidebarPreviewCitation(fields, style) {
 function sidebarInsertBibliography(projectId) {
   return insertAnnotatedBibliography(projectId);
 }
+
+/** Insert an MLA parenthetical citation at the doc cursor for the given source. */
+function sidebarInsertInlineCitation(projectId, sourceId, page) {
+  return insertInlineCitation(projectId, sourceId, page);
+}

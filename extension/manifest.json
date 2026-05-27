@@ -32,7 +32,8 @@
         "content/scrape.js",
         "content/sidebar.js",
         "content/marks.js",
-        "content/toolbar.js"
+        "content/toolbar.js",
+        "content/pdf_helper.js"
       ],
       "css": ["content/toolbar.css"],
       "run_at": "document_idle"

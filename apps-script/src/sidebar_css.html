@@ -26,8 +26,30 @@ select, input, textarea { font: inherit; }
   padding: 10px 12px;
   border-bottom: 1px solid var(--c-line);
 }
+.sb-header__row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .sb-title { margin: 0; font-size: 14px; font-weight: 600; }
 .sb-actor { font-size: 11px; color: var(--c-muted); margin-top: 2px; }
+.sb-popout {
+  background: none; border: 1px solid var(--c-line); border-radius: 4px;
+  padding: 2px 6px; font-size: 11px; color: var(--c-muted);
+}
+.sb-popout:hover { color: var(--c-accent); border-color: var(--c-accent); }
+
+.sb-viewmode {
+  padding: 6px 10px 4px;
+  border-bottom: 1px solid var(--c-line);
+}
+.sb-viewmode__pills {
+  display: inline-flex; background: #f1f3f4; border-radius: 999px; padding: 2px;
+}
+.sb-viewmode__pill {
+  background: transparent; border: none; padding: 4px 12px;
+  font-size: 11px; color: var(--c-muted); border-radius: 999px;
+}
+.sb-viewmode__pill--active {
+  background: #fff; color: var(--c-accent); font-weight: 500;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+}
 
 .sb-project-picker {
   padding: 8px 12px;
@@ -43,27 +65,63 @@ select, input, textarea { font: inherit; }
 }
 
 .sb-filter {
-  padding: 6px 10px;
+  padding: 4px 10px 6px;
   border-bottom: 1px solid var(--c-line);
 }
 .sb-filter__row {
-  display: flex; flex-wrap: wrap; gap: 4px;
-  margin: 4px 0;
+  display: flex; gap: 4px;
+  margin: 4px 0 0;
 }
-.sb-filter__row--ps { font-size: 11px; color: var(--c-muted); align-items: center; }
+/* Category strip: single horizontal row. If the bundle config ever has
+   labels long enough to push the dot chips off-screen at 300px, the
+   strip becomes scrollable rather than wrapping into 4-5 rows. */
+.sb-filter__row--cats {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;            /* Firefox */
+  -ms-overflow-style: none;         /* Edge legacy */
+}
+.sb-filter__row--cats::-webkit-scrollbar { display: none; }
+.sb-filter__row--ps {
+  font-size: 11px; color: var(--c-muted); align-items: center; flex-wrap: wrap;
+}
 .sb-filter-chip {
-  display: inline-flex; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; gap: 5px;
   background: #f1f3f4; border: 1px solid transparent;
-  border-radius: 999px; padding: 4px 10px 4px 6px;
+  border-radius: 999px; padding: 3px 8px 3px 6px;
   font-size: 11px; color: var(--c-muted); white-space: nowrap;
+  flex-shrink: 0;
 }
 .sb-filter-chip--active {
   background: #fff; border-color: var(--c-accent); color: var(--c-accent); font-weight: 500;
 }
-.sb-filter-chip__dot { width: 10px; height: 10px; border-radius: 50%; }
+.sb-filter-chip--all { padding: 3px 8px; }
+.sb-filter-chip--dot { padding: 3px 7px 3px 5px; }
+.sb-filter-chip__dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .sb-filter-chip__count {
   background: rgba(0,0,0,0.05); border-radius: 999px; padding: 0 6px; font-size: 10px;
 }
+
+/* Inline legend row that only renders when a category filter is active.
+   Shows the selected label + a one-click clear, so the filter strip can
+   stay all-dots-no-labels without leaving students guessing which
+   category they're currently filtered to. */
+.sb-filter__legend {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 4px;
+  font-size: 11px; color: var(--c-text);
+  background: #fff; border: 1px solid var(--c-line);
+  border-radius: 999px; padding: 2px 4px 2px 8px;
+}
+.sb-filter__legend-dot {
+  width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+}
+.sb-filter__legend-clear {
+  background: none; border: none; color: var(--c-muted);
+  font-size: 14px; line-height: 1; padding: 0 4px; cursor: pointer;
+}
+.sb-filter__legend-clear:hover { color: var(--c-bad); }
+
 .sb-ps-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; }
 
 .sb-main {
@@ -86,6 +144,10 @@ select, input, textarea { font: inherit; }
 .sb-source__head {
   display: flex; justify-content: space-between; gap: 6px; align-items: flex-start;
 }
+.sb-source__head--clickable { cursor: pointer; user-select: none; }
+.sb-source__head--clickable:hover .sb-source__title { color: var(--c-accent); }
+.sb-source__titlewrap { display: flex; align-items: flex-start; gap: 6px; min-width: 0; flex: 1; }
+.sb-source__caret { color: var(--c-muted); font-size: 11px; margin-top: 2px; flex-shrink: 0; }
 .sb-source__title {
   font-weight: 500; font-size: 13px;
   word-break: break-word;
@@ -104,14 +166,39 @@ select, input, textarea { font: inherit; }
 .sb-source__chip--unset     { background: #fce8e6; color: var(--c-bad); }
 
 .sb-source__meta {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 8px;
   margin-top: 6px;
   font-size: 11px; color: var(--c-muted);
+  flex-wrap: wrap;
 }
-.sb-source__expand {
+.sb-source__action {
   background: none; border: none; color: var(--c-accent);
-  font-size: 11px; padding: 2px 0;
+  font-size: 11px; padding: 2px 4px;
 }
+.sb-source__action:hover { text-decoration: underline; }
+.sb-source__expand { /* keep selector for back-compat — handled by .sb-source__action */ }
+
+.sb-source__breakdown {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+  margin-top: 5px;
+}
+.sb-source__breakdown-dot {
+  width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+}
+.sb-source__breakdown-count {
+  font-size: 10px; color: var(--c-muted); margin-right: 4px;
+}
+
+.sb-source__filter {
+  display: flex; flex-wrap: wrap; gap: 3px;
+  margin-top: 8px; padding-top: 6px;
+  border-top: 1px dashed var(--c-line);
+}
+.sb-filter-chip--mini {
+  padding: 2px 8px 2px 4px;
+  font-size: 10px;
+}
+.sb-filter-chip--mini .sb-filter-chip__dot { width: 8px; height: 8px; }
 
 .sb-source__form {
   margin-top: 8px; padding-top: 8px;
@@ -168,6 +255,12 @@ select, input, textarea { font: inherit; }
 .sb-highlight__btn { background: none; border: none; font-size: 10px; padding: 2px 4px; }
 .sb-highlight__btn--edit { color: var(--c-accent); }
 .sb-highlight__btn--delete { color: var(--c-bad); }
+.sb-highlight__btn--cancel { color: var(--c-muted); }
+.sb-highlight__btn--confirm {
+  background: var(--c-bad); color: #fff;
+  border-radius: 3px; padding: 2px 8px; font-weight: 500;
+}
+.sb-highlight__btn--confirm:hover { filter: brightness(1.05); }
 
 .sb-footer {
   border-top: 1px solid var(--c-line);
@@ -185,4 +278,20 @@ select, input, textarea { font: inherit; }
 .sb-status--good { color: var(--c-good); }
 .sb-status--bad  { color: var(--c-bad); }
 .sb-status--warn { color: var(--c-warn); }
+
+/* ---- Dialog (pop-out) mode: wider, multi-column source cards ---- */
+.sb-body--dialog .sb-main {
+  height: calc(100vh - 240px);
+}
+.sb-body--dialog .sb-main {
+  column-count: 2;
+  column-gap: 12px;
+  padding: 8px 12px 0;
+}
+.sb-body--dialog .sb-source {
+  break-inside: avoid;
+  margin: 0 0 12px;
+}
+.sb-body--dialog .sb-title { font-size: 16px; }
+.sb-body--dialog .sb-empty { column-span: all; }
 </style>

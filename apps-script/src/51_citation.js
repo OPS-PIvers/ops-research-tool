@@ -20,6 +20,60 @@ function formatCitation(fields, style) {
   throw new Error('Unsupported citation style: ' + style);
 }
 
+/**
+ * Build the MLA in-text (parenthetical) form for a source.
+ *   Author present  → "(Smith)" or "(Smith 23)" if page given
+ *   No author       → "(\"Short Title\")" for quoted-title types,
+ *                     "(Short Title)" for italic-title types (book)
+ * The parentheses are included in the returned text. Page is optional —
+ * student can supply it from the sidebar input.
+ *
+ * v1 returns a plain string. Italics on book titles are NOT applied —
+ * the student can italicize manually if it matters to them. Keeping the
+ * insertion simple avoids fighting with cursor offsets on the Docs side.
+ */
+function formatInlineCitation(fields, style, page) {
+  const s = (style || 'mla').toLowerCase();
+  if (s !== 'mla') throw new Error('Unsupported citation style: ' + style);
+  return formatMlaInline_(fields || {}, page);
+}
+
+function formatMlaInline_(f, page) {
+  const lastName = mlaInlineAuthorLastName_(f.author);
+  const pageStr = page ? String(page).trim() : '';
+  if (lastName) {
+    return pageStr ? '(' + lastName + ' ' + pageStr + ')' : '(' + lastName + ')';
+  }
+  // No author — fall back to a shortened title. Quoted for short works,
+  // bare (italic in practice) for italic-title works.
+  const title = (f.title || '').trim();
+  if (!title) return '';
+  const shortTitle = shortenTitleForInline_(title);
+  const sourceType = String(f.sourceType || 'website').toLowerCase();
+  const italicTitle = sourceType === 'book';
+  const inner = italicTitle ? shortTitle : '"' + shortTitle + '"';
+  return pageStr ? '(' + inner + ' ' + pageStr + ')' : '(' + inner + ')';
+}
+
+function mlaInlineAuthorLastName_(author) {
+  if (!author) return '';
+  const s = author.trim();
+  if (!s) return '';
+  // "Doe, Jane" → "Doe". "Jane Doe" → "Doe". Single token → that token.
+  if (s.indexOf(',') >= 0) return s.split(',')[0].trim();
+  const parts = s.split(/\s+/);
+  return parts[parts.length - 1];
+}
+
+function shortenTitleForInline_(title) {
+  // Strip leading articles, then take the first 4 words or up to first
+  // punctuation, whichever is shorter. MLA convention is "first noun phrase."
+  const stripped = title.replace(/^(the|a|an)\s+/i, '');
+  const upToPunct = stripped.split(/[:;—–\-]/)[0].trim();
+  const words = upToPunct.split(/\s+/).slice(0, 4);
+  return words.join(' ');
+}
+
 function formatMLA_(f) {
   const sourceType = String(f.sourceType || 'website').toLowerCase();
   switch (sourceType) {

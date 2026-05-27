@@ -70,11 +70,34 @@ function wrapNodeWithSpan_(tn, color, highlightId) {
   // backgrounds (`span { background: transparent !important; }` is rare
   // but real on some news sites). setProperty is the only way to add
   // !important from JS — `style.backgroundColor = …` cannot.
-  span.style.setProperty('background-color', color, 'important');
+  //
+  // 35% alpha makes the highlight translucent — text underneath remains
+  // readable. Required for the PDF panel (text is on a canvas behind the
+  // transparent text layer; a solid background would cover it). Also
+  // matches real-world highlighter pigment behavior on plain web pages.
+  span.style.setProperty('background-color', toRgba_(color, 0.35), 'important');
   span.style.setProperty('border-radius', '2px', 'important');
   span.style.setProperty('padding', '0', 'important');
   tn.parentNode.insertBefore(span, tn);
   span.appendChild(tn);
+}
+
+/**
+ * Convert a #rgb / #rrggbb hex color to rgba(r,g,b,alpha). Passes other
+ * forms (already-rgba, named colors) through unchanged.
+ */
+function toRgba_(color, alpha) {
+  if (!color || typeof color !== 'string') return color;
+  const trimmed = color.trim();
+  if (!trimmed.startsWith('#')) return trimmed;
+  let h = trimmed.slice(1);
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  if (h.length !== 6) return trimmed;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return trimmed;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function collectTextNodesInRange_(range) {
@@ -160,11 +183,22 @@ self.unwrapMark = unwrapMark;
  *    wraps; live Range updates do most of the right thing, but a perfect
  *    nested-highlight result isn't guaranteed.
  */
-function reAnchorHighlights(highlights, colorForLabel) {
+function reAnchorHighlights(highlights, colorForLabel, root) {
+  root = root || document.body;
+  // Skip highlights that are already anchored inside this root. This makes
+  // the call idempotent so callers (especially the PDF panel, which fires
+  // per-page anchoring on render AND on highlights-loaded) can invoke us
+  // freely without producing nested mark spans.
+  const alreadyAnchored = new Set();
+  root.querySelectorAll('[' + MARK_ATTR + ']').forEach((el) => {
+    alreadyAnchored.add(el.getAttribute(MARK_ATTR));
+  });
+  highlights = highlights.filter((h) => !alreadyAnchored.has(h.highlightId));
+
   const segments = [];
   let flat = '';
   const walker = document.createTreeWalker(
-    document.body, NodeFilter.SHOW_TEXT,
+    root, NodeFilter.SHOW_TEXT,
     { acceptNode: (n) => {
       const parent = n.parentNode;
       if (!parent) return NodeFilter.FILTER_REJECT;
@@ -233,6 +267,9 @@ function reAnchorHighlights(highlights, colorForLabel) {
       failed.push(t.h.highlightId);
     }
   }
+  // Already-anchored IDs count as anchored from the caller's perspective —
+  // they shouldn't be flagged as "page changed" just because we skipped them.
+  alreadyAnchored.forEach((id) => anchored.push(id));
   return { anchored, failed };
 }
 

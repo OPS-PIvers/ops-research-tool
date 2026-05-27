@@ -19,11 +19,12 @@
     <div id="loading" class="state">Loading PDF…</div>
     <div id="empty" class="state state--empty" hidden>
       <strong>No extractable text in this PDF.</strong><br />
-      It's likely scanned (an image of pages, not text). Save it as a source
-      and take notes manually — there's no OCR step in this tool.
+      It's likely scanned (an image of pages, not text). You can still see the
+      pages, but selecting / highlighting won't work — save it as a source
+      and take notes manually.
     </div>
     <div id="error" class="state state--error" hidden></div>
-    <article id="text" class="text" hidden></article>
+    <div id="pages" class="pages" hidden></div>
   </main>
 
   <!-- Shared utilities (must load before panel.js uses them) -->
@@ -31,9 +32,19 @@
   <script src="../shared/ids.js"></script>
   <script src="../shared/url.js"></script>
 
-  <!-- Content-script equivalents so the toolbar works inside the panel.
-       Loaded as plain scripts; functions become globals. -->
+  <!-- Content-script equivalents so the toolbar + sidebar work inside the
+       panel. Loaded as plain scripts; functions become globals. Order
+       mirrors the manifest content_scripts list so marks.js / toolbar.js
+       can reference self.OpsSidebar.
+
+       shim.js MUST sit between scrape.js (which it wraps) and sidebar.js
+       (whose auto-fired loadForCurrentPage needs the URL rewrite in
+       place). Inline scripts can't be used here — extension CSP blocks
+       them. panel.js (an ES module) defers until after sidebar.js fires
+       and is therefore too late. -->
   <script src="../content/scrape.js"></script>
+  <script src="shim.js"></script>
+  <script src="../content/sidebar.js"></script>
   <script src="../content/marks.js"></script>
   <script src="../content/toolbar.js"></script>
 

@@ -13,13 +13,20 @@ const state = {
   highlights: [],
   filterCat: null,     // null = all categories
   filterPS: { primary: true, secondary: true, unset: true },
-  expandedSourceId: null,
+  viewMode: 'evidence',     // 'evidence' | 'source'
+  expandedSourceIds: {},    // sourceId → true (highlights visible in source mode)
+  sourceFilters: {},        // sourceId → category label (per-source filter, source mode only)
+  expandedSourceId: null,   // sourceId whose citation form is open (singular)
   editingHighlightId: null,
+  confirmingDeleteId: null, // highlightId whose Delete button is in its second-click "Confirm" state
 };
 
 const els = {
   actor: document.getElementById('sb-actor'),
+  popout: document.getElementById('sb-popout'),
   project: document.getElementById('sb-project'),
+  vmEvidence: document.getElementById('sb-vm-evidence'),
+  vmSource: document.getElementById('sb-vm-source'),
   filter: document.getElementById('sb-filter'),
   filterCats: document.getElementById('sb-filter-cats'),
   fltPrim: document.getElementById('sb-flt-primary'),
@@ -47,7 +54,24 @@ function bootstrap() {
   els.fltPrim.addEventListener('change', () => { state.filterPS.primary = els.fltPrim.checked; render(); });
   els.fltSec.addEventListener('change', () => { state.filterPS.secondary = els.fltSec.checked; render(); });
   els.fltUnset.addEventListener('change', () => { state.filterPS.unset = els.fltUnset.checked; render(); });
+  els.vmEvidence.addEventListener('click', () => setViewMode_('evidence'));
+  els.vmSource.addEventListener('click', () => setViewMode_('source'));
+  if (els.popout) els.popout.addEventListener('click', popOutToDialog);
   els.insert.addEventListener('click', insertBibliography);
+}
+
+function setViewMode_(mode) {
+  if (state.viewMode === mode) return;
+  state.viewMode = mode;
+  els.vmEvidence.classList.toggle('sb-viewmode__pill--active', mode === 'evidence');
+  els.vmSource.classList.toggle('sb-viewmode__pill--active', mode === 'source');
+  render();
+}
+
+function popOutToDialog() {
+  google.script.run
+    .withFailureHandler(onFail('opening pop-out'))
+    .sidebarOpenAsDialog();
 }
 
 function onContext(ctx) {
@@ -95,6 +119,7 @@ function onProjectData(resp) {
   if (!resp || !resp.ok) { setStatus('Could not load project data.', 'bad'); return; }
   state.sources = resp.sources || [];
   state.highlights = resp.highlights || [];
+  state.confirmingDeleteId = null;
   els.insert.disabled = state.sources.length === 0;
   setStatus('');
   renderFilter();
@@ -112,26 +137,77 @@ function renderFilter() {
   if (!bundle) { els.filter.hidden = true; return; }
   els.filter.hidden = false;
   els.filterCats.innerHTML = '';
-  const all = makeFilterChip(null, 'All', '#dadce0', countHighlights(null));
+
+  // "All" chip — no dot, just label + count. Sits at the start of the strip.
+  const all = document.createElement('button');
+  all.type = 'button';
+  all.className = 'sb-filter-chip sb-filter-chip--all';
+  if (state.filterCat === null) all.classList.add('sb-filter-chip--active');
+  all.title = 'Show all categories';
+  all.appendChild(document.createTextNode('All'));
+  const allCount = document.createElement('span');
+  allCount.className = 'sb-filter-chip__count';
+  allCount.textContent = countHighlights(null);
+  all.appendChild(allCount);
+  all.addEventListener('click', () => {
+    state.filterCat = null;
+    renderFilter();
+    render();
+  });
   els.filterCats.appendChild(all);
+
+  // Per-category chips — colored dot + count only. Label is in the hover
+  // tooltip + (when this chip is the active filter) in the legend row
+  // below the strip.
   for (let i = 1; i <= 5; i++) {
     const label = bundle['label' + i];
     const color = bundle['color' + i];
     if (!label) continue;
-    els.filterCats.appendChild(makeFilterChip(label, label, color, countHighlights(label)));
+    els.filterCats.appendChild(makeFilterDotChip(label, color, countHighlights(label)));
+  }
+
+  // Active-filter legend: only visible when something other than "All" is
+  // selected. Shows the human label and a quick clear (×).
+  let legend = document.getElementById('sb-filter-legend');
+  if (state.filterCat) {
+    if (!legend) {
+      legend = document.createElement('div');
+      legend.id = 'sb-filter-legend';
+      legend.className = 'sb-filter__legend';
+      els.filter.insertBefore(legend, els.filterCats.nextSibling);
+    }
+    legend.innerHTML = '';
+    const dot = document.createElement('span');
+    dot.className = 'sb-filter__legend-dot';
+    dot.style.backgroundColor = colorForLabel_(state.filterCat) || '#dadce0';
+    legend.appendChild(dot);
+    legend.appendChild(document.createTextNode(state.filterCat));
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'sb-filter__legend-clear';
+    clear.title = 'Clear filter';
+    clear.textContent = '×';
+    clear.addEventListener('click', () => {
+      state.filterCat = null;
+      renderFilter();
+      render();
+    });
+    legend.appendChild(clear);
+  } else if (legend) {
+    legend.remove();
   }
 }
 
-function makeFilterChip(value, label, color, count) {
+function makeFilterDotChip(value, color, count) {
   const chip = document.createElement('button');
   chip.type = 'button';
-  chip.className = 'sb-filter-chip';
+  chip.className = 'sb-filter-chip sb-filter-chip--dot';
   if (state.filterCat === value) chip.classList.add('sb-filter-chip--active');
+  chip.title = value; // hover tooltip carries the label
   const dot = document.createElement('span');
   dot.className = 'sb-filter-chip__dot';
   dot.style.backgroundColor = color;
   chip.appendChild(dot);
-  chip.appendChild(document.createTextNode(label));
   const c = document.createElement('span');
   c.className = 'sb-filter-chip__count';
   c.textContent = count;
@@ -150,9 +226,29 @@ function countHighlights(category) {
 }
 
 function filteredHighlightsForSource(sourceId) {
+  const perSource = state.viewMode === 'source' ? state.sourceFilters[sourceId] : null;
   return state.highlights
     .filter((h) => h.sourceId === sourceId)
-    .filter((h) => state.filterCat ? (h.primaryCategory === state.filterCat || h.secondaryCategory === state.filterCat) : true);
+    .filter((h) => state.filterCat ? (h.primaryCategory === state.filterCat || h.secondaryCategory === state.filterCat) : true)
+    .filter((h) => perSource ? (h.primaryCategory === perSource || h.secondaryCategory === perSource) : true);
+}
+
+function categoryBreakdownForSource(sourceId) {
+  // Returns ordered [{label, color, count}] for categories that have at least one highlight in this source.
+  const bundle = activeBundle();
+  if (!bundle) return [];
+  const counts = {};
+  state.highlights.forEach((h) => {
+    if (h.sourceId !== sourceId) return;
+    if (h.primaryCategory) counts[h.primaryCategory] = (counts[h.primaryCategory] || 0) + 1;
+  });
+  const out = [];
+  for (let i = 1; i <= 5; i++) {
+    const label = bundle['label' + i];
+    if (!label) continue;
+    if (counts[label]) out.push({ label, color: bundle['color' + i], count: counts[label] });
+  }
+  return out;
 }
 
 function sourcePassesPSFilter(source) {
@@ -194,34 +290,94 @@ function renderSource(source) {
   card.className = 'sb-source';
   card.setAttribute('data-source-id', source.sourceId);
 
+  const sourceMode = state.viewMode === 'source';
+  const sourceExpanded = !sourceMode || !!state.expandedSourceIds[source.sourceId];
+
   const head = document.createElement('div');
-  head.className = 'sb-source__head';
+  head.className = 'sb-source__head' + (sourceMode ? ' sb-source__head--clickable' : '');
   const titleWrap = document.createElement('div');
+  titleWrap.className = 'sb-source__titlewrap';
+  if (sourceMode) {
+    const caret = document.createElement('span');
+    caret.className = 'sb-source__caret';
+    caret.textContent = sourceExpanded ? '▾' : '▸';
+    titleWrap.appendChild(caret);
+  }
+  const titleTextWrap = document.createElement('div');
   const title = document.createElement('div');
   title.className = 'sb-source__title';
   title.textContent = (source.citationFieldsParsed && source.citationFieldsParsed.title) || source.scrapedTitle || '(untitled)';
   const url = document.createElement('div');
   url.className = 'sb-source__url';
   url.textContent = source.normalizedUrl || source.rawUrl || '';
-  titleWrap.appendChild(title);
-  titleWrap.appendChild(url);
+  titleTextWrap.appendChild(title);
+  titleTextWrap.appendChild(url);
+  titleWrap.appendChild(titleTextWrap);
   head.appendChild(titleWrap);
   const chip = document.createElement('span');
   const ps = source.primarySecondary || 'unset';
   chip.className = 'sb-source__chip sb-source__chip--' + ps;
   chip.textContent = ps === 'unset' ? 'unset' : ps;
   head.appendChild(chip);
+  if (sourceMode) {
+    head.addEventListener('click', (e) => {
+      // Don't capture clicks on inner buttons (chip is read-only here).
+      if (e.target.closest('button')) return;
+      state.expandedSourceIds[source.sourceId] = !sourceExpanded;
+      render();
+    });
+  }
   card.appendChild(head);
 
+  // Tag summary strip — visible in source mode, always (collapsed shows it as
+  // the only hint of contents; expanded keeps it as a quick reference).
+  if (sourceMode) {
+    const breakdown = categoryBreakdownForSource(source.sourceId);
+    if (breakdown.length > 0) {
+      const strip = document.createElement('div');
+      strip.className = 'sb-source__breakdown';
+      breakdown.forEach((b) => {
+        const dot = document.createElement('span');
+        dot.className = 'sb-source__breakdown-dot';
+        dot.style.backgroundColor = b.color;
+        dot.title = b.label + ' · ' + b.count;
+        strip.appendChild(dot);
+        const lab = document.createElement('span');
+        lab.className = 'sb-source__breakdown-count';
+        lab.textContent = b.count;
+        strip.appendChild(lab);
+      });
+      card.appendChild(strip);
+    }
+  }
+
+  // Action row: highlight count + Edit citation + Insert in-text.
   const meta = document.createElement('div');
   meta.className = 'sb-source__meta';
-  meta.textContent = filteredHighlightsForSource(source.sourceId).length + ' highlight(s)';
+  const countSpan = document.createElement('span');
+  countSpan.textContent = filteredHighlightsForSource(source.sourceId).length + ' highlight(s)';
+  meta.appendChild(countSpan);
+  const spacer = document.createElement('span');
+  spacer.style.flex = '1';
+  meta.appendChild(spacer);
+  const inlineBtn = document.createElement('button');
+  inlineBtn.type = 'button';
+  inlineBtn.className = 'sb-source__action';
+  inlineBtn.textContent = 'Insert in-text';
+  inlineBtn.title = 'Insert MLA in-text citation at the cursor';
+  inlineBtn.addEventListener('click', (e) => { e.stopPropagation(); insertInlineForSource(source); });
+  meta.appendChild(inlineBtn);
   const expand = document.createElement('button');
   expand.type = 'button';
-  expand.className = 'sb-source__expand';
+  expand.className = 'sb-source__action sb-source__expand';
   expand.textContent = state.expandedSourceId === source.sourceId ? 'Hide citation' : 'Edit citation';
-  expand.addEventListener('click', () => {
+  expand.addEventListener('click', (e) => {
+    e.stopPropagation();
     state.expandedSourceId = state.expandedSourceId === source.sourceId ? null : source.sourceId;
+    // Auto-expand the source in source mode when opening the citation form.
+    if (state.expandedSourceId === source.sourceId && sourceMode) {
+      state.expandedSourceIds[source.sourceId] = true;
+    }
     render();
   });
   meta.appendChild(expand);
@@ -231,12 +387,66 @@ function renderSource(source) {
     card.appendChild(renderSourceForm(source));
   }
 
-  const hl = document.createElement('div');
-  hl.className = 'sb-highlights';
-  filteredHighlightsForSource(source.sourceId).forEach((h) => hl.appendChild(renderHighlight(source, h)));
-  card.appendChild(hl);
+  if (sourceExpanded) {
+    // Per-source filter chips in source mode only.
+    if (sourceMode) {
+      card.appendChild(renderSourceFilterRow(source));
+    }
+    const hl = document.createElement('div');
+    hl.className = 'sb-highlights';
+    filteredHighlightsForSource(source.sourceId).forEach((h) => hl.appendChild(renderHighlight(source, h)));
+    card.appendChild(hl);
+  }
 
   return card;
+}
+
+function renderSourceFilterRow(source) {
+  const bundle = activeBundle();
+  const row = document.createElement('div');
+  row.className = 'sb-source__filter';
+  if (!bundle) return row;
+  const breakdown = categoryBreakdownForSource(source.sourceId);
+  if (breakdown.length === 0) return row;
+  const current = state.sourceFilters[source.sourceId] || null;
+  const allChip = makeSourceFilterChip_(source, null, 'All', '#dadce0', state.highlights.filter((h) => h.sourceId === source.sourceId).length, current === null);
+  row.appendChild(allChip);
+  breakdown.forEach((b) => {
+    row.appendChild(makeSourceFilterChip_(source, b.label, b.label, b.color, b.count, current === b.label));
+  });
+  return row;
+}
+
+function makeSourceFilterChip_(source, value, label, color, count, active) {
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'sb-filter-chip sb-filter-chip--mini' + (active ? ' sb-filter-chip--active' : '');
+  const dot = document.createElement('span');
+  dot.className = 'sb-filter-chip__dot';
+  dot.style.backgroundColor = color;
+  chip.appendChild(dot);
+  chip.appendChild(document.createTextNode(label));
+  const c = document.createElement('span');
+  c.className = 'sb-filter-chip__count';
+  c.textContent = count;
+  chip.appendChild(c);
+  chip.addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.sourceFilters[source.sourceId] = state.sourceFilters[source.sourceId] === value ? null : value;
+    render();
+  });
+  return chip;
+}
+
+function insertInlineForSource(source) {
+  setStatus('Inserting in-text citation…');
+  google.script.run
+    .withSuccessHandler((res) => {
+      if (res && res.ok) setStatus('Inserted ' + (res.text || 'citation') + '.', 'good', 2500);
+      else setStatus('Insert failed.', 'bad');
+    })
+    .withFailureHandler((e) => setStatus(String(e && e.message || e), 'bad'))
+    .sidebarInsertInlineCitation(state.projectId, source.sourceId, '');
 }
 
 function renderSourceForm(source) {
@@ -478,19 +688,38 @@ function renderHighlight(source, h) {
     render();
   });
   actions.appendChild(editBtn);
-  const delBtn = document.createElement('button');
-  delBtn.type = 'button';
-  delBtn.className = 'sb-highlight__btn sb-highlight__btn--delete';
-  delBtn.textContent = 'Delete';
-  delBtn.addEventListener('click', () => {
-    if (!confirm('Delete this highlight? This cannot be undone.')) return;
-    const cascade = state.highlights.filter((x) => x.sourceId === h.sourceId && x.highlightId !== h.highlightId).length === 0;
-    google.script.run
-      .withSuccessHandler(() => loadProjectData())
-      .withFailureHandler(onFail('deleting highlight'))
-      .sidebarDeleteHighlight(h.highlightId, state.projectId, cascade);
-  });
-  actions.appendChild(delBtn);
+
+  // Two-step inline delete. First click on Delete turns the action row
+  // into [Cancel][Confirm delete]; second click optimistically removes
+  // the row locally and fires the server delete in the background.
+  if (state.confirmingDeleteId === h.highlightId) {
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'sb-highlight__btn sb-highlight__btn--cancel';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => {
+      state.confirmingDeleteId = null;
+      render();
+    });
+    actions.appendChild(cancelBtn);
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'sb-highlight__btn sb-highlight__btn--confirm';
+    confirmBtn.textContent = 'Confirm delete';
+    confirmBtn.addEventListener('click', () => optimisticallyDeleteHighlight_(source, h));
+    actions.appendChild(confirmBtn);
+  } else {
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'sb-highlight__btn sb-highlight__btn--delete';
+    delBtn.textContent = 'Delete';
+    delBtn.addEventListener('click', () => {
+      state.confirmingDeleteId = h.highlightId;
+      render();
+    });
+    actions.appendChild(delBtn);
+  }
   row.appendChild(actions);
 
   if (state.editingHighlightId === h.highlightId) {
@@ -618,6 +847,56 @@ function saveHighlightPatch_(highlight, patch) {
     .withSuccessHandler(() => setStatus('Saved.', 'good', 1500))
     .withFailureHandler(onFail('saving highlight'))
     .sidebarUpdateHighlight(merged);
+}
+
+/**
+ * Remove the highlight from local state immediately, re-render, then fire
+ * the server delete. On failure, restore state and surface the error.
+ *
+ * Server-side: if this was the last highlight pointing at the source, the
+ * source row gets cascade-deleted too — mirror that locally so the UI
+ * matches what a fresh load would show.
+ */
+function optimisticallyDeleteHighlight_(source, highlight) {
+  const cascade = state.highlights.filter(
+    (x) => x.sourceId === highlight.sourceId && x.highlightId !== highlight.highlightId
+  ).length === 0;
+
+  // Snapshot what we're about to remove, in case the server rejects.
+  const snapshotHighlight = highlight;
+  const snapshotSource = cascade ? state.sources.find((s) => s.sourceId === highlight.sourceId) : null;
+  const snapshotHighlightIdx = state.highlights.findIndex((h) => h.highlightId === highlight.highlightId);
+  const snapshotSourceIdx = snapshotSource ? state.sources.findIndex((s) => s.sourceId === snapshotSource.sourceId) : -1;
+
+  // Apply optimistically.
+  state.highlights = state.highlights.filter((h) => h.highlightId !== highlight.highlightId);
+  if (snapshotSource) {
+    state.sources = state.sources.filter((s) => s.sourceId !== snapshotSource.sourceId);
+  }
+  state.confirmingDeleteId = null;
+  if (state.editingHighlightId === highlight.highlightId) state.editingHighlightId = null;
+  els.insert.disabled = state.sources.length === 0;
+  renderFilter();
+  render();
+  setStatus('Deleted.', 'good', 1500);
+
+  google.script.run
+    .withSuccessHandler(() => { /* UI already reflects the deletion */ })
+    .withFailureHandler((e) => {
+      // Roll back. Put items back at their original indices so the order
+      // doesn't shuffle just because a delete failed.
+      const insertAt = (arr, idx, item) => {
+        if (idx < 0 || idx > arr.length) arr.push(item);
+        else arr.splice(idx, 0, item);
+      };
+      insertAt(state.highlights, snapshotHighlightIdx, snapshotHighlight);
+      if (snapshotSource) insertAt(state.sources, snapshotSourceIdx, snapshotSource);
+      els.insert.disabled = state.sources.length === 0;
+      renderFilter();
+      render();
+      setStatus('Delete failed: ' + (e && e.message || e), 'bad');
+    })
+    .sidebarDeleteHighlight(highlight.highlightId, state.projectId, cascade);
 }
 
 function insertBibliography() {

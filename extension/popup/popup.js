@@ -31,26 +31,55 @@ async function maybeShowPdfCta_() {
     if (!tab || !tab.url) return;
     if (!isPdfUrl_(tab.url)) return;
     els.pdfCta.hidden = false;
-    els.openPdfPanel.addEventListener('click', async () => {
-      els.openPdfPanel.disabled = true;
-      await sendMessage({ type: 'openPdfPanel', url: tab.url });
-      window.close();
-    });
+    els.openPdfPanel.addEventListener('click', () => openPdfPanelFromPopup_(tab.url));
   } catch (e) {
     // Tab query can fail for restricted pages; just suppress CTA.
   }
 }
 
+async function openPdfPanelFromPopup_(pdfUrl) {
+  // Open the panel tab directly. Going through the background SW added a
+  // round-trip and a silent failure mode (if the SW was asleep and the
+  // message dropped, the click did nothing). chrome.tabs.create is
+  // available to popups without the `tabs` permission.
+  els.openPdfPanel.disabled = true;
+  els.openPdfPanel.textContent = 'Opening…';
+  try {
+    const panelUrl = chrome.runtime.getURL('pdf/panel.html') + '?src=' + encodeURIComponent(pdfUrl);
+    await chrome.tabs.create({ url: panelUrl });
+    window.close();
+  } catch (e) {
+    // Surface the failure inline so the next round of debugging has something
+    // to look at, instead of silently leaving the button disabled.
+    els.openPdfPanel.disabled = false;
+    els.openPdfPanel.textContent = 'Open this PDF in the research panel';
+    showError('Could not open the PDF panel: ' + (e && e.message || e));
+  }
+}
+
+/**
+ * Best-effort PDF tab detection. Chrome doesn't expose tab.contentType, so
+ * we sniff the URL. Strict `.pdf` suffix is too narrow — arxiv, jstor, ssrn,
+ * Google Scholar's PDF mirror, etc. all serve PDFs under paths like
+ * `/pdf/<id>` without an extension. Match those by path prefix.
+ */
 function isPdfUrl_(url) {
   if (!url) return false;
   if (url.startsWith('file:') && url.toLowerCase().endsWith('.pdf')) return true;
-  try {
-    const u = new URL(url);
-    if (u.pathname.toLowerCase().endsWith('.pdf')) return true;
-  } catch (e) {
-    // ignore
-  }
-  return false;
+  let u;
+  try { u = new URL(url); }
+  catch (e) { return false; }
+  const path = u.pathname.toLowerCase();
+  if (path.endsWith('.pdf')) return true;
+  // Known PDF-serving path patterns. Keep this list narrow — false positives
+  // here mean the CTA shows on non-PDF pages.
+  const PDF_PATH_PATTERNS = [
+    /^\/pdf\//,                 // arxiv.org/pdf/<id>, eric.ed.gov/?id=ED... wait, eric uses query
+    /^\/doi\/pdf\//,            // many journal hosts
+    /^\/stable\/pdf\//,         // jstor
+    /\/fulltext\.pdf$/,         // some article hosts
+  ];
+  return PDF_PATH_PATTERNS.some((re) => re.test(path));
 }
 
 // Cache-first: paint whatever we have in chrome.storage immediately so the

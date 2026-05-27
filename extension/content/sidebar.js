@@ -370,7 +370,13 @@ const OpsSidebar = (function () {
 
     // Try to re-anchor on the page so the colored spans come back too.
     // Failures are surfaced per-entry in the sidebar; no silent misanchoring.
-    if (self.reAnchorHighlights) {
+    //
+    // Defer mode (OPS_DEFER_REANCHOR === true, set by the PDF panel before
+    // this script loads) skips the document-wide walk because the host
+    // renders content lazily — the panel will call reanchorIn() once per
+    // page as it comes on screen. Without this we'd mark every highlight
+    // as "page changed" on first load, since no pages are in the DOM yet.
+    if (self.reAnchorHighlights && !self.OPS_DEFER_REANCHOR) {
       const colorWithFallback = (label) => colorForLabel_(label) || '#fff8c4';
       const { failed } = self.reAnchorHighlights(resp.highlights, colorWithFallback);
       const failedSet = new Set(failed);
@@ -381,6 +387,48 @@ const OpsSidebar = (function () {
 
     render_();
   }
+
+  /**
+   * Re-anchor cached page highlights inside the given DOM subtree. Called
+   * by the PDF panel after each lazily-rendered page so saved highlights
+   * appear the moment a student scrolls to the page. Idempotent — the
+   * underlying reAnchorHighlights skips IDs that already have a mark span.
+   */
+  function reanchorIn(rootEl) {
+    if (!rootEl) return { anchored: [], failed: [] };
+    if (!self.reAnchorHighlights) return { anchored: [], failed: [] };
+    if (state.pageHighlights.length === 0) return { anchored: [], failed: [] };
+    const highlights = state.pageHighlights.map((h) => ({
+      highlightId: h.highlightId,
+      primaryCategory: h.primaryCategory,
+      secondaryCategory: h.secondaryCategory,
+      highlightedText: h.text,
+    }));
+    const colorWithFallback = (label) => colorForLabel_(label) || '#fff8c4';
+    const result = self.reAnchorHighlights(highlights, colorWithFallback, rootEl);
+    const anchoredSet = new Set(result.anchored || []);
+    let changed = false;
+    state.pageHighlights.forEach((h) => {
+      if (anchoredSet.has(h.highlightId) && h.notFoundOnPage) {
+        h.notFoundOnPage = false;
+        changed = true;
+      }
+    });
+    if (changed) render_();
+    return result;
+  }
+
+  // "Highlights have been loaded from the server" promise. Resolves once
+  // loadForCurrentPage finishes (success OR failure — the caller just needs
+  // to know it's safe to call reanchorIn now).
+  let _loadResolve = null;
+  const _loadedPromise = new Promise((resolve) => { _loadResolve = resolve; });
+  function whenLoaded() { return _loadedPromise; }
+  const _origLoadForCurrentPage = loadForCurrentPage;
+  loadForCurrentPage = async function () {
+    try { await _origLoadForCurrentPage(); }
+    finally { if (_loadResolve) { _loadResolve(); _loadResolve = null; } }
+  };
 
   async function loadContext_() {
     try {
@@ -899,7 +947,7 @@ const OpsSidebar = (function () {
     if (h) h.sourceId = sourceId;
   }
 
-  return { addHighlight, markSynced, markError, focus, show, hide, toggle, _setSourceId, loadForCurrentPage };
+  return { addHighlight, markSynced, markError, focus, show, hide, toggle, _setSourceId, loadForCurrentPage, reanchorIn, whenLoaded };
 })();
 
 self.OpsSidebar = OpsSidebar;

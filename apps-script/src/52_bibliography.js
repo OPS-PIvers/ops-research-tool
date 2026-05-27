@@ -132,6 +132,55 @@ function applyItalicsRanges_(paragraph, ranges) {
 }
 
 /**
+ * Insert an MLA in-text (parenthetical) citation at the current cursor.
+ * Looks up the source row, builds the parenthetical, and inserts as plain
+ * text. `page` is optional — when omitted, the citation has no page number.
+ */
+function insertInlineCitation(projectId, sourceId, page) {
+  const doc = DocumentApp.getActiveDocument();
+  if (!doc) throw new Error('No active document.');
+  const actorEmail = getActorEmail_();
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  const bundle = getBundle_(project.bundleId);
+  const style = (bundle && bundle.style) || 'mla';
+
+  const sources = readSourcesForActor_(actorEmail, projectId);
+  const source = sources.find((s) => s.sourceId === sourceId);
+  if (!source) throw new Error('Source not found in this project.');
+  const fields = parseCitationFields_(source);
+  const text = formatInlineCitation(fields, style, page);
+  if (!text) throw new Error('No author or title available — edit the citation first.');
+
+  const cursor = doc.getCursor();
+  if (cursor) {
+    const inserted = cursor.insertText(text);
+    if (inserted) {
+      // Move the cursor to just after the insertion so the next type lands
+      // there, not before. setCursor takes an element + offset.
+      try {
+        doc.setCursor(doc.newPosition(inserted, inserted.getText().length));
+      } catch (e) { /* setCursor occasionally rejects — non-fatal */ }
+    } else {
+      // Fall through to append-at-end path.
+      appendAtBodyEnd_(doc.getBody(), text);
+    }
+  } else {
+    appendAtBodyEnd_(doc.getBody(), text);
+  }
+  return { ok: true, text };
+}
+
+function appendAtBodyEnd_(body, text) {
+  const last = body.getChild(body.getNumChildren() - 1);
+  if (last && last.getType && last.getType() === DocumentApp.ElementType.PARAGRAPH) {
+    last.asParagraph().appendText(text);
+  } else {
+    body.appendParagraph(text);
+  }
+}
+
+/**
  * Best-effort: find the child index in the body that the cursor sits in,
  * so the bibliography is inserted at "around here" rather than at the end.
  * If the cursor lookup fails (some surfaces don't have a settable cursor),
