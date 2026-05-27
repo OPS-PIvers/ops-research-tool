@@ -60,8 +60,8 @@ function render() {
 
   els.citation.innerHTML = '';
   els.citation.appendChild(renderCitationForm());
-  els.evidence.innerHTML = '<div class="sb-modal__placeholder">Evidence list coming in Tasks 5+.</div>';
-  els.filter.innerHTML = '';
+  els.filter.innerHTML = '';   // filter chips come in Task 8
+  renderEvidenceList_();
 }
 
 function renderEmpty(message) {
@@ -278,5 +278,73 @@ function saveSourcePatch_(patch) {
     .withSuccessHandler(() => setStatus('Saved.', 'good', 1500))
     .withFailureHandler(onFail('saving source'))
     .sidebarUpdateSource(merged);
+}
+
+function renderEvidenceList_() {
+  els.evidence.innerHTML = '';
+  const visible = editor.highlights.filter(highlightPassesFilter_);
+  if (visible.length === 0) {
+    const e = document.createElement('div');
+    e.className = 'sb-empty';
+    e.textContent = editor.highlights.length === 0
+      ? 'No evidence yet for this source.'
+      : 'No evidence matches the current filter.';
+    els.evidence.appendChild(e);
+    return;
+  }
+  visible.forEach((h) => els.evidence.appendChild(renderEvidenceCard(h)));
+}
+
+function highlightPassesFilter_(h) {
+  if (!editor.perSourceFilter) return true;
+  return h.primaryCategory === editor.perSourceFilter || h.secondaryCategory === editor.perSourceFilter;
+}
+
+function renderEvidenceCard(h) {
+  const card = document.createElement('div');
+  card.className = 'sb-highlight';
+  card.id = 'hl-' + h.highlightId;
+  card.setAttribute('data-highlight-id', h.highlightId);
+
+  const color = colorForLabel_(h.primaryCategory) || '#dadce0';
+  const bar = document.createElement('div');
+  bar.className = 'sb-highlight__bar';
+  bar.style.backgroundColor = color;
+  card.appendChild(bar);
+
+  const cat = document.createElement('div');
+  cat.className = 'sb-highlight__cat';
+  cat.appendChild(document.createTextNode(h.primaryCategory || '(no category)'));
+  if (h.secondaryCategory) {
+    const sec = document.createElement('span');
+    sec.className = 'sb-highlight__secondary';
+    sec.textContent = '+ ' + h.secondaryCategory;
+    cat.appendChild(sec);
+  }
+  card.appendChild(cat);
+
+  // Full text — no truncation in the modal.
+  const t = document.createElement('div');
+  t.className = 'sb-highlight__text';
+  t.textContent = h.highlightedText || '';
+  card.appendChild(t);
+
+  if (h.note) {
+    const n = document.createElement('div');
+    n.className = 'sb-highlight__note';
+    n.textContent = h.note;
+    card.appendChild(n);
+  }
+
+  // Actions come in Tasks 6+7.
+  return card;
+}
+
+function colorForLabel_(label) {
+  if (!editor.bundle || !label) return null;
+  for (let i = 1; i <= 5; i++) {
+    if (editor.bundle['label' + i] === label) return editor.bundle['color' + i];
+  }
+  return null;
 }
 </script>
