@@ -1,0 +1,94 @@
+<script>
+const SRC_TYPES = ['website', 'article', 'book', 'primary'];
+const PS_OPTS = ['primary', 'secondary', 'unset'];
+
+const ctx = window.OPS_EDITOR_CTX;
+const editor = {
+  source: null,
+  highlights: [],
+  bundle: ctx.bundle || null,
+  perSourceFilter: null,
+  editingHighlightId: null,
+  confirmingHighlightDeleteId: null,
+  confirmingSourceDelete: false,
+};
+
+const els = {
+  title:    document.getElementById('ed-title'),
+  close:    document.getElementById('ed-close'),
+  citation: document.getElementById('ed-citation'),
+  evHeader: document.getElementById('ed-evheader'),
+  filter:   document.getElementById('ed-filter'),
+  evidence: document.getElementById('ed-evidence'),
+  status:   document.getElementById('ed-status'),
+};
+
+els.close.addEventListener('click', () => google.script.host.close());
+
+bootstrap();
+
+function bootstrap() {
+  setStatus('Loading…');
+  google.script.run
+    .withSuccessHandler(onData)
+    .withFailureHandler(onFail('loading source'))
+    .sidebarGetProjectData(ctx.projectId);
+}
+
+function onData(resp) {
+  if (!resp || !resp.ok) {
+    renderEmpty('Could not load this source.');
+    return;
+  }
+  editor.source = (resp.sources || []).find((s) => s.sourceId === ctx.sourceId) || null;
+  editor.highlights = (resp.highlights || []).filter((h) => h.sourceId === ctx.sourceId);
+  if (!editor.source) {
+    renderEmpty('This source no longer exists. Close this window.');
+    return;
+  }
+  setStatus('');
+  render();
+}
+
+function render() {
+  const title =
+    (editor.source.citationFieldsParsed && editor.source.citationFieldsParsed.title) ||
+    editor.source.scrapedTitle || '(untitled)';
+  els.title.textContent = title;
+
+  els.evHeader.textContent = 'Evidence (' + editor.highlights.length + ')';
+
+  els.citation.innerHTML = '<div class="sb-modal__placeholder">Citation form coming in Task 4.</div>';
+  els.evidence.innerHTML = '<div class="sb-modal__placeholder">Evidence list coming in Tasks 5+.</div>';
+  els.filter.innerHTML = '';
+}
+
+function renderEmpty(message) {
+  els.title.textContent = '';
+  els.citation.innerHTML = '';
+  els.filter.innerHTML = '';
+  els.evidence.innerHTML = '<div class="sb-empty">' + esc_(message) + '</div>';
+  setStatus('');
+}
+
+function setStatus(text, kind, autoClearMs) {
+  els.status.textContent = text || '';
+  els.status.className = 'sb-modal__status' + (kind ? ' sb-modal__status--' + kind : '');
+  if (autoClearMs) {
+    setTimeout(() => {
+      if (els.status.textContent === text) {
+        els.status.textContent = '';
+        els.status.className = 'sb-modal__status';
+      }
+    }, autoClearMs);
+  }
+}
+
+function onFail(stage) {
+  return (e) => setStatus(stage + ': ' + (e && e.message || e), 'bad');
+}
+
+function esc_(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+</script>

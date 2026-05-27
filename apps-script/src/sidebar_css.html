@@ -294,4 +294,61 @@ select, input, textarea { font: inherit; }
 }
 .sb-body--dialog .sb-title { font-size: 16px; }
 .sb-body--dialog .sb-empty { column-span: all; }
+
+/* ---- Per-source editor modal ---- */
+.sb-body--modal {
+  height: 100vh;
+  overflow-x: hidden;     /* critical — prevents horizontal scroll under any condition */
+  overflow-y: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.sb-modal__header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--c-line);
+  background: var(--c-bg);
+  flex-shrink: 0;
+}
+.sb-modal__close {
+  background: none; border: none; font-size: 22px; line-height: 1;
+  color: var(--c-muted); padding: 0 8px; cursor: pointer;
+}
+.sb-modal__close:hover { color: var(--c-text); }
+.sb-modal__title {
+  margin: 0; font-size: 16px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 1; min-width: 0;
+}
+.sb-modal__body {
+  flex: 1; min-height: 0;
+  display: flex; gap: 12px;
+  padding: 12px;
+}
+.sb-modal__pane {
+  overflow-y: auto;
+  min-width: 0;            /* critical — without this, flex children force horizontal overflow */
+  display: flex; flex-direction: column; gap: 10px;
+}
+.sb-modal__pane--left  { flex: 0 0 46%; padding-right: 6px; border-right: 1px solid var(--c-line); }
+.sb-modal__pane--right { flex: 1; }
+.sb-modal__paneheader {
+  margin: 0; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em; color: var(--c-muted);
+}
+.sb-modal__paneheader-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+}
+.sb-modal__placeholder {
+  padding: 12px; font-size: 12px; color: var(--c-muted); font-style: italic;
+}
+.sb-modal__status {
+  padding: 4px 14px 8px; font-size: 11px; color: var(--c-muted); text-align: center;
+  min-height: 14px; flex-shrink: 0;
+}
+.sb-modal__status--good { color: var(--c-good); }
+.sb-modal__status--bad  { color: var(--c-bad); }
+.sb-modal__filter {
+  display: flex; flex-wrap: wrap; gap: 3px;
+}
 </style>

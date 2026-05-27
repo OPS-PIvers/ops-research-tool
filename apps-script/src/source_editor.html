@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top" />
+    <?!= includeFile_('sidebar_css') ?>
+    <script>
+      window.OPS_EDITOR_CTX = {
+        projectId:        <?= JSON.stringify(projectId) ?>,
+        sourceId:         <?= JSON.stringify(sourceId) ?>,
+        focusHighlightId: <?= JSON.stringify(focusHighlightId) ?>,
+        bundle:           <?!= bundleJson ?>,
+      };
+    </script>
+  </head>
+  <body class="sb-body sb-body--modal">
+    <header class="sb-modal__header">
+      <button id="ed-close" type="button" class="sb-modal__close" title="Close">&times;</button>
+      <h1 id="ed-title" class="sb-modal__title">Loading…</h1>
+    </header>
+
+    <div class="sb-modal__body">
+      <section class="sb-modal__pane sb-modal__pane--left" id="ed-left">
+        <h2 class="sb-modal__paneheader">Citation</h2>
+        <div id="ed-citation" class="sb-modal__citation"></div>
+      </section>
+
+      <section class="sb-modal__pane sb-modal__pane--right" id="ed-right">
+        <div class="sb-modal__paneheader-row">
+          <h2 class="sb-modal__paneheader" id="ed-evheader">Evidence</h2>
+        </div>
+        <div id="ed-filter" class="sb-modal__filter"></div>
+        <div id="ed-evidence" class="sb-modal__evidence"></div>
+      </section>
+    </div>
+
+    <div id="ed-status" class="sb-modal__status"></div>
+
+    <?!= includeFile_('source_editor_js') ?>
+  </body>
+</html>

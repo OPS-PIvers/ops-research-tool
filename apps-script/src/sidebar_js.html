@@ -69,9 +69,15 @@ function setViewMode_(mode) {
 }
 
 function popOutToDialog() {
+  // TEMPORARY: rewired to open the new per-source editor against the first source
+  // for smoke-testing. Reverted in Task 13.
+  if (!state.sources || state.sources.length === 0) {
+    setStatus('No sources to open.', 'warn');
+    return;
+  }
   google.script.run
-    .withFailureHandler(onFail('opening pop-out'))
-    .sidebarOpenAsDialog();
+    .withFailureHandler(onFail('opening editor'))
+    .sidebarOpenSourceEditor(state.projectId, state.sources[0].sourceId, '');
 }
 
 function onContext(ctx) {
