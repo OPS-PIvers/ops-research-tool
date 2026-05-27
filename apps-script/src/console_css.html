@@ -893,4 +893,64 @@ select, input, textarea { font: inherit; }
   border: 1px solid #dadce0;
   border-radius: 4px;
 }
+
+/* Import roster dialog */
+.admin-modal--import { width: 720px; max-width: calc(100vw - 32px); }
+.admin-import__modebar {
+  display: flex;
+  gap: 4px;
+  padding: 0 24px;
+  border-bottom: 1px solid #e8eaed;
+}
+.admin-import__modebar button {
+  background: transparent;
+  border: 0;
+  padding: 10px 16px;
+  cursor: pointer;
+  font: 14px 'Roboto', sans-serif;
+  color: #5f6368;
+  border-bottom: 2px solid transparent;
+}
+.admin-import__mode-active {
+  color: #2d3f89 !important;
+  border-bottom-color: #2d3f89 !important;
+  font-weight: 500;
+}
+.admin-import__body { padding: 16px 24px; }
+.admin-import__help { font-size: 13px; color: #5f6368; padding-bottom: 8px; }
+.admin-import__help code { background: #f1f3f4; padding: 1px 4px; border-radius: 3px; }
+.admin-import__textarea {
+  width: 100%;
+  font: 13px 'Roboto Mono', monospace;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  padding: 8px;
+  box-sizing: border-box;
+}
+.admin-import__wizard-label { font-size: 14px; padding-bottom: 8px; color: #3c4043; }
+.admin-import__wizard-label code { background: #f1f3f4; padding: 1px 4px; border-radius: 3px; }
+.admin-import__wizard-nav { display: flex; justify-content: space-between; padding-top: 12px; }
+
+.admin-import__preview { padding: 0 24px; min-height: 24px; }
+.admin-import__summary {
+  display: flex;
+  gap: 16px;
+  padding: 12px 0;
+  font-size: 14px;
+}
+.admin-import__added    { color: #137333; }
+.admin-import__removed  { color: #ad2122; }
+.admin-import__changed  { color: #b06000; }
+.admin-import__unchanged{ color: #5f6368; }
+
+.admin-import__errors-head { color: #ad2122; font-weight: 500; padding: 8px 0 4px; }
+.admin-import__errors {
+  list-style: disc;
+  padding-left: 24px;
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 13px;
+  color: #3c4043;
+}
 </style>

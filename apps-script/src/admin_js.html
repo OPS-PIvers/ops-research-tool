@@ -529,9 +529,272 @@ function openDeleteRowModal_(r, host) {
   }
 }
 
-// Stub for Task 15 — defined here so the import button compiles.
 function openRosterImportDialog_() {
-  setStatus('Import dialog coming in Task 15.', '', 2500);
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'admin-modal admin-modal--import';
+
+  const head = document.createElement('div');
+  head.className = 'admin-modal__header';
+  head.textContent = 'Import roster';
+  modal.appendChild(head);
+
+  // Mode toggle
+  const modeBar = document.createElement('div');
+  modeBar.className = 'admin-import__modebar';
+  const tsvBtn = document.createElement('button');
+  tsvBtn.textContent = 'Paste all columns (TSV)';
+  tsvBtn.className = 'admin-import__mode-active';
+  const wizardBtn = document.createElement('button');
+  wizardBtn.textContent = 'Paste columns separately';
+  modeBar.appendChild(tsvBtn);
+  modeBar.appendChild(wizardBtn);
+  modal.appendChild(modeBar);
+
+  const bodyHost = document.createElement('div');
+  bodyHost.className = 'admin-import__body';
+  modal.appendChild(bodyHost);
+
+  const previewHost = document.createElement('div');
+  previewHost.className = 'admin-import__preview';
+  modal.appendChild(previewHost);
+
+  const actions = document.createElement('div');
+  actions.className = 'admin-modal__actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'admin-modal__cancel';
+  cancel.textContent = 'Cancel';
+  const previewBtn = document.createElement('button');
+  previewBtn.className = 'admin-modal__primary';
+  previewBtn.textContent = 'Preview diff';
+  const replaceBtn = document.createElement('button');
+  replaceBtn.className = 'admin-modal__danger';
+  replaceBtn.textContent = 'Replace roster';
+  replaceBtn.disabled = true;
+  actions.appendChild(cancel);
+  actions.appendChild(previewBtn);
+  actions.appendChild(replaceBtn);
+  modal.appendChild(actions);
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.parentNode && overlay.parentNode.removeChild(overlay);
+  cancel.addEventListener('click', close);
+
+  // State for current mode + parsed rows + preview result
+  const ctx = { mode: 'tsv', rows: null, preview: null };
+
+  tsvBtn.addEventListener('click', () => {
+    ctx.mode = 'tsv';
+    tsvBtn.className = 'admin-import__mode-active';
+    wizardBtn.className = '';
+    renderTsvMode_(bodyHost, ctx, () => { previewBtn.disabled = !ctx.rows; });
+  });
+  wizardBtn.addEventListener('click', () => {
+    ctx.mode = 'wizard';
+    wizardBtn.className = 'admin-import__mode-active';
+    tsvBtn.className = '';
+    renderWizardMode_(bodyHost, ctx, () => { previewBtn.disabled = !ctx.rows; });
+  });
+
+  // Default to TSV
+  renderTsvMode_(bodyHost, ctx, () => { previewBtn.disabled = !ctx.rows; });
+
+  previewBtn.addEventListener('click', () => {
+    if (!ctx.rows) { setStatus('Paste rows first.', 'bad', 2500); return; }
+    previewBtn.disabled = true;
+    previewBtn.textContent = '…';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        ctx.preview = resp;
+        renderPreview_(previewHost, resp);
+        replaceBtn.disabled = (resp.errors.length > 0);
+        previewBtn.disabled = false;
+        previewBtn.textContent = 'Preview diff';
+      })
+      .withFailureHandler((e) => {
+        previewBtn.disabled = false;
+        previewBtn.textContent = 'Preview diff';
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      })
+      .adminPreviewReplaceRoster(ctx.rows);
+  });
+
+  replaceBtn.addEventListener('click', () => {
+    if (!ctx.rows) return;
+    replaceBtn.disabled = true;
+    replaceBtn.textContent = '…';
+    google.script.run
+      .withSuccessHandler(() => {
+        setStatus('Roster replaced.', 'good', 3000);
+        adminRoster.rows = null;
+        close();
+        applyHash_();
+      })
+      .withFailureHandler((e) => {
+        replaceBtn.disabled = false;
+        replaceBtn.textContent = 'Replace roster';
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      })
+      .adminReplaceRoster(ctx.rows);
+  });
+}
+
+function renderTsvMode_(host, ctx, onChange) {
+  host.innerHTML = '';
+  const help = document.createElement('div');
+  help.className = 'admin-import__help';
+  help.innerHTML = 'Paste a tab-separated block from Google Sheets. Header row optional. Required columns in this order:<br><code>ID&nbsp;&nbsp;First&nbsp;&nbsp;Last&nbsp;&nbsp;Email&nbsp;&nbsp;Class&nbsp;&nbsp;Teacher&nbsp;&nbsp;TeacherEmail</code>';
+  host.appendChild(help);
+  const ta = document.createElement('textarea');
+  ta.className = 'admin-import__textarea';
+  ta.rows = 14;
+  ta.placeholder = '10234\tAlex\tSmith\tasmith@orono.k12.mn.us\t7A\tShogren\tbshogren@orono.k12.mn.us\n...';
+  host.appendChild(ta);
+
+  ta.addEventListener('input', () => {
+    ctx.rows = parseTsv_(ta.value);
+    onChange();
+  });
+}
+
+function parseTsv_(text) {
+  const lines = String(text || '').split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return null;
+  // Skip header if first cell looks like 'ID' or 'First' (case-insensitive).
+  const firstCell = String((lines[0].split('\t')[0] || '')).trim().toLowerCase();
+  const start = (firstCell === 'id' || firstCell === 'first') ? 1 : 0;
+  const out = [];
+  for (let i = start; i < lines.length; i++) {
+    const c = lines[i].split('\t').map((s) => s.trim());
+    while (c.length < 7) c.push('');
+    out.push({
+      ID:           c[0],
+      First:        c[1],
+      Last:         c[2],
+      Email:        c[3],
+      Class:        c[4],
+      Teacher:      c[5],
+      TeacherEmail: c[6],
+    });
+  }
+  return out;
+}
+
+function renderWizardMode_(host, ctx, onChange) {
+  host.innerHTML = '';
+  const fields = ['ID', 'First', 'Last', 'Email', 'Class', 'Teacher', 'TeacherEmail'];
+  const values = {};
+  fields.forEach((f) => { values[f] = ''; });
+
+  const step = { i: 0 };
+  function rerender() {
+    host.innerHTML = '';
+    const f = fields[step.i];
+    const label = document.createElement('div');
+    label.className = 'admin-import__wizard-label';
+    label.innerHTML = `Step <strong>${step.i + 1}</strong> of ${fields.length}: paste <code>${f}</code> column (one value per line)`;
+    host.appendChild(label);
+
+    const ta = document.createElement('textarea');
+    ta.className = 'admin-import__textarea';
+    ta.rows = 14;
+    ta.value = values[f];
+    ta.addEventListener('input', () => { values[f] = ta.value; });
+    host.appendChild(ta);
+
+    const nav = document.createElement('div');
+    nav.className = 'admin-import__wizard-nav';
+    const back = document.createElement('button');
+    back.textContent = '← Back';
+    back.className = 'admin-btn-secondary';
+    back.disabled = step.i === 0;
+    back.addEventListener('click', () => { step.i--; rerender(); });
+    const next = document.createElement('button');
+    next.className = 'admin-btn-primary';
+    next.textContent = step.i === fields.length - 1 ? 'Done' : 'Next →';
+    next.addEventListener('click', () => {
+      // Validate row counts match.
+      if (step.i === 0) {
+        // first non-empty step sets the count
+      }
+      const lines0 = values[fields[0]].split(/\r?\n/).filter((l) => l.trim().length >= 0);
+      const linesCur = values[f].split(/\r?\n/).filter((l) => l.trim().length >= 0);
+      // ID column may be optional; allow blanks, but count must match other columns.
+      if (step.i > 0 && linesCur.length !== lines0.length && fields[0] === 'ID') {
+        // Use the first non-blank-required column (First) as the count source.
+        const linesFirst = values['First'].split(/\r?\n/).filter((l) => l.trim().length >= 0);
+        if (linesCur.length !== linesFirst.length) {
+          setStatus(`Row count mismatch: ${f} has ${linesCur.length}, First has ${linesFirst.length}`, 'bad', 4000);
+          return;
+        }
+      }
+      step.i++;
+      if (step.i >= fields.length) {
+        ctx.rows = composeWizardRows_(values, fields);
+        onChange();
+      } else {
+        rerender();
+      }
+    });
+    nav.appendChild(back);
+    nav.appendChild(next);
+    host.appendChild(nav);
+  }
+  rerender();
+}
+
+function composeWizardRows_(values, fields) {
+  // Use the longest non-empty column as the row count.
+  let n = 0;
+  fields.forEach((f) => {
+    const lines = String(values[f] || '').split(/\r?\n/);
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    if (lines.length > n) n = lines.length;
+  });
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const row = {};
+    fields.forEach((f) => {
+      const lines = String(values[f] || '').split(/\r?\n/);
+      row[f] = (lines[i] || '').trim();
+    });
+    out.push(row);
+  }
+  return out;
+}
+
+function renderPreview_(host, preview) {
+  host.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'admin-import__preview-inner';
+  if (preview.errors.length > 0) {
+    const errHead = document.createElement('div');
+    errHead.className = 'admin-import__errors-head';
+    errHead.textContent = preview.errors.length + ' validation errors — fix and re-preview:';
+    wrap.appendChild(errHead);
+    const list = document.createElement('ul');
+    list.className = 'admin-import__errors';
+    preview.errors.slice(0, 50).forEach((e) => {
+      const li = document.createElement('li');
+      li.textContent = 'row ' + e.rowIndex + ': ' + e.error;
+      list.appendChild(li);
+    });
+    wrap.appendChild(list);
+  } else {
+    const summary = document.createElement('div');
+    summary.className = 'admin-import__summary';
+    summary.innerHTML = `
+      <span class="admin-import__added">${preview.added} added</span>
+      <span class="admin-import__removed">${preview.removed} removed</span>
+      <span class="admin-import__changed">${preview.changed} changed</span>
+      <span class="admin-import__unchanged">${preview.unchanged} unchanged</span>
+    `;
+    wrap.appendChild(summary);
+  }
+  host.appendChild(wrap);
 }
 
 function renderAdminStaff_(main) {
