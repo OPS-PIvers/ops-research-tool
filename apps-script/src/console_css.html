@@ -1,21 +1,30 @@
 <style>
-/* ---- OPS brand tokens ---- */
-/* BRAND: replace with values from anthropic-skills:ops-brand-guidelines.
-   Below are placeholders consistent with the rest of the codebase. */
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=Roboto:wght@300;400;500;700&display=swap');
+
+/* ---- OPS brand tokens ---- per anthropic-skills:ops-brand-guidelines */
 :root {
-  --c-text:   #202124;
-  --c-muted:  #5f6368;
-  --c-line:   #dadce0;
-  --c-bg:     #ffffff;
-  --c-soft:   #f8f9fa;
-  --c-accent: #1a73e8;   /* BRAND: OPS primary blue */
-  --c-good:   #0f9d58;
-  --c-warn:   #b06000;
-  --c-bad:    #d93025;
-  --c-brand-primary:   #1a73e8;  /* BRAND: replace with OPS primary */
-  --c-brand-secondary: #c5221f;  /* BRAND: replace with OPS secondary */
-  --font-display: "Lexend", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-body:    "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Text: OPS gray-dark for body, blue-dark for headings */
+  --c-text:    #333333;
+  --c-heading: #1d2a5d;
+  --c-muted:   #666666;
+  --c-line:    #cccccc;
+  --c-bg:      #ffffff;
+  --c-soft:    #f3f3f3;
+  /* Brand */
+  --c-accent:          #2d3f89;   /* OPS Primary Blue */
+  --c-brand-primary:   #2d3f89;   /* OPS Primary Blue */
+  --c-brand-primary-dark: #1d2a5d;/* OPS Blue Dark — for emphasis */
+  --c-brand-primary-light:#4356a0;/* OPS Blue Light */
+  --c-brand-primary-tint: #eaecf5;/* OPS Blue Lighter — callout tints */
+  --c-brand-secondary:    #ad2122;/* OPS Primary Red */
+  --c-brand-secondary-light:#c13435;/* OPS Red Light */
+  --c-brand-secondary-tint: #e5c7c7;/* OPS Red Lighter */
+  /* Semantic — keep tonally close to brand */
+  --c-good: #2d7a3f;
+  --c-warn: #b06000;
+  --c-bad:  #ad2122;
+  --font-display: "Lexend", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-body:    "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -53,6 +62,7 @@ select, input, textarea { font: inherit; }
 .console-header__title {
   font-family: var(--font-display);
   font-size: 18px; font-weight: 600;
+  color: var(--c-heading);
   flex: 1; min-width: 0;
 }
 .console-header__actor {
@@ -85,7 +95,7 @@ select, input, textarea { font: inherit; }
 }
 .console-unauthed h1 {
   font-family: var(--font-display);
-  margin: 0 0 12px; font-size: 20px; color: var(--c-text);
+  margin: 0 0 12px; font-size: 20px; color: var(--c-heading);
 }
 .console-unauthed p { color: var(--c-muted); line-height: 1.5; }
 .console-unauthed code {
@@ -114,6 +124,7 @@ select, input, textarea { font: inherit; }
 .mp-title {
   font-family: var(--font-display);
   font-size: 24px; font-weight: 600; margin: 0;
+  color: var(--c-heading);
 }
 .mp-toggle {
   display: inline-flex; gap: 2px;
@@ -149,6 +160,7 @@ select, input, textarea { font: inherit; }
 .mp-card__name {
   font-family: var(--font-display);
   font-size: 17px; font-weight: 600;
+  color: var(--c-heading);
 }
 .mp-card__meta {
   font-size: 13px; color: var(--c-muted);
@@ -283,6 +295,7 @@ select, input, textarea { font: inherit; }
 .db-title {
   font-family: var(--font-display);
   font-size: 22px; font-weight: 600;
+  color: var(--c-heading);
   flex: 1; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -418,7 +431,7 @@ select, input, textarea { font: inherit; }
 .dd-count-tile__n {
   font-family: var(--font-display);
   font-size: 32px; font-weight: 600;
-  color: var(--c-text);
+  color: var(--c-heading);
 }
 .dd-count-tile__label {
   font-size: 11px; color: var(--c-muted);
