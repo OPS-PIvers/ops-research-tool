@@ -249,3 +249,82 @@ function devTestDeleteSource() {
 
   console.log(pass + '/' + (pass + fail) + ' passed');
 }
+
+/**
+ * Tests aggregator pure functions with hand-crafted source/highlight data.
+ * Asserts categoryMix preserves bundle order, gaps + completion counts are
+ * correct, and lastActivity is the latest createdAt across both arrays.
+ */
+function devTestAggregateStudent() {
+  const bundle = {
+    bundleId: 'b-test',
+    name: 'Test Bundle',
+    style: 'mla',
+    label1: 'Background',     color1: '#d62728',
+    label2: 'Build-Up',       color2: '#ff7f0e',
+    label3: 'Main Event',     color3: '#2ca02c',
+    label4: 'Short-Term Impact', color4: '#1f77b4',
+    label5: 'Long-Term Impact',  color5: '#9467bd',
+  };
+  const sources = [
+    {
+      sourceId: 's1', primarySecondary: 'primary', annotation: 'Good source.',
+      citationFields: JSON.stringify({ title: 'A', url: 'https://a' }),
+      createdAt: '2026-05-20T10:00:00Z',
+    },
+    {
+      sourceId: 's2', primarySecondary: 'secondary', annotation: '',
+      citationFields: JSON.stringify({ title: 'B', url: 'https://b' }),
+      createdAt: '2026-05-21T10:00:00Z',
+    },
+    {
+      sourceId: 's3', primarySecondary: 'unset', annotation: 'Notes.',
+      citationFields: JSON.stringify({ title: '', url: '' }),
+      createdAt: '2026-05-22T10:00:00Z',
+    },
+  ];
+  const highlights = [
+    { sourceId: 's1', primaryCategory: 'Background',   createdAt: '2026-05-20T11:00:00Z' },
+    { sourceId: 's1', primaryCategory: 'Background',   createdAt: '2026-05-20T11:05:00Z' },
+    { sourceId: 's2', primaryCategory: 'Main Event',   createdAt: '2026-05-21T11:00:00Z' },
+    { sourceId: 's3', primaryCategory: 'Background',   createdAt: '2026-05-23T08:00:00Z' },
+    { sourceId: 's3', primaryCategory: 'Long-Term Impact', createdAt: '2026-05-23T08:30:00Z' },
+  ];
+
+  const agg = aggregateStudent_(sources, highlights, bundle);
+
+  let pass = 0, fail = 0;
+  const check = (label, cond) => {
+    if (cond) { pass++; console.log('PASS ' + label); }
+    else      { fail++; console.log('FAIL ' + label); }
+  };
+
+  // categoryMix preserves bundle order
+  check('mix length 5',                     agg.categoryMix.length === 5);
+  check('mix[0] is Background',             agg.categoryMix[0].label === 'Background');
+  check('mix[0] count = 3',                 agg.categoryMix[0].count === 3);
+  check('mix[1] is Build-Up, count 0',      agg.categoryMix[1].label === 'Build-Up' && agg.categoryMix[1].count === 0);
+  check('mix[2] is Main Event, count 1',    agg.categoryMix[2].label === 'Main Event' && agg.categoryMix[2].count === 1);
+  check('mix[4] is Long-Term Impact, ct 1', agg.categoryMix[4].label === 'Long-Term Impact' && agg.categoryMix[4].count === 1);
+
+  // counts
+  check('sourceCount = 3',                  agg.sourceCount === 3);
+  check('highlightCount = 5',               agg.highlightCount === 5);
+
+  // completion: only s1 has all three (citation+class+annotation). s2 missing annotation. s3 missing citation+classification.
+  check('completion.complete = 1',          agg.completion.complete === 1);
+  check('completion.total = 3',             agg.completion.total === 3);
+  check('completion.percent = 33',          agg.completion.percent === 33);
+
+  // gaps: citation missing on s3 only (s1, s2 have title+url) → 1
+  //       classification missing on s3 only → 1
+  //       annotation missing on s2 only (empty string) → 1
+  check('gaps.citation = 1',                agg.gaps.citation === 1);
+  check('gaps.classification = 1',          agg.gaps.classification === 1);
+  check('gaps.annotation = 1',              agg.gaps.annotation === 1);
+
+  // lastActivity = latest of any createdAt across sources+highlights
+  check('lastActivity = 2026-05-23T08:30:00Z', agg.lastActivity === '2026-05-23T08:30:00Z');
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
