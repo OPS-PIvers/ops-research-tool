@@ -1313,7 +1313,7 @@ function buildDrillCountsTiles_(c) {
   if (c.unset > 0) {
     const un = document.createElement('div');
     un.className = 'dd-unclassified';
-    un.textContent = 'Unclassified: ' + c.unset;
+    un.textContent = 'Untagged: ' + c.unset;
     outer.appendChild(un);
   }
   return outer;
@@ -1321,6 +1321,7 @@ function buildDrillCountsTiles_(c) {
 
 function buildDrillCompletion_(comp) {
   const wrap = document.createElement('div');
+  const labels = { citation: 'Citation', classification: 'Tag', annotation: 'Annotation' };
   ['citation', 'classification', 'annotation'].forEach((kind) => {
     const c = comp[kind];
     const pct = c.total === 0 ? 0 : Math.round((c.complete / c.total) * 100);
@@ -1328,7 +1329,7 @@ function buildDrillCompletion_(comp) {
     row.className = 'dd-comp-row';
     const lab = document.createElement('div');
     lab.className = 'dd-comp-label';
-    lab.textContent = kind.charAt(0).toUpperCase() + kind.slice(1);
+    lab.textContent = labels[kind];
     row.appendChild(lab);
     const bar = document.createElement('div');
     bar.className = 'dd-comp-bar';
