@@ -16,6 +16,7 @@ const TABS = {
   META: 'Meta',
   SOURCES: 'Sources',
   HIGHLIGHTS: 'Highlights',
+  AUDIT: 'Audit',
 };
 
 const HEADERS = {
@@ -50,6 +51,8 @@ const HEADERS = {
     'highlightedText', 'note',
     'createdByEmail', 'createdAt',
   ],
+
+  AUDIT: ['eventId', 'projectId', 'action', 'actor', 'at', 'detail'],
 };
 
 const ROLES = {
@@ -65,3 +68,9 @@ const PROJECT_STATUS = {
 const SOURCE_TYPES = ['website', 'article', 'book', 'primary'];
 const PRIMARY_SECONDARY = ['primary', 'secondary', 'unset'];
 const CITATION_STYLES = ['mla', 'chicago', 'apa'];
+
+const AUDIT_ACTIONS = {
+  ARCHIVE: 'archive',
+  UNARCHIVE: 'unarchive',
+  ARCHIVE_YEAR: 'archive_year',
+};

@@ -46,6 +46,22 @@ function isAdmin_(email) {
 }
 
 /**
+ * Throws 'Not authorized' if the caller isn't on Staff at all, or
+ * 'Admin only' if the caller is staff but not an admin. Returns the
+ * staff entry so callers can read .Email / .Name without re-fetching.
+ *
+ * The two error messages are deliberately distinct so the client toast
+ * can communicate "you're not staff at all" vs. "you're a teacher,
+ * this surface is admin-only".
+ */
+function assertAdmin_(actorEmail) {
+  const staff = getStaffEntry_(actorEmail);
+  if (!staff) throw new Error('Not authorized');
+  if (staff.Role !== ROLES.ADMIN) throw new Error('Admin only');
+  return staff;
+}
+
+/**
  * Validate the roster: every email present, unique, lowercase-comparable; every
  * student row has First/Last/Class/TeacherEmail. ID optional but must be unique
  * when present. Returns {ok, errors}.
