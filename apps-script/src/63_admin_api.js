@@ -83,3 +83,218 @@ function listAllStudentSheetEmails_() {
 
   return out;
 }
+
+// ============================================================
+// Roster mutations
+// ============================================================
+
+/**
+ * Add a new roster row. Validates required fields, email uniqueness
+ * (case-insensitive), and ID uniqueness (if provided).
+ *
+ * `row` shape (input): {ID?, First, Last, Email, Class, Teacher?, TeacherEmail?}
+ * Returns { ok, row } with the canonicalized stored values.
+ */
+function adminAddRosterRow(row) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!row) throw new Error('row required');
+  const out = canonicalizeRosterRow_(row, /*requireEmail=*/true);
+  validateRosterRowOrThrow_(out);
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.ROSTER);
+  const all = readAllAsObjects_(tab, HEADERS.ROSTER);
+  if (all.some((r) => String(r.Email || '').toLowerCase() === out.Email)) {
+    throw new Error('Email already in roster: ' + out.Email);
+  }
+  if (out.ID && all.some((r) => String(r.ID || '').trim() === out.ID)) {
+    throw new Error('ID already in roster: ' + out.ID);
+  }
+  appendRow_(tab, HEADERS.ROSTER, out);
+  return { ok: true, row: out };
+}
+
+/**
+ * Update an existing roster row, identified by Email. Accepts any subset
+ * of {First, Last, Class, Teacher, TeacherEmail}. Email and ID are
+ * deliberately NOT accepted here — they go through dedicated endpoints.
+ */
+function adminUpdateRosterRow(email, fields) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!email) throw new Error('email required');
+  if (!fields) throw new Error('fields required');
+  const target = String(email).toLowerCase();
+  const allowed = ['First', 'Last', 'Class', 'Teacher', 'TeacherEmail'];
+  const updates = {};
+  Object.keys(fields).forEach((k) => {
+    if (allowed.indexOf(k) >= 0) updates[k] = String(fields[k] || '');
+  });
+  if (Object.keys(updates).length === 0) throw new Error('No editable fields supplied');
+  if ('TeacherEmail' in updates) updates.TeacherEmail = updates.TeacherEmail.toLowerCase();
+
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.ROSTER);
+  const rowIdx = findRowByKeyCi_(tab, HEADERS.ROSTER, 'Email', target);
+  if (rowIdx < 0) throw new Error('Roster row not found: ' + target);
+  HEADERS.ROSTER.forEach((header, i) => {
+    if (header in updates) tab.getRange(rowIdx, i + 1).setValue(updates[header]);
+  });
+  const updatedObjects = readAllAsObjects_(tab, HEADERS.ROSTER);
+  const updated = updatedObjects.find((r) => String(r.Email || '').toLowerCase() === target);
+  return { ok: true, row: updated };
+}
+
+/**
+ * Set the ID on a roster row that doesn't have one yet. Throws if already set.
+ */
+function adminSetStudentId(email, id) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!email) throw new Error('email required');
+  if (!id)    throw new Error('id required');
+  const target = String(email).toLowerCase();
+  const trimmedId = String(id).trim();
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.ROSTER);
+  const all = readAllAsObjects_(tab, HEADERS.ROSTER);
+  const target_row = all.find((r) => String(r.Email || '').toLowerCase() === target);
+  if (!target_row) throw new Error('Roster row not found: ' + target);
+  if (String(target_row.ID || '').trim()) throw new Error('ID already set for ' + target);
+  if (all.some((r) => String(r.ID || '').trim() === trimmedId)) {
+    throw new Error('ID already in roster: ' + trimmedId);
+  }
+  const rowIdx = findRowByKeyCi_(tab, HEADERS.ROSTER, 'Email', target);
+  const idCol = HEADERS.ROSTER.indexOf('ID') + 1;
+  tab.getRange(rowIdx, idCol).setValue(trimmedId);
+  return { ok: true, row: Object.assign({}, target_row, { ID: trimmedId }) };
+}
+
+/**
+ * Change an already-set ID. Typed-confirm gated client-side. Server
+ * validates uniqueness.
+ */
+function adminChangeStudentId(email, newId) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!email) throw new Error('email required');
+  if (!newId) throw new Error('newId required');
+  const target = String(email).toLowerCase();
+  const trimmedId = String(newId).trim();
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.ROSTER);
+  const all = readAllAsObjects_(tab, HEADERS.ROSTER);
+  const target_row = all.find((r) => String(r.Email || '').toLowerCase() === target);
+  if (!target_row) throw new Error('Roster row not found: ' + target);
+  if (!String(target_row.ID || '').trim()) {
+    throw new Error('No ID set — use adminSetStudentId to add one');
+  }
+  if (all.some((r) =>
+        String(r.Email || '').toLowerCase() !== target &&
+        String(r.ID || '').trim() === trimmedId)) {
+    throw new Error('ID already in roster: ' + trimmedId);
+  }
+  const rowIdx = findRowByKeyCi_(tab, HEADERS.ROSTER, 'Email', target);
+  const idCol = HEADERS.ROSTER.indexOf('ID') + 1;
+  tab.getRange(rowIdx, idCol).setValue(trimmedId);
+  return { ok: true, row: Object.assign({}, target_row, { ID: trimmedId }) };
+}
+
+/**
+ * Delete a roster row. Per-student Sheets are PRESERVED — data persists
+ * even after roster removal (per build-plan §Lifecycle). Returns the
+ * list of project Sheets that survive.
+ */
+function adminDeleteRosterRow(email) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!email) throw new Error('email required');
+  const target = String(email).toLowerCase();
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.ROSTER);
+  const rowIdx = findRowByKeyCi_(tab, HEADERS.ROSTER, 'Email', target);
+  if (rowIdx < 0) throw new Error('Roster row not found: ' + target);
+
+  // Identify preserved per-student Sheets so the response can surface them.
+  const preserved = findStudentSheetsForEmail_(target);
+
+  // Delete the row (Sheets API uses 1-based row indices).
+  tab.deleteRow(rowIdx);
+  return { ok: true, email: target, preservedSheets: preserved };
+}
+
+// ============================================================
+// Shared helpers (private to this file)
+// ============================================================
+
+/**
+ * Build a canonical roster row object. Lowercases emails, trims strings.
+ * `requireEmail` makes Email mandatory (true on Add; false reserved for
+ * bulk-import preview where rows with blank emails surface as errors,
+ * not exceptions).
+ */
+function canonicalizeRosterRow_(row, requireEmail) {
+  const out = {
+    ID:           String(row.ID || '').trim(),
+    First:        String(row.First || '').trim(),
+    Last:         String(row.Last || '').trim(),
+    Email:        String(row.Email || '').trim().toLowerCase(),
+    Class:        String(row.Class || '').trim(),
+    Teacher:      String(row.Teacher || '').trim(),
+    TeacherEmail: String(row.TeacherEmail || '').trim().toLowerCase(),
+  };
+  if (requireEmail && !out.Email) throw new Error('Email required');
+  return out;
+}
+
+function validateRosterRowOrThrow_(row) {
+  if (!row.First) throw new Error('First required');
+  if (!row.Last)  throw new Error('Last required');
+  if (!row.Email) throw new Error('Email required');
+  if (!row.Class) throw new Error('Class required');
+  if (!row.TeacherEmail) throw new Error('TeacherEmail required');
+}
+
+/**
+ * Case-insensitive variant of findRowByKey_ — needed because emails get
+ * stored in the canonical lower-case form but the user might pass them
+ * mixed-case in URL hashes or arguments.
+ */
+function findRowByKeyCi_(tab, headers, key, value) {
+  const keyCol = headers.indexOf(key);
+  if (keyCol < 0) throw new Error('Header missing: ' + key);
+  const range = tab.getDataRange().getValues();
+  const target = String(value).toLowerCase();
+  for (let i = 1; i < range.length; i++) {
+    if (String(range[i][keyCol]).toLowerCase() === target) return i + 1;
+  }
+  return -1;
+}
+
+/**
+ * For the given studentEmail, find every per-student Sheet that exists
+ * across all project folders (active + archived). Returns [{projectId,
+ * sheetId}] for the response.
+ */
+function findStudentSheetsForEmail_(emailLower) {
+  const root = DriveApp.getFolderById(CONFIG.ROOT_FOLDER_ID);
+  const projects = listProjects_();
+  const projectFolderById = {};
+  projects.forEach((p) => { projectFolderById[p.rootFolderId] = p.projectId; });
+
+  const out = [];
+  Object.keys(projectFolderById).forEach((folderId) => {
+    let pf;
+    try { pf = DriveApp.getFolderById(folderId); }
+    catch (e) { return; }  // folder may have been deleted manually; skip
+    const classFolders = pf.getFolders();
+    while (classFolders.hasNext()) {
+      const cf = classFolders.next();
+      const files = cf.getFilesByName(emailLower);
+      while (files.hasNext()) {
+        out.push({ projectId: projectFolderById[folderId], sheetId: files.next().getId() });
+      }
+    }
+  });
+  return out;
+}
