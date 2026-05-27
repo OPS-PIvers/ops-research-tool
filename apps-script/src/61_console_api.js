@@ -270,6 +270,15 @@ function consoleGetProjectDashboard(projectId) {
 }
 
 /**
+ * Surface for `google.script.run` to enumerate bundles when populating the
+ * Create Project wizard. Staff-gated like the rest of the console.
+ */
+function listBundlesForConsole_() {
+  assertStaff_(getActorEmail_());
+  return { ok: true, bundles: listBundles_() };
+}
+
+/**
  * Per-student detail for the drill-down. Includes the full aggregate set
  * (with activity-by-day), plus the student's sources with precomputed
  * formattedCitation and highlights[] embedded per source.

@@ -312,9 +312,232 @@ function buildKebabMenu_(p) {
   return menu;
 }
 
-// Archive flow + Create modal are implemented in Tasks 11–12. Stubs here so
-// renderMyProjects_ doesn't reference undefined functions.
-function openCreateProjectModal_() { setStatus('Create modal — Task 11.', null, 2000); }
+// Create modal implemented in Task 11. Archive/unarchive in Task 12.
+function openCreateProjectModal_() {
+  const fields = {
+    name: '',
+    schoolYear: defaultSchoolYear_(),
+    bundleId: '',
+    memberClasses: [],
+  };
+
+  // Need the bundle list + the class list. Bundle list comes from a separate
+  // fetch; class list we infer from the current ctx.teacherClasses (or
+  // from a Roster fetch for admins).
+  setStatus('Loading bundles…', null, 1000);
+  google.script.run
+    .withSuccessHandler((bundlesResp) => {
+      const bundles = bundlesResp && bundlesResp.bundles ? bundlesResp.bundles : [];
+      if (bundles.length === 0) {
+        setStatus('No bundles available.', 'bad', 3000);
+        return;
+      }
+      fields.bundleId = bundles[0].bundleId;
+
+      // Class list: teachers see their teacherClasses; admins see all classes
+      // we can find in the Roster. For admins, derive from the currently-loaded
+      // project list if available; otherwise fall back to a free-text option.
+      const adminAllClasses = collectKnownClasses_();
+      const classOptions = state.ctx.role === 'admin'
+        ? adminAllClasses
+        : (state.ctx.teacherClasses || []);
+
+      renderCreateModal_(fields, bundles, classOptions);
+    })
+    .withFailureHandler(onFail_('loading bundles'))
+    .listBundlesForConsole_();
+}
+
+/** Derive distinct classes from currently-loaded project memberClasses lists.
+ *  Best-effort: if myProjects.projects isn't loaded, returns []. */
+function collectKnownClasses_() {
+  const set = {};
+  (myProjects.projects || []).forEach((p) => {
+    (p.memberClasses || []).forEach((c) => { if (c) set[c] = true; });
+  });
+  return Object.keys(set).sort();
+}
+
+function defaultSchoolYear_() {
+  const now = new Date();
+  const y = now.getFullYear();
+  // School year typically starts in August. If we're before August, current
+  // school year is (prev)-(curr); else current-(next).
+  return now.getMonth() >= 7 ? (y + '-' + String(y + 1).slice(2)) : ((y - 1) + '-' + String(y).slice(2));
+}
+
+function renderCreateModal_(fields, bundles, classOptions) {
+  closeModal_();   // in case one is open
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.id = 'modal-backdrop';
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal_(); });
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+
+  const header = document.createElement('div');
+  header.className = 'modal__header';
+  header.textContent = 'New project';
+  modal.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'modal__body';
+
+  // Name
+  body.appendChild(makeField_('Name', (() => {
+    const i = document.createElement('input');
+    i.type = 'text'; i.maxLength = 80; i.placeholder = 'e.g., NHD 2026';
+    i.addEventListener('input', () => { fields.name = i.value; updateCreateBtn_(); });
+    return i;
+  })()));
+
+  // School year
+  body.appendChild(makeField_('School year', (() => {
+    const s = document.createElement('select');
+    const opts = generateSchoolYearOptions_();
+    opts.forEach((y) => {
+      const o = document.createElement('option');
+      o.value = y; o.textContent = y;
+      if (y === fields.schoolYear) o.selected = true;
+      s.appendChild(o);
+    });
+    s.addEventListener('change', () => { fields.schoolYear = s.value; });
+    return s;
+  })()));
+
+  // Bundle
+  body.appendChild(makeField_('Bundle', (() => {
+    const s = document.createElement('select');
+    bundles.forEach((b) => {
+      const o = document.createElement('option');
+      o.value = b.bundleId; o.textContent = b.name;
+      if (b.bundleId === fields.bundleId) o.selected = true;
+      s.appendChild(o);
+    });
+    s.addEventListener('change', () => { fields.bundleId = s.value; });
+    return s;
+  })()));
+
+  // Classes
+  body.appendChild((() => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal__field';
+    const lab = document.createElement('label');
+    lab.textContent = 'Member classes';
+    wrap.appendChild(lab);
+    const box = document.createElement('div');
+    box.className = 'modal__classes';
+    if (classOptions.length === 0) {
+      const note = document.createElement('div');
+      note.className = 'modal__error';
+      note.textContent = state.ctx.role === 'admin'
+        ? 'No classes detected in your projects yet. Load existing projects first, or seed the Roster.'
+        : 'You are not listed as the Teacher for any classes.';
+      box.appendChild(note);
+    } else {
+      classOptions.forEach((c) => {
+        const lbl = document.createElement('label');
+        lbl.className = 'modal__class-checkbox';
+        const inp = document.createElement('input');
+        inp.type = 'checkbox'; inp.value = c;
+        inp.addEventListener('change', () => {
+          fields.memberClasses = fields.memberClasses.filter((x) => x !== c);
+          if (inp.checked) fields.memberClasses.push(c);
+          updateCreateBtn_();
+        });
+        lbl.appendChild(inp);
+        lbl.appendChild(document.createTextNode(' ' + c));
+        box.appendChild(lbl);
+      });
+    }
+    wrap.appendChild(box);
+    return wrap;
+  })());
+
+  const errMsg = document.createElement('div');
+  errMsg.className = 'modal__error';
+  errMsg.id = 'create-error';
+  body.appendChild(errMsg);
+
+  modal.appendChild(body);
+
+  const footer = document.createElement('div');
+  footer.className = 'modal__footer';
+  const cancel = document.createElement('button');
+  cancel.className = 'modal__btn';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', closeModal_);
+  footer.appendChild(cancel);
+
+  const create = document.createElement('button');
+  create.className = 'modal__btn modal__btn--primary';
+  create.id = 'create-btn';
+  create.textContent = 'Create project';
+  create.disabled = true;
+  create.addEventListener('click', () => submitCreate_(fields, create));
+  footer.appendChild(create);
+
+  modal.appendChild(footer);
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+
+  function updateCreateBtn_() {
+    const ok = fields.name.trim().length > 0 && fields.memberClasses.length > 0 && fields.bundleId;
+    create.disabled = !ok;
+  }
+}
+
+function makeField_(labelText, control) {
+  const wrap = document.createElement('div');
+  wrap.className = 'modal__field';
+  const lab = document.createElement('label');
+  lab.textContent = labelText;
+  wrap.appendChild(lab);
+  wrap.appendChild(control);
+  return wrap;
+}
+
+function generateSchoolYearOptions_() {
+  const cur = defaultSchoolYear_();
+  const startYear = parseInt(cur.split('-')[0], 10);
+  return [
+    (startYear - 1) + '-' + String(startYear).slice(2),
+    cur,
+    (startYear + 1) + '-' + String(startYear + 2).slice(2),
+  ];
+}
+
+function closeModal_() {
+  const back = document.getElementById('modal-backdrop');
+  if (back) back.remove();
+}
+
+function submitCreate_(fields, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+  const errEl = document.getElementById('create-error');
+  if (errEl) errEl.textContent = '';
+  google.script.run
+    .withSuccessHandler((resp) => {
+      if (resp && resp.ok) {
+        closeModal_();
+        setStatus('Project created.', 'good', 2500);
+        myProjects.projects = null;
+        renderShell_();
+        fetchMyProjects_();
+      } else {
+        btn.disabled = false; btn.textContent = 'Create project';
+        if (errEl) errEl.textContent = 'Create failed.';
+      }
+    })
+    .withFailureHandler((e) => {
+      btn.disabled = false; btn.textContent = 'Create project';
+      if (errEl) errEl.textContent = String(e && e.message || e);
+    })
+    .consoleCreateProject(fields);
+}
+
 function confirmArchive_(p)        { setStatus('Archive flow — Task 12.', null, 2000); }
 function doUnarchive_(p)           { setStatus('Unarchive — Task 12.', null, 2000); }
 

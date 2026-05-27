@@ -203,4 +203,69 @@ select, input, textarea { font: inherit; }
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
 }
+
+/* ---- Modal overlay (DOM-only, not a GAS dialog) ---- */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(32, 33, 36, 0.5);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50;
+  padding: 20px;
+}
+.modal {
+  background: var(--c-bg);
+  border-radius: 8px;
+  width: 100%; max-width: 480px;
+  max-height: calc(100vh - 40px);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.modal__header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--c-line);
+  font-family: var(--font-display);
+  font-size: 18px; font-weight: 600;
+}
+.modal__body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+.modal__footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--c-line);
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+.modal__btn {
+  padding: 8px 14px; border-radius: 4px; font-weight: 500; font-size: 13px;
+  border: 1px solid var(--c-line); background: var(--c-bg); color: var(--c-text);
+}
+.modal__btn--primary {
+  background: var(--c-brand-primary); color: #fff; border-color: var(--c-brand-primary);
+}
+.modal__btn--primary:hover:not(:disabled) { filter: brightness(1.05); }
+
+.modal__field { margin-bottom: 14px; }
+.modal__field label {
+  display: block; font-size: 11px; color: var(--c-muted);
+  text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;
+}
+.modal__field input[type="text"],
+.modal__field select {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--c-line);
+  border-radius: 4px; font-size: 14px;
+}
+.modal__classes {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 6px;
+  max-height: 200px; overflow-y: auto;
+  border: 1px solid var(--c-line); border-radius: 4px;
+  padding: 8px;
+}
+.modal__class-checkbox {
+  display: flex; align-items: center; gap: 6px; font-size: 13px;
+}
+.modal__error {
+  color: var(--c-bad); font-size: 12px; margin-top: 6px;
+}
 </style>
