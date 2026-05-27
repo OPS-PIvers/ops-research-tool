@@ -11,6 +11,17 @@
  */
 
 /**
+ * Compose a display name from roster Last + First, falling back to email
+ * when both name fields are blank. Matches the 7-col roster schema.
+ * @param {Object} rosterRow - object with Last, First, Email properties
+ * @returns {string}
+ */
+function composeStudentName_(rosterRow) {
+  const composed = (String(rosterRow.Last || '') + ', ' + String(rosterRow.First || '')).replace(/^, |, $/g, '');
+  return composed || String(rosterRow.Email || '');
+}
+
+/**
  * Bootstrap data: caller identity + staff entry + role + classes the
  * caller teaches. The Console JS gates the UI on `staff === null`.
  */
@@ -243,7 +254,7 @@ function consoleGetProjectDashboard(projectId) {
     const agg = aggregateStudent_(sources, highlights, bundle);
     return {
       email: r.Email,
-      name: String(r.Name || r.Email),
+      name: composeStudentName_(r),
       class: String(r.Class || ''),
       categoryMix: agg.categoryMix,
       sourceCount: agg.sourceCount,
@@ -356,7 +367,7 @@ function consoleGetStudentDetail(projectId, studentEmail) {
     ok: true,
     student: {
       email: studentEmail,
-      name: String(rosterEntry.Name || studentEmail),
+      name: composeStudentName_(rosterEntry),
       class: studentClass,
     },
     aggregates,
