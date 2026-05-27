@@ -56,3 +56,76 @@ function assertStaff_(actorEmail) {
 function isAdmin_(staff) {
   return staff && staff.Role === ROLES.ADMIN;
 }
+
+/**
+ * Projects the caller has access to. Teachers see projects whose
+ * memberClasses intersect classes they teach; admins see all.
+ *
+ * filter: 'active' (default) or 'archived'.
+ *
+ * Per spec §6: the project list is read-light. No per-student-sheet opens
+ * happen here. Each card's studentCount is computed from the Roster
+ * (rows whose Class ∈ memberClasses ∩ teacherClasses).
+ */
+function consoleGetMyProjects(filter) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  const wantStatus = (filter === 'archived') ? PROJECT_STATUS.ARCHIVED : PROJECT_STATUS.ACTIVE;
+
+  const all = listProjects_();
+  const bundles = listBundles_();
+  const bundleById = {};
+  bundles.forEach((b) => { bundleById[b.bundleId] = b; });
+
+  const teacherClasses = isAdmin_(staff) ? null : listClassesTaughtBy_(actorEmail);
+
+  const rosterRows = readAllAsObjects_(
+    getTab_(SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID), TABS.ROSTER),
+    HEADERS.ROSTER
+  );
+
+  const visible = all.filter((p) => {
+    if (p.status !== wantStatus) return false;
+    if (isAdmin_(staff)) return true;
+    const projectClasses = projectClassList_(p);
+    return projectClasses.some((c) => teacherClasses.indexOf(c) >= 0);
+  });
+
+  const projects = visible.map((p) => {
+    const projectClasses = projectClassList_(p);
+    const scopedClasses = isAdmin_(staff)
+      ? projectClasses
+      : projectClasses.filter((c) => teacherClasses.indexOf(c) >= 0);
+    const studentCount = rosterRows.filter(
+      (r) => r.Class && scopedClasses.indexOf(String(r.Class).trim()) >= 0
+    ).length;
+    const bundle = bundleById[p.bundleId] || null;
+    return {
+      projectId: p.projectId,
+      name: p.name,
+      schoolYear: p.schoolYear,
+      bundleId: p.bundleId,
+      bundleName: bundle ? bundle.name : '(unknown bundle)',
+      memberClasses: projectClasses,
+      scopedClasses,         // classes the caller actually sees
+      studentCount,
+      status: p.status,
+    };
+  });
+
+  // Sort: schoolYear desc, then name asc.
+  projects.sort((a, b) => {
+    if (a.schoolYear !== b.schoolYear) return a.schoolYear > b.schoolYear ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  return { ok: true, projects };
+}
+
+/** Parse a project's comma-separated memberClasses into a trimmed string array. */
+function projectClassList_(project) {
+  return String(project.memberClasses || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}

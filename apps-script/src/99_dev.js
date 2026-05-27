@@ -363,3 +363,60 @@ function devTestConsoleAuth() {
 
   console.log(pass + '/' + (pass + fail) + ' passed');
 }
+
+/**
+ * Tests role-based project filtering in consoleGetMyProjects.
+ *
+ * The caller is always admin (per devSeedDevProject), so we can directly
+ * exercise the admin branch and the teacher branch via a temporary
+ * roster manipulation: temporarily remove the caller from the Staff
+ * sheet and check that consoleGetMyProjects throws.
+ */
+function devTestConsoleProjectsFilter() {
+  devSeedDevProject();
+  const me = Session.getEffectiveUser().getEmail();
+
+  let pass = 0, fail = 0;
+  const check = (label, cond) => {
+    if (cond) { pass++; console.log('PASS ' + label); }
+    else      { fail++; console.log('FAIL ' + label); }
+  };
+
+  // Admin sees Dev Project in the active filter.
+  const adminResp = consoleGetMyProjects('active');
+  check('admin: resp.ok',          adminResp && adminResp.ok === true);
+  check('admin: ≥1 project',       adminResp.projects.length >= 1);
+  const dev = adminResp.projects.find((p) => p.name === 'Dev Project');
+  check('admin: Dev Project visible', !!dev);
+  if (dev) {
+    check('admin: scopedClasses includes DEV', dev.scopedClasses.indexOf('DEV') >= 0);
+    check('admin: studentCount ≥1',            dev.studentCount >= 1);
+    check('admin: bundleName non-empty',       !!dev.bundleName);
+  }
+
+  // Archived filter — Dev Project is active, so it should NOT appear.
+  const arch = consoleGetMyProjects('archived');
+  check('archived: resp.ok',                 arch && arch.ok === true);
+  const devInArchived = arch.projects.find((p) => p.name === 'Dev Project');
+  check('archived: Dev Project NOT visible', !devInArchived);
+
+  // Non-staff lockout — temporarily remove the caller from Staff and re-test.
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const staffTab = getTab_(ss, TABS.STAFF);
+  const rowIdx = findRowByKey_(staffTab, HEADERS.STAFF, 'Email', me);
+  let removedRow = null;
+  if (rowIdx >= 0) {
+    removedRow = staffTab.getRange(rowIdx, 1, 1, HEADERS.STAFF.length).getValues()[0];
+    staffTab.deleteRow(rowIdx);
+  }
+  let throws = false;
+  try { consoleGetMyProjects('active'); } catch (e) { throws = true; }
+  check('non-staff: endpoint throws', throws);
+
+  // Restore the staff row.
+  if (removedRow) {
+    appendRow_(staffTab, HEADERS.STAFF, rowToObj_(HEADERS.STAFF, removedRow));
+  }
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
