@@ -72,12 +72,19 @@ function parseCitationFields_(source) {
   if (!fields.url && source.rawUrl) fields.url = source.rawUrl;
   if (!fields.sourceType && source.sourceType) fields.sourceType = source.sourceType;
   if (!fields.accessDate && source.accessDate) fields.accessDate = source.accessDate;
+  // Coerce every value to a string. Sheets autocoerces numeric-looking cells
+  // (e.g. a year scraped as "2024" returns as the number 2024) and Date cells
+  // to native Date objects, both of which lack String methods like .replace.
+  Object.keys(fields).forEach((k) => {
+    if (fields[k] === null || fields[k] === undefined) fields[k] = '';
+    else if (typeof fields[k] !== 'string') fields[k] = String(fields[k]);
+  });
   return fields;
 }
 
 /** Sort key: author last name (lowercased), or title with leading articles stripped. */
 function bibSortKey_(fields, citationText) {
-  const author = (fields.author || '').trim();
+  const author = String(fields.author || '').trim();
   if (author) {
     const lastFirst = author.indexOf(',') >= 0 ? author : (function () {
       const parts = author.split(/\s+/);
@@ -85,7 +92,7 @@ function bibSortKey_(fields, citationText) {
     })();
     return lastFirst.toLowerCase();
   }
-  const title = (fields.title || citationText || '').replace(/^(the|a|an)\s+/i, '');
+  const title = String(fields.title || citationText || '').replace(/^(the|a|an)\s+/i, '');
   return title.toLowerCase();
 }
 

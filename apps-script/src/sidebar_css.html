@@ -141,6 +141,14 @@ select, input, textarea { font: inherit; }
   animation: sb-spin 0.7s linear infinite;
 }
 .sb-loading__label { font-size: 12px; }
+.sb-loading__spinner--sm {
+  width: 14px; height: 14px; border-width: 2px;
+  display: inline-block; vertical-align: middle; margin-right: 6px;
+}
+.sb-loading__spinner--on-accent {
+  border-color: rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+}
 @keyframes sb-spin { to { transform: rotate(360deg); } }
 
 /* Skeleton card placeholder shown while sidebar is fetching sources. */

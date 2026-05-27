@@ -633,12 +633,21 @@ function onPollResponse_(resp) {
 }
 
 
+const INSERT_BTN_LABEL = 'Insert Annotated Bibliography';
+
 function insertBibliography() {
   els.insert.disabled = true;
-  setStatus('Inserting…');
+  els.insert.innerHTML =
+    '<span class="sb-loading__spinner sb-loading__spinner--sm sb-loading__spinner--on-accent"></span>' +
+    'Inserting…';
+  setStatus('');
+  const restoreButton = () => {
+    els.insert.disabled = state.sources.length === 0;
+    els.insert.textContent = INSERT_BTN_LABEL;
+  };
   google.script.run
     .withSuccessHandler((res) => {
-      els.insert.disabled = false;
+      restoreButton();
       if (res && res.ok) {
         setStatus('Inserted ' + (res.inserted.primary + res.inserted.secondary) + ' source(s).', 'good', 3000);
       } else {
@@ -646,7 +655,7 @@ function insertBibliography() {
       }
     })
     .withFailureHandler((e) => {
-      els.insert.disabled = false;
+      restoreButton();
       setStatus(String(e && e.message || e), 'bad');
     })
     .sidebarInsertBibliography(state.projectId);
