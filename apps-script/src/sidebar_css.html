@@ -29,11 +29,6 @@ select, input, textarea { font: inherit; }
 .sb-header__row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .sb-title { margin: 0; font-size: 14px; font-weight: 600; }
 .sb-actor { font-size: 11px; color: var(--c-muted); margin-top: 2px; }
-.sb-popout {
-  background: none; border: 1px solid var(--c-line); border-radius: 4px;
-  padding: 2px 6px; font-size: 11px; color: var(--c-muted);
-}
-.sb-popout:hover { color: var(--c-accent); border-color: var(--c-accent); }
 
 .sb-viewmode {
   padding: 6px 10px 4px;
@@ -279,21 +274,6 @@ select, input, textarea { font: inherit; }
 .sb-status--bad  { color: var(--c-bad); }
 .sb-status--warn { color: var(--c-warn); }
 
-/* ---- Dialog (pop-out) mode: wider, multi-column source cards ---- */
-.sb-body--dialog .sb-main {
-  height: calc(100vh - 240px);
-}
-.sb-body--dialog .sb-main {
-  column-count: 2;
-  column-gap: 12px;
-  padding: 8px 12px 0;
-}
-.sb-body--dialog .sb-source {
-  break-inside: avoid;
-  margin: 0 0 12px;
-}
-.sb-body--dialog .sb-title { font-size: 16px; }
-.sb-body--dialog .sb-empty { column-span: all; }
 
 /* ---- Per-source editor modal ---- */
 .sb-body--modal {

@@ -33,29 +33,11 @@ function onOpen(e) {
 }
 
 function showSidebar() {
-  const t = HtmlService.createTemplateFromFile('sidebar');
-  t.mode = 'sidebar';
-  const html = t.evaluate()
+  const html = HtmlService.createTemplateFromFile('sidebar')
+    .evaluate()
     .setTitle('OPS Research Tool')
     .setWidth(360);
   DocumentApp.getUi().showSidebar(html);
-}
-
-/**
- * Reopen the sidebar UI as a wider modal dialog for citation editing.
- * The doc behind is uneditable while the dialog is open — explicit trade-off
- * for more horizontal room. Closing the dialog returns to the sidebar.
- *
- * Width is capped by Docs (~1000px on a typical screen). Height adapts.
- */
-function sidebarOpenAsDialog() {
-  const t = HtmlService.createTemplateFromFile('sidebar');
-  t.mode = 'dialog';
-  const html = t.evaluate()
-    .setWidth(820)
-    .setHeight(720);
-  DocumentApp.getUi().showModalDialog(html, 'OPS Research Tool');
-  return { ok: true };
 }
 
 /** Used by sidebar.html templating to embed sub-files (CSS + JS). */

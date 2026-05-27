@@ -3,8 +3,6 @@
 // every interaction mutates state then re-renders. Render is full-redraw
 // per change — sidebar is small and re-renders are cheap.
 
-const SRC_TYPES = ['website', 'article', 'book', 'primary'];
-const PS_OPTS = ['primary', 'secondary', 'unset'];
 
 const state = {
   ctx: null,           // sidebarGetContext response
@@ -16,9 +14,6 @@ const state = {
   viewMode: 'evidence',     // 'evidence' | 'source'
   expandedSourceIds: {},    // sourceId → true (highlights visible in source mode)
   sourceFilters: {},        // sourceId → category label (per-source filter, source mode only)
-  expandedSourceId: null,   // sourceId whose citation form is open (singular)
-  editingHighlightId: null,
-  confirmingDeleteId: null, // highlightId whose Delete button is in its second-click "Confirm" state
   modalOpenForSourceId: null,   // sourceId of the currently-open modal (drives polling)
   lastDataJson: null,           // JSON of last sidebarGetProjectData response (polling diff)
   pollHandle: null,             // setInterval handle for the modal-open polling loop
@@ -27,7 +22,6 @@ const state = {
 
 const els = {
   actor: document.getElementById('sb-actor'),
-  popout: document.getElementById('sb-popout'),
   project: document.getElementById('sb-project'),
   vmEvidence: document.getElementById('sb-vm-evidence'),
   vmSource: document.getElementById('sb-vm-source'),
@@ -60,7 +54,6 @@ function bootstrap() {
   els.fltUnset.addEventListener('change', () => { state.filterPS.unset = els.fltUnset.checked; render(); });
   els.vmEvidence.addEventListener('click', () => setViewMode_('evidence'));
   els.vmSource.addEventListener('click', () => setViewMode_('source'));
-  if (els.popout) els.popout.addEventListener('click', popOutToDialog);
   els.insert.addEventListener('click', insertBibliography);
 }
 
@@ -72,19 +65,6 @@ function setViewMode_(mode) {
   render();
 }
 
-function popOutToDialog() {
-  // TEMPORARY: rewired to open the new per-source editor against the first source
-  // (and its first highlight, if any) for smoke-testing. Reverted in Task 13.
-  if (!state.sources || state.sources.length === 0) {
-    setStatus('No sources to open.', 'warn');
-    return;
-  }
-  const firstSource = state.sources[0];
-  const firstHl = state.highlights.find((h) => h.sourceId === firstSource.sourceId);
-  google.script.run
-    .withFailureHandler(onFail('opening editor'))
-    .sidebarOpenSourceEditor(state.projectId, firstSource.sourceId, firstHl ? firstHl.highlightId : '');
-}
 
 function onContext(ctx) {
   state.ctx = ctx;
@@ -131,7 +111,6 @@ function onProjectData(resp) {
   if (!resp || !resp.ok) { setStatus('Could not load project data.', 'bad'); return; }
   state.sources = resp.sources || [];
   state.highlights = resp.highlights || [];
-  state.confirmingDeleteId = null;
   els.insert.disabled = state.sources.length === 0;
   setStatus('');
   renderFilter();
@@ -389,25 +368,7 @@ function renderSource(source) {
     openSourceEditor_(source.sourceId, null);
   });
   meta.appendChild(openBtn);
-  const expand = document.createElement('button');
-  expand.type = 'button';
-  expand.className = 'sb-source__action sb-source__expand';
-  expand.textContent = state.expandedSourceId === source.sourceId ? 'Hide citation' : 'Edit citation';
-  expand.addEventListener('click', (e) => {
-    e.stopPropagation();
-    state.expandedSourceId = state.expandedSourceId === source.sourceId ? null : source.sourceId;
-    // Auto-expand the source in source mode when opening the citation form.
-    if (state.expandedSourceId === source.sourceId && sourceMode) {
-      state.expandedSourceIds[source.sourceId] = true;
-    }
-    render();
-  });
-  meta.appendChild(expand);
   card.appendChild(meta);
-
-  if (state.expandedSourceId === source.sourceId) {
-    card.appendChild(renderSourceForm(source));
-  }
 
   if (sourceExpanded) {
     // Per-source filter chips in source mode only.
@@ -471,200 +432,7 @@ function insertInlineForSource(source) {
     .sidebarInsertInlineCitation(state.projectId, source.sourceId, '');
 }
 
-function renderSourceForm(source) {
-  const fields = Object.assign({}, source.citationFieldsParsed || {});
-  // Ensure sourceType defaults from row, then 'website'.
-  fields.sourceType = fields.sourceType || source.sourceType || 'website';
-  // Fallbacks from scrape, only if not yet set.
-  if (!fields.title) fields.title = source.scrapedTitle || '';
-  if (!fields.siteName) fields.siteName = source.scrapedSite || '';
-  if (!fields.publishedDate) fields.publishedDate = source.scrapedDate || '';
-  if (!fields.author) fields.author = source.scrapedAuthor || '';
-  if (!fields.url) fields.url = source.rawUrl || '';
-  fields.accessDate = source.accessDate || fields.accessDate || '';
-
-  const form = document.createElement('div');
-  form.className = 'sb-source__form';
-
-  // Source type selector
-  form.appendChild(formField_('Source type', selectInput_(SRC_TYPES, fields.sourceType, (v) => {
-    fields.sourceType = v;
-    saveSourcePatch_(source, { sourceType: v, citationFields: fields });
-    state.expandedSourceId = source.sourceId; // keep expanded
-    render();
-  })));
-
-  // Per-type field set
-  const fieldDefs = sourceFieldsFor_(fields.sourceType);
-  fieldDefs.forEach((def) => {
-    const onChange = (v) => {
-      fields[def.key] = v;
-      // Debounce-on-blur pattern: write on each commit (we listen for change/blur, not input).
-      saveSourcePatch_(source, { citationFields: fields });
-      // Re-render the preview without redoing layout.
-      updatePreview_(form, fields);
-    };
-    form.appendChild(formField_(def.label, textInput_(fields[def.key] || '', onChange, def.kind)));
-  });
-
-  // Primary/secondary
-  const psRow = document.createElement('div');
-  psRow.className = 'sb-source__form-row';
-  PS_OPTS.forEach((opt) => {
-    const lab = document.createElement('label');
-    const inp = document.createElement('input');
-    inp.type = 'radio'; inp.name = 'ps-' + source.sourceId; inp.value = opt;
-    if ((source.primarySecondary || 'unset') === opt) inp.checked = true;
-    inp.addEventListener('change', () => {
-      saveSourcePatch_(source, { primarySecondary: opt });
-      source.primarySecondary = opt;
-      render();
-    });
-    lab.appendChild(inp);
-    lab.appendChild(document.createTextNode(' ' + opt));
-    psRow.appendChild(lab);
-  });
-  form.appendChild(formField_('Classification', psRow));
-
-  // Annotation
-  const annWrap = document.createElement('div');
-  annWrap.className = 'sb-source__annotation';
-  const annLabel = document.createElement('label'); annLabel.textContent = 'Annotation';
-  const annTa = document.createElement('textarea');
-  annTa.value = source.annotation || '';
-  annTa.placeholder = '2–3 sentence annotation…';
-  let timer;
-  annTa.addEventListener('input', () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      saveSourcePatch_(source, { annotation: annTa.value });
-      source.annotation = annTa.value;
-    }, 600);
-  });
-  annWrap.appendChild(annLabel);
-  annWrap.appendChild(annTa);
-  form.appendChild(annWrap);
-
-  // Live preview
-  const preview = document.createElement('div');
-  preview.className = 'sb-source__preview';
-  preview.id = 'preview-' + source.sourceId;
-  preview.innerHTML = formatPreview_(fields);
-  form.appendChild(preview);
-
-  return form;
-}
-
-function sourceFieldsFor_(sourceType) {
-  switch (sourceType) {
-    case 'website':
-      return [
-        { key: 'title', label: 'Title', kind: 'text' },
-        { key: 'siteName', label: 'Site name', kind: 'text' },
-        { key: 'author', label: 'Author', kind: 'text' },
-        { key: 'publishedDate', label: 'Published date', kind: 'text' },
-        { key: 'url', label: 'URL', kind: 'text' },
-      ];
-    case 'article':
-      return [
-        { key: 'title', label: 'Article title', kind: 'text' },
-        { key: 'publication', label: 'Publication name', kind: 'text' },
-        { key: 'author', label: 'Author', kind: 'text' },
-        { key: 'publishedDate', label: 'Published date', kind: 'text' },
-        { key: 'volume', label: 'Volume (opt.)', kind: 'text' },
-        { key: 'issue', label: 'Issue (opt.)', kind: 'text' },
-        { key: 'pages', label: 'Pages (opt.)', kind: 'text' },
-        { key: 'url', label: 'URL', kind: 'text' },
-      ];
-    case 'book':
-      return [
-        { key: 'title', label: 'Book title', kind: 'text' },
-        { key: 'author', label: 'Author', kind: 'text' },
-        { key: 'publisher', label: 'Publisher', kind: 'text' },
-        { key: 'publishedDate', label: 'Year', kind: 'text' },
-      ];
-    case 'primary':
-      return [
-        { key: 'title', label: 'Title', kind: 'text' },
-        { key: 'author', label: 'Author / creator', kind: 'text' },
-        { key: 'publishedDate', label: 'Date', kind: 'text' },
-        { key: 'archive', label: 'Archive / repository', kind: 'text' },
-        { key: 'url', label: 'URL', kind: 'text' },
-      ];
-    default:
-      return [];
-  }
-}
-
-function formField_(labelText, control) {
-  const wrap = document.createElement('div');
-  const lab = document.createElement('label');
-  lab.textContent = labelText;
-  wrap.appendChild(lab);
-  wrap.appendChild(control);
-  return wrap;
-}
-
-function textInput_(value, onCommit, kind) {
-  const i = document.createElement('input');
-  i.type = kind === 'date' ? 'date' : 'text';
-  i.value = value || '';
-  i.addEventListener('change', () => onCommit(i.value));
-  i.addEventListener('blur', () => onCommit(i.value));
-  return i;
-}
-
-function selectInput_(options, value, onChange) {
-  const s = document.createElement('select');
-  options.forEach((o) => {
-    const opt = document.createElement('option');
-    opt.value = o; opt.textContent = o;
-    if (o === value) opt.selected = true;
-    s.appendChild(opt);
-  });
-  s.addEventListener('change', () => onChange(s.value));
-  return s;
-}
-
-function formatPreview_(fields) {
-  // Local mirror of the server formatCitation just for live preview. Not
-  // authoritative — the actual Insert Bibliography uses the server's logic.
-  // For simplicity we just send to server and update on response.
-  // Actually we'll just show a placeholder until the server returns.
-  return '<em>Live preview will render after a moment…</em>';
-}
-
-function updatePreview_(form, fields) {
-  const previewEl = form.querySelector('.sb-source__preview');
-  if (!previewEl) return;
-  google.script.run
-    .withSuccessHandler((res) => {
-      if (!res || !res.text) { previewEl.textContent = ''; return; }
-      previewEl.innerHTML = renderPreviewHtml_(res);
-    })
-    .withFailureHandler(() => { /* ignore */ })
-    .sidebarPreviewCitation(fields, (state.ctx && state.ctx.activeBundle && state.ctx.activeBundle.style) || 'mla');
-}
-
-function renderPreviewHtml_(formatted) {
-  const text = formatted.text || '';
-  const italics = formatted.italics || [];
-  let html = '';
-  let cursor = 0;
-  italics.forEach(([s, e]) => {
-    if (s > cursor) html += esc_(text.slice(cursor, s));
-    html += '<em>' + esc_(text.slice(s, e)) + '</em>';
-    cursor = e;
-  });
-  if (cursor < text.length) html += esc_(text.slice(cursor));
-  return html;
-}
-
-function esc_(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-// ---------- highlight render + edit/delete ----------
+// ---------- highlight render ----------
 
 function renderHighlight(source, h) {
   const row = document.createElement('div');
@@ -701,151 +469,17 @@ function renderHighlight(source, h) {
 
   const actions = document.createElement('div');
   actions.className = 'sb-highlight__actions';
-  const editBtn = document.createElement('button');
-  editBtn.type = 'button';
-  editBtn.className = 'sb-highlight__btn sb-highlight__btn--edit';
-  editBtn.textContent = state.editingHighlightId === h.highlightId ? 'Done' : 'Edit';
-  editBtn.addEventListener('click', () => {
-    state.editingHighlightId = state.editingHighlightId === h.highlightId ? null : h.highlightId;
-    render();
-  });
-  actions.appendChild(editBtn);
-
   const openInEditor = document.createElement('button');
   openInEditor.type = 'button';
   openInEditor.className = 'sb-highlight__btn sb-highlight__btn--edit';
   openInEditor.textContent = 'Open in editor';
   openInEditor.addEventListener('click', () => openSourceEditor_(source.sourceId, h.highlightId));
   actions.appendChild(openInEditor);
-
-  // Two-step inline delete. First click on Delete turns the action row
-  // into [Cancel][Confirm delete]; second click optimistically removes
-  // the row locally and fires the server delete in the background.
-  if (state.confirmingDeleteId === h.highlightId) {
-    const cancelBtn = document.createElement('button');
-    cancelBtn.type = 'button';
-    cancelBtn.className = 'sb-highlight__btn sb-highlight__btn--cancel';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.addEventListener('click', () => {
-      state.confirmingDeleteId = null;
-      render();
-    });
-    actions.appendChild(cancelBtn);
-
-    const confirmBtn = document.createElement('button');
-    confirmBtn.type = 'button';
-    confirmBtn.className = 'sb-highlight__btn sb-highlight__btn--confirm';
-    confirmBtn.textContent = 'Confirm delete';
-    confirmBtn.addEventListener('click', () => optimisticallyDeleteHighlight_(source, h));
-    actions.appendChild(confirmBtn);
-  } else {
-    const delBtn = document.createElement('button');
-    delBtn.type = 'button';
-    delBtn.className = 'sb-highlight__btn sb-highlight__btn--delete';
-    delBtn.textContent = 'Delete';
-    delBtn.addEventListener('click', () => {
-      state.confirmingDeleteId = h.highlightId;
-      render();
-    });
-    actions.appendChild(delBtn);
-  }
   row.appendChild(actions);
-
-  if (state.editingHighlightId === h.highlightId) {
-    row.appendChild(renderHighlightEditor(h));
-  }
 
   return row;
 }
 
-function renderHighlightEditor(h) {
-  const bundle = activeBundle();
-  if (!bundle) return document.createElement('div');
-  const editor = document.createElement('div');
-  editor.style.marginTop = '8px';
-  editor.style.paddingTop = '8px';
-  editor.style.borderTop = '1px dashed var(--c-line)';
-
-  // Primary category swatches
-  const primRow = document.createElement('div');
-  primRow.style.cssText = 'display:flex; gap:4px; align-items:center; margin-bottom:6px;';
-  const primLabel = document.createElement('span');
-  primLabel.style.cssText = 'font-size:10px; color:var(--c-muted); min-width:70px; text-transform:uppercase;';
-  primLabel.textContent = 'Category';
-  primRow.appendChild(primLabel);
-  for (let i = 1; i <= 5; i++) {
-    const label = bundle['label' + i];
-    const color = bundle['color' + i];
-    if (!label) continue;
-    primRow.appendChild(swatch_(label, color, h.primaryCategory === label, () => {
-      saveHighlightPatch_(h, { primaryCategory: label });
-      h.primaryCategory = label;
-      render();
-    }));
-  }
-  editor.appendChild(primRow);
-
-  // Secondary
-  const secRow = document.createElement('div');
-  secRow.style.cssText = 'display:flex; gap:4px; align-items:center; margin-bottom:6px; flex-wrap:wrap;';
-  const secLabel = document.createElement('span');
-  secLabel.style.cssText = 'font-size:10px; color:var(--c-muted); min-width:70px; text-transform:uppercase;';
-  secLabel.textContent = 'Secondary';
-  secRow.appendChild(secLabel);
-  for (let i = 1; i <= 5; i++) {
-    const label = bundle['label' + i];
-    const color = bundle['color' + i];
-    if (!label) continue;
-    secRow.appendChild(swatch_(label, color, h.secondaryCategory === label, () => {
-      const next = h.secondaryCategory === label ? '' : label;
-      saveHighlightPatch_(h, { secondaryCategory: next });
-      h.secondaryCategory = next;
-      render();
-    }));
-  }
-  const noneBtn = document.createElement('button');
-  noneBtn.type = 'button';
-  noneBtn.style.cssText = 'width:22px; height:22px; border-radius:50%; border:2px dashed var(--c-muted); background:#fff; font-size:10px; color:var(--c-muted);';
-  noneBtn.textContent = '∅';
-  noneBtn.title = 'No secondary';
-  noneBtn.addEventListener('click', () => {
-    saveHighlightPatch_(h, { secondaryCategory: '' });
-    h.secondaryCategory = '';
-    render();
-  });
-  secRow.appendChild(noneBtn);
-  editor.appendChild(secRow);
-
-  // Note
-  const noteWrap = document.createElement('div');
-  const noteLabel = document.createElement('div');
-  noteLabel.style.cssText = 'font-size:10px; color:var(--c-muted); text-transform:uppercase;';
-  noteLabel.textContent = 'Note';
-  const ta = document.createElement('textarea');
-  ta.style.cssText = 'width:100%; border:1px solid var(--c-line); border-radius:4px; padding:4px 6px; font-size:12px; resize:vertical; min-height:40px;';
-  ta.value = h.note || '';
-  let timer;
-  ta.addEventListener('input', () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      saveHighlightPatch_(h, { note: ta.value });
-      h.note = ta.value;
-    }, 600);
-  });
-  noteWrap.appendChild(noteLabel);
-  noteWrap.appendChild(ta);
-  editor.appendChild(noteWrap);
-  return editor;
-}
-
-function swatch_(label, color, active, onClick) {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.title = label;
-  b.style.cssText = 'width:22px; height:22px; border-radius:50%; border:2px solid ' + (active ? '#202124' : 'transparent') + '; padding:0; background:' + color + '; cursor:pointer; background-clip:padding-box;';
-  b.addEventListener('click', onClick);
-  return b;
-}
 
 function colorForLabel_(label) {
   const bundle = activeBundle();
@@ -930,7 +564,6 @@ function onPollResponse_(resp) {
   state.lastDataJson = json;
   state.sources = resp.sources || [];
   state.highlights = resp.highlights || [];
-  state.confirmingDeleteId = null;
   els.insert.disabled = state.sources.length === 0;
   renderFilter();
   render();
@@ -941,71 +574,6 @@ function onPollResponse_(resp) {
   if (!stillExists) stopEditorPolling_();
 }
 
-function saveSourcePatch_(source, patch) {
-  const merged = Object.assign({}, patch, { sourceId: source.sourceId, projectId: state.projectId });
-  google.script.run
-    .withSuccessHandler(() => setStatus('Saved.', 'good', 1500))
-    .withFailureHandler(onFail('saving source'))
-    .sidebarUpdateSource(merged);
-}
-
-function saveHighlightPatch_(highlight, patch) {
-  const merged = Object.assign({}, patch, { highlightId: highlight.highlightId, projectId: state.projectId });
-  google.script.run
-    .withSuccessHandler(() => setStatus('Saved.', 'good', 1500))
-    .withFailureHandler(onFail('saving highlight'))
-    .sidebarUpdateHighlight(merged);
-}
-
-/**
- * Remove the highlight from local state immediately, re-render, then fire
- * the server delete. On failure, restore state and surface the error.
- *
- * Server-side: if this was the last highlight pointing at the source, the
- * source row gets cascade-deleted too — mirror that locally so the UI
- * matches what a fresh load would show.
- */
-function optimisticallyDeleteHighlight_(source, highlight) {
-  const cascade = state.highlights.filter(
-    (x) => x.sourceId === highlight.sourceId && x.highlightId !== highlight.highlightId
-  ).length === 0;
-
-  // Snapshot what we're about to remove, in case the server rejects.
-  const snapshotHighlight = highlight;
-  const snapshotSource = cascade ? state.sources.find((s) => s.sourceId === highlight.sourceId) : null;
-  const snapshotHighlightIdx = state.highlights.findIndex((h) => h.highlightId === highlight.highlightId);
-  const snapshotSourceIdx = snapshotSource ? state.sources.findIndex((s) => s.sourceId === snapshotSource.sourceId) : -1;
-
-  // Apply optimistically.
-  state.highlights = state.highlights.filter((h) => h.highlightId !== highlight.highlightId);
-  if (snapshotSource) {
-    state.sources = state.sources.filter((s) => s.sourceId !== snapshotSource.sourceId);
-  }
-  state.confirmingDeleteId = null;
-  if (state.editingHighlightId === highlight.highlightId) state.editingHighlightId = null;
-  els.insert.disabled = state.sources.length === 0;
-  renderFilter();
-  render();
-  setStatus('Deleted.', 'good', 1500);
-
-  google.script.run
-    .withSuccessHandler(() => { /* UI already reflects the deletion */ })
-    .withFailureHandler((e) => {
-      // Roll back. Put items back at their original indices so the order
-      // doesn't shuffle just because a delete failed.
-      const insertAt = (arr, idx, item) => {
-        if (idx < 0 || idx > arr.length) arr.push(item);
-        else arr.splice(idx, 0, item);
-      };
-      insertAt(state.highlights, snapshotHighlightIdx, snapshotHighlight);
-      if (snapshotSource) insertAt(state.sources, snapshotSourceIdx, snapshotSource);
-      els.insert.disabled = state.sources.length === 0;
-      renderFilter();
-      render();
-      setStatus('Delete failed: ' + (e && e.message || e), 'bad');
-    })
-    .sidebarDeleteHighlight(highlight.highlightId, state.projectId, cascade);
-}
 
 function insertBibliography() {
   els.insert.disabled = true;
