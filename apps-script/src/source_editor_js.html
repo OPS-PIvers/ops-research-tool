@@ -48,6 +48,15 @@ function onData(resp) {
   }
   setStatus('');
   render();
+  if (ctx.focusHighlightId) {
+    // Pre-expand the editor for the target highlight, then re-render and scroll.
+    if (editor.highlights.find((h) => h.highlightId === ctx.focusHighlightId)) {
+      editor.editingHighlightId = ctx.focusHighlightId;
+      render();
+      const target = document.getElementById('hl-' + ctx.focusHighlightId);
+      if (target) target.scrollIntoView({ behavior: 'auto', block: 'center' });
+    }
+  }
 }
 
 function render() {
