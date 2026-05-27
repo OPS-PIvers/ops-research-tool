@@ -298,3 +298,123 @@ function findStudentSheetsForEmail_(emailLower) {
   });
   return out;
 }
+
+// ============================================================
+// Email change (atomic across Roster + Sheets + Drive + Prefs)
+// ============================================================
+
+/**
+ * Change a student's email. Updates the Roster row, renames every
+ * per-student Sheet file (active and archived projects), rewrites every
+ * createdByEmail cell in Sources + Highlights of each, updates Meta's
+ * studentEmail, and rekeys ScriptProperties entries from
+ * `prefs:<oldEmail>:*` to `prefs:<newEmail>:*`.
+ *
+ * Returns { ok, oldEmail, newEmail, renamedSheets, rewrittenCells, rekeyedPrefs, errors }.
+ *
+ * Errors are collected per-step rather than thrown — once the Roster row
+ * is updated (cheap, atomic), the rename is "official" and downstream
+ * cells / files just need to catch up.
+ */
+function adminChangeStudentEmail(oldEmail, newEmail) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!oldEmail) throw new Error('oldEmail required');
+  if (!newEmail) throw new Error('newEmail required');
+  const oldL = String(oldEmail).toLowerCase().trim();
+  const newL = String(newEmail).toLowerCase().trim();
+  if (oldL === newL) throw new Error('Old and new emails are the same');
+  if (newL.indexOf('@') < 1 || newL.indexOf('.') < 0) {
+    throw new Error('newEmail does not look like an email');
+  }
+
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.ROSTER);
+  const rosterRows = readAllAsObjects_(tab, HEADERS.ROSTER);
+  if (!rosterRows.find((r) => String(r.Email || '').toLowerCase() === oldL)) {
+    throw new Error('Roster row not found: ' + oldL);
+  }
+  if (rosterRows.find((r) => String(r.Email || '').toLowerCase() === newL)) {
+    throw new Error('newEmail already in roster: ' + newL);
+  }
+
+  // ----- Step 1: Roster row email cell -----
+  const rowIdx = findRowByKeyCi_(tab, HEADERS.ROSTER, 'Email', oldL);
+  const emailCol = HEADERS.ROSTER.indexOf('Email') + 1;
+  tab.getRange(rowIdx, emailCol).setValue(newL);
+
+  const errors = [];
+  let renamedSheets = 0;
+  let rewrittenCells = 0;
+  let rekeyedPrefs = 0;
+
+  // ----- Step 2: Rename per-student Sheets + rewrite cells -----
+  const sheets = findStudentSheetsForEmail_(oldL);
+  sheets.forEach((s) => {
+    try {
+      const file = DriveApp.getFileById(s.sheetId);
+      file.setName(newL);
+      renamedSheets++;
+      const inner = SpreadsheetApp.openById(s.sheetId);
+      rewrittenCells += rewriteEmailInTab_(inner, TABS.META,       ['studentEmail'],       oldL, newL);
+      rewrittenCells += rewriteEmailInTab_(inner, TABS.SOURCES,    ['createdByEmail'],     oldL, newL);
+      rewrittenCells += rewriteEmailInTab_(inner, TABS.HIGHLIGHTS, ['createdByEmail'],     oldL, newL);
+    } catch (e) {
+      errors.push({ step: 'sheet:' + s.projectId, error: String(e && e.message || e) });
+    }
+  });
+
+  // ----- Step 3: Rekey ScriptProperties prefs -----
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const all = props.getProperties();
+    const oldPrefix = 'prefs:' + oldL + ':';
+    const newPrefix = 'prefs:' + newL + ':';
+    Object.keys(all).forEach((key) => {
+      if (key.indexOf(oldPrefix) === 0) {
+        const suffix = key.substring(oldPrefix.length);
+        props.setProperty(newPrefix + suffix, all[key]);
+        props.deleteProperty(key);
+        rekeyedPrefs++;
+      }
+    });
+  } catch (e) {
+    errors.push({ step: 'prefs', error: String(e && e.message || e) });
+  }
+
+  return {
+    ok: true,
+    oldEmail: oldL,
+    newEmail: newL,
+    renamedSheets,
+    rewrittenCells,
+    rekeyedPrefs,
+    errors,
+  };
+}
+
+/**
+ * Walk a tab, find cells in `cols` matching `oldEmail` (case-insensitive),
+ * rewrite them to `newEmail`. Returns the count rewritten.
+ */
+function rewriteEmailInTab_(ss, tabName, cols, oldEmail, newEmail) {
+  const tab = ss.getSheetByName(tabName);
+  if (!tab) return 0;
+  const data = tab.getDataRange().getValues();
+  if (data.length < 2) return 0;
+  const header = data[0].map((h) => String(h));
+  const colIdx = cols
+    .map((c) => header.indexOf(c))
+    .filter((i) => i >= 0);
+  if (colIdx.length === 0) return 0;
+  let changed = 0;
+  for (let r = 1; r < data.length; r++) {
+    colIdx.forEach((c) => {
+      if (String(data[r][c]).toLowerCase() === oldEmail) {
+        tab.getRange(r + 1, c + 1).setValue(newEmail);
+        changed++;
+      }
+    });
+  }
+  return changed;
+}
