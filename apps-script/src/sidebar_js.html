@@ -388,7 +388,6 @@ function renderSource(source) {
   openBtn.className = 'sb-source__action';
   openBtn.textContent = 'Open in editor';
   openBtn.title = 'Open this source in the editor';
-  openBtn.disabled = !!state.modalOpenForSourceId;
   openBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     openSourceEditor_(source.sourceId, null);
@@ -499,7 +498,6 @@ function renderHighlight(source, h) {
   openInEditor.type = 'button';
   openInEditor.className = 'sb-highlight__btn sb-highlight__btn--edit';
   openInEditor.textContent = 'Open in editor';
-  openInEditor.disabled = !!state.modalOpenForSourceId;
   openInEditor.addEventListener('click', () => openSourceEditor_(source.sourceId, h.highlightId));
   actions.appendChild(openInEditor);
   row.appendChild(actions);
@@ -532,7 +530,6 @@ function openSourceEditor_(sourceId, focusHighlightId) {
   state.lastDataJson = JSON.stringify({ sources: state.sources, highlights: state.highlights });
   startEditorPolling_();
   setStatus('Opening editor…');
-  render();   // re-render so the disabled state on Open-in-editor buttons reflects state.modalOpenForSourceId immediately
   google.script.run
     .withSuccessHandler(() => setStatus(''))
     .withFailureHandler((e) => {
@@ -569,7 +566,6 @@ function stopEditorPolling_() {
   state.pollHandle = null;
   state.modalOpenForSourceId = null;
   state.pollUnchangedTicks = 0;
-  render();   // re-enable any "Open in editor" buttons that were disabled while modal was open
 }
 
 function pollTick_() {
