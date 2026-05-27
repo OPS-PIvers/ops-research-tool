@@ -17,6 +17,13 @@ const root = document.getElementById('console-root');
 
 bootstrap();
 
+document.addEventListener('click', () => {
+  if (myProjects.openMenuId !== null) {
+    myProjects.openMenuId = null;
+    if (state.view === 'MY_PROJECTS') renderShell_();
+  }
+});
+
 function bootstrap() {
   state.view = 'BOOT';
   renderBoot_();
@@ -131,8 +138,187 @@ function renderView_(main) {
   }
 }
 
+// MY_PROJECTS view-local state. Reset each time we enter the view.
+const myProjects = {
+  filter: 'active',   // 'active' | 'archived'
+  projects: null,     // loaded by fetchMyProjects_
+  openMenuId: null,   // sourceId whose kebab menu is open (null = none)
+};
+
+function renderMyProjects_(main) {
+  // Toolbar
+  const toolbar = document.createElement('div');
+  toolbar.className = 'mp-toolbar';
+  const title = document.createElement('h1');
+  title.className = 'mp-title';
+  title.textContent = 'My Projects';
+  toolbar.appendChild(title);
+
+  const right = document.createElement('div');
+  right.style.display = 'flex';
+  right.style.gap = '12px';
+  right.style.alignItems = 'center';
+
+  const toggle = document.createElement('div');
+  toggle.className = 'mp-toggle';
+  ['active', 'archived'].forEach((f) => {
+    const b = document.createElement('button');
+    b.textContent = f.charAt(0).toUpperCase() + f.slice(1);
+    if (myProjects.filter === f) b.classList.add('mp-toggle--active');
+    b.addEventListener('click', () => {
+      if (myProjects.filter === f) return;
+      myProjects.filter = f;
+      myProjects.projects = null;
+      renderShell_();
+      fetchMyProjects_();
+    });
+    toggle.appendChild(b);
+  });
+  right.appendChild(toggle);
+
+  const newBtn = document.createElement('button');
+  newBtn.className = 'mp-new-btn';
+  newBtn.textContent = '+ New project';
+  newBtn.addEventListener('click', openCreateProjectModal_);   // implemented in Task 11
+  right.appendChild(newBtn);
+
+  toolbar.appendChild(right);
+  main.appendChild(toolbar);
+
+  // Body — either skeletons (while loading) or the project list.
+  const body = document.createElement('div');
+  body.className = 'mp-list';
+  body.id = 'mp-body';
+  main.appendChild(body);
+
+  if (myProjects.projects === null) {
+    renderMpSkeletons_(body);
+    fetchMyProjects_();
+  } else {
+    renderMpCards_(body);
+  }
+}
+
+function renderMpSkeletons_(body) {
+  body.innerHTML = '';
+  for (let i = 0; i < 3; i++) {
+    const sk = document.createElement('div');
+    sk.className = 'mp-skeleton';
+    const l1 = document.createElement('div');
+    l1.className = 'mp-skeleton__line mp-skeleton__line--mid';
+    sk.appendChild(l1);
+    const l2 = document.createElement('div');
+    l2.className = 'mp-skeleton__line mp-skeleton__line--long';
+    sk.appendChild(l2);
+    body.appendChild(sk);
+  }
+}
+
+function fetchMyProjects_() {
+  google.script.run
+    .withSuccessHandler((resp) => {
+      if (!resp || !resp.ok) {
+        setStatus('Could not load projects.', 'bad', 4000);
+        return;
+      }
+      myProjects.projects = resp.projects || [];
+      renderShell_();
+    })
+    .withFailureHandler(onFail_('loading projects'))
+    .consoleGetMyProjects(myProjects.filter);
+}
+
+function renderMpCards_(body) {
+  body.innerHTML = '';
+  if (myProjects.projects.length === 0) {
+    const e = document.createElement('div');
+    e.className = 'console-empty';
+    e.textContent = myProjects.filter === 'archived'
+      ? 'No archived projects.'
+      : 'You\'re not on any active projects. Click + New project to create one.';
+    body.appendChild(e);
+    return;
+  }
+  myProjects.projects.forEach((p) => body.appendChild(buildProjectCard_(p)));
+}
+
+function buildProjectCard_(p) {
+  const card = document.createElement('div');
+  card.className = 'mp-card';
+
+  const name = document.createElement('div');
+  name.className = 'mp-card__name';
+  name.textContent = p.name;
+  card.appendChild(name);
+
+  const meta = document.createElement('div');
+  meta.className = 'mp-card__meta';
+  const parts = [
+    p.schoolYear,
+    p.bundleName,
+    p.memberClasses.join(', '),
+    p.studentCount + ' student' + (p.studentCount === 1 ? '' : 's'),
+  ].filter(Boolean);
+  meta.textContent = parts.join(' · ');
+  card.appendChild(meta);
+
+  const actions = document.createElement('div');
+  actions.className = 'mp-card__actions';
+  const open = document.createElement('button');
+  open.className = 'mp-card__open';
+  open.textContent = 'Open';
+  open.addEventListener('click', () => navigate_('/projects/' + encodeURIComponent(p.projectId)));
+  actions.appendChild(open);
+
+  const kebab = document.createElement('button');
+  kebab.className = 'mp-card__kebab';
+  kebab.textContent = '⋯';
+  kebab.title = 'More actions';
+  kebab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    myProjects.openMenuId = myProjects.openMenuId === p.projectId ? null : p.projectId;
+    renderShell_();
+  });
+  actions.appendChild(kebab);
+  card.appendChild(actions);
+
+  if (myProjects.openMenuId === p.projectId) {
+    card.appendChild(buildKebabMenu_(p));
+  }
+
+  return card;
+}
+
+function buildKebabMenu_(p) {
+  const menu = document.createElement('div');
+  menu.className = 'mp-kebab-menu';
+  // Position below the kebab button visually.
+  menu.style.position = 'absolute';
+  menu.style.top = '52px';
+  menu.style.right = '20px';
+
+  if (p.status === 'active') {
+    const archBtn = document.createElement('button');
+    archBtn.className = 'mp-kebab-menu__danger';
+    archBtn.textContent = 'Archive…';
+    archBtn.addEventListener('click', (e) => { e.stopPropagation(); confirmArchive_(p); });
+    menu.appendChild(archBtn);
+  } else {
+    const unArchBtn = document.createElement('button');
+    unArchBtn.textContent = 'Unarchive';
+    unArchBtn.addEventListener('click', (e) => { e.stopPropagation(); doUnarchive_(p); });
+    menu.appendChild(unArchBtn);
+  }
+  return menu;
+}
+
+// Archive flow + Create modal are implemented in Tasks 11–12. Stubs here so
+// renderMyProjects_ doesn't reference undefined functions.
+function openCreateProjectModal_() { setStatus('Create modal — Task 11.', null, 2000); }
+function confirmArchive_(p)        { setStatus('Archive flow — Task 12.', null, 2000); }
+function doUnarchive_(p)           { setStatus('Unarchive — Task 12.', null, 2000); }
+
 // View render functions — placeholders filled in Tasks 10+.
-function renderMyProjects_(main)    { main.innerHTML = '<div class="console-empty">My Projects (Task 10).</div>'; }
 function renderDashboard_(main)     { main.innerHTML = '<div class="console-empty">Dashboard (Tasks 13–15).</div>'; }
 function renderStudentDetail_(main) { main.innerHTML = '<div class="console-empty">Drill-down (Tasks 16–18).</div>'; }
 
