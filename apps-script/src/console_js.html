@@ -737,6 +737,43 @@ function fetchDashboard_(projectId, isRefresh) {
     .consoleGetProjectDashboard(projectId);
 }
 
+function maybeRenderUnarchiveBanner_(main, data) {
+  if (!data.recentUnarchive) return;
+  const dismissedKey = 'dismissedUnarchive:' + data.recentUnarchive.eventId;
+  if (localStorage.getItem(dismissedKey)) return;
+
+  const banner = document.createElement('div');
+  banner.className = 'unarchive-banner';
+
+  const icon = document.createElement('span');
+  icon.className = 'unarchive-banner__icon';
+  icon.textContent = 'ⓘ';
+  banner.appendChild(icon);
+
+  const text = document.createElement('div');
+  text.className = 'unarchive-banner__text';
+  const when = new Date(data.recentUnarchive.at);
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const dateStr = monthNames[when.getMonth()] + ' ' + when.getDate() + ', ' + when.getFullYear();
+  text.innerHTML =
+    '<strong>This project was unarchived</strong> by ' +
+    esc_(data.recentUnarchive.actor) + ' on ' + dateStr + '.<br>' +
+    '<span class="unarchive-banner__sub">Students who had it set as active will need to re-select it.</span>';
+  banner.appendChild(text);
+
+  const close = document.createElement('button');
+  close.className = 'unarchive-banner__close';
+  close.textContent = '×';
+  close.title = 'Dismiss';
+  close.addEventListener('click', () => {
+    localStorage.setItem(dismissedKey, '1');
+    if (banner.parentNode) banner.parentNode.removeChild(banner);
+  });
+  banner.appendChild(close);
+
+  main.appendChild(banner);
+}
+
 function paintDashboard_() {
   if (!dashboard.data) return;
   const proj = dashboard.data.project;
@@ -750,6 +787,8 @@ function paintDashboard_() {
   const body = document.getElementById('db-body');
   if (!body) return;
   body.innerHTML = '';
+
+  maybeRenderUnarchiveBanner_(body, dashboard.data);
 
   if (dashboard.data.students.length === 0) {
     const e = document.createElement('div');
