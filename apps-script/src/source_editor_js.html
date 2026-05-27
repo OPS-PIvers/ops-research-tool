@@ -60,7 +60,7 @@ function render() {
 
   els.citation.innerHTML = '';
   els.citation.appendChild(renderCitationForm());
-  els.filter.innerHTML = '';   // filter chips come in Task 8
+  renderFilterChips_();
   renderEvidenceList_();
 }
 
@@ -527,5 +527,58 @@ function optimisticallyDeleteHighlight_(highlight) {
       setStatus('Delete failed: ' + (e && e.message || e), 'bad');
     })
     .sidebarDeleteHighlight(highlight.highlightId, ctx.projectId, false);
+}
+
+function renderFilterChips_() {
+  els.filter.innerHTML = '';
+  if (!editor.bundle) return;
+  const breakdown = categoryBreakdown_();
+  if (breakdown.length === 0) return;
+
+  // "All" chip.
+  const allCount = editor.highlights.length;
+  els.filter.appendChild(makeFilterChip_(null, 'All', '#dadce0', allCount, editor.perSourceFilter === null));
+
+  // Per-category chips.
+  breakdown.forEach((b) => {
+    els.filter.appendChild(
+      makeFilterChip_(b.label, b.label, b.color, b.count, editor.perSourceFilter === b.label)
+    );
+  });
+}
+
+function categoryBreakdown_() {
+  if (!editor.bundle) return [];
+  const counts = {};
+  editor.highlights.forEach((h) => {
+    if (h.primaryCategory) counts[h.primaryCategory] = (counts[h.primaryCategory] || 0) + 1;
+  });
+  const out = [];
+  for (let i = 1; i <= 5; i++) {
+    const label = editor.bundle['label' + i];
+    if (!label) continue;
+    if (counts[label]) out.push({ label, color: editor.bundle['color' + i], count: counts[label] });
+  }
+  return out;
+}
+
+function makeFilterChip_(value, label, color, count, active) {
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'sb-filter-chip sb-filter-chip--mini' + (active ? ' sb-filter-chip--active' : '');
+  const dot = document.createElement('span');
+  dot.className = 'sb-filter-chip__dot';
+  dot.style.backgroundColor = color;
+  chip.appendChild(dot);
+  chip.appendChild(document.createTextNode(label));
+  const c = document.createElement('span');
+  c.className = 'sb-filter-chip__count';
+  c.textContent = count;
+  chip.appendChild(c);
+  chip.addEventListener('click', () => {
+    editor.perSourceFilter = editor.perSourceFilter === value ? null : value;
+    render();
+  });
+  return chip;
 }
 </script>
