@@ -1123,9 +1123,9 @@ function buildSourceCard_(s) {
 
   const flags = document.createElement('div');
   flags.className = 'dd-source-card__flags';
-  flags.appendChild(makeFlagChip_('cit', s.completionFlags.citation));
-  flags.appendChild(makeFlagChip_('cls', s.completionFlags.classification));
-  flags.appendChild(makeFlagChip_('ann', s.completionFlags.annotation));
+  flags.appendChild(makeFlagChip_('Cite', s.completionFlags.citation));
+  flags.appendChild(makeFlagChip_('Tag', s.completionFlags.classification));
+  flags.appendChild(makeFlagChip_('Note', s.completionFlags.annotation));
   head.appendChild(flags);
 
   card.appendChild(head);
