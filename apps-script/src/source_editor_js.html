@@ -336,7 +336,23 @@ function renderEvidenceCard(h) {
     card.appendChild(n);
   }
 
-  // Actions come in Tasks 6+7.
+  const actions = document.createElement('div');
+  actions.className = 'sb-highlight__actions';
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.className = 'sb-highlight__btn sb-highlight__btn--edit';
+  editBtn.textContent = editor.editingHighlightId === h.highlightId ? 'Done' : 'Edit';
+  editBtn.addEventListener('click', () => {
+    editor.editingHighlightId = editor.editingHighlightId === h.highlightId ? null : h.highlightId;
+    render();
+  });
+  actions.appendChild(editBtn);
+  // Delete button comes in Task 7.
+  card.appendChild(actions);
+
+  if (editor.editingHighlightId === h.highlightId) {
+    card.appendChild(renderHighlightMiniEditor_(h));
+  }
   return card;
 }
 
@@ -346,5 +362,106 @@ function colorForLabel_(label) {
     if (editor.bundle['label' + i] === label) return editor.bundle['color' + i];
   }
   return null;
+}
+
+function renderHighlightMiniEditor_(h) {
+  const editorEl = document.createElement('div');
+  editorEl.style.marginTop = '8px';
+  editorEl.style.paddingTop = '8px';
+  editorEl.style.borderTop = '1px dashed var(--c-line)';
+
+  if (!editor.bundle) {
+    editorEl.textContent = '(bundle not loaded — cannot edit)';
+    return editorEl;
+  }
+
+  // Primary category swatches.
+  const primRow = document.createElement('div');
+  primRow.style.cssText = 'display:flex; gap:4px; align-items:center; margin-bottom:6px; flex-wrap:wrap;';
+  const primLabel = document.createElement('span');
+  primLabel.style.cssText = 'font-size:10px; color:var(--c-muted); min-width:70px; text-transform:uppercase;';
+  primLabel.textContent = 'Category';
+  primRow.appendChild(primLabel);
+  for (let i = 1; i <= 5; i++) {
+    const label = editor.bundle['label' + i];
+    const color = editor.bundle['color' + i];
+    if (!label) continue;
+    primRow.appendChild(swatch_(label, color, h.primaryCategory === label, () => {
+      saveHighlightPatch_(h, { primaryCategory: label });
+      h.primaryCategory = label;
+      render();
+    }));
+  }
+  editorEl.appendChild(primRow);
+
+  // Secondary category swatches.
+  const secRow = document.createElement('div');
+  secRow.style.cssText = 'display:flex; gap:4px; align-items:center; margin-bottom:6px; flex-wrap:wrap;';
+  const secLabel = document.createElement('span');
+  secLabel.style.cssText = 'font-size:10px; color:var(--c-muted); min-width:70px; text-transform:uppercase;';
+  secLabel.textContent = 'Secondary';
+  secRow.appendChild(secLabel);
+  for (let i = 1; i <= 5; i++) {
+    const label = editor.bundle['label' + i];
+    const color = editor.bundle['color' + i];
+    if (!label) continue;
+    secRow.appendChild(swatch_(label, color, h.secondaryCategory === label, () => {
+      const next = h.secondaryCategory === label ? '' : label;
+      saveHighlightPatch_(h, { secondaryCategory: next });
+      h.secondaryCategory = next;
+      render();
+    }));
+  }
+  const noneBtn = document.createElement('button');
+  noneBtn.type = 'button';
+  noneBtn.style.cssText = 'width:22px; height:22px; border-radius:50%; border:2px dashed var(--c-muted); background:#fff; font-size:10px; color:var(--c-muted);';
+  noneBtn.textContent = '∅';
+  noneBtn.title = 'No secondary';
+  noneBtn.addEventListener('click', () => {
+    saveHighlightPatch_(h, { secondaryCategory: '' });
+    h.secondaryCategory = '';
+    render();
+  });
+  secRow.appendChild(noneBtn);
+  editorEl.appendChild(secRow);
+
+  // Note textarea.
+  const noteWrap = document.createElement('div');
+  const noteLabel = document.createElement('div');
+  noteLabel.style.cssText = 'font-size:10px; color:var(--c-muted); text-transform:uppercase;';
+  noteLabel.textContent = 'Note';
+  const ta = document.createElement('textarea');
+  ta.style.cssText = 'width:100%; border:1px solid var(--c-line); border-radius:4px; padding:4px 6px; font-size:12px; resize:vertical; min-height:40px;';
+  ta.value = h.note || '';
+  let timer;
+  ta.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      saveHighlightPatch_(h, { note: ta.value });
+      h.note = ta.value;
+    }, 600);
+  });
+  noteWrap.appendChild(noteLabel);
+  noteWrap.appendChild(ta);
+  editorEl.appendChild(noteWrap);
+
+  return editorEl;
+}
+
+function swatch_(label, color, active, onClick) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.title = label;
+  b.style.cssText = 'width:22px; height:22px; border-radius:50%; border:2px solid ' + (active ? '#202124' : 'transparent') + '; padding:0; background:' + color + '; cursor:pointer; background-clip:padding-box;';
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function saveHighlightPatch_(highlight, patch) {
+  const merged = Object.assign({}, patch, { highlightId: highlight.highlightId, projectId: ctx.projectId });
+  google.script.run
+    .withSuccessHandler(() => setStatus('Saved.', 'good', 1500))
+    .withFailureHandler(onFail('saving highlight'))
+    .sidebarUpdateHighlight(merged);
 }
 </script>
