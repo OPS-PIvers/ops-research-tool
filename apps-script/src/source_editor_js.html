@@ -58,7 +58,8 @@ function render() {
 
   els.evHeader.textContent = 'Evidence (' + editor.highlights.length + ')';
 
-  els.citation.innerHTML = '<div class="sb-modal__placeholder">Citation form coming in Task 4.</div>';
+  els.citation.innerHTML = '';
+  els.citation.appendChild(renderCitationForm());
   els.evidence.innerHTML = '<div class="sb-modal__placeholder">Evidence list coming in Tasks 5+.</div>';
   els.filter.innerHTML = '';
 }
@@ -90,5 +91,192 @@ function onFail(stage) {
 
 function esc_(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderCitationForm() {
+  const source = editor.source;
+  const fields = Object.assign({}, source.citationFieldsParsed || {});
+  fields.sourceType    = fields.sourceType    || source.sourceType || 'website';
+  fields.title         = fields.title         || source.scrapedTitle || '';
+  fields.siteName      = fields.siteName      || source.scrapedSite || '';
+  fields.publishedDate = fields.publishedDate || source.scrapedDate || '';
+  fields.author        = fields.author        || source.scrapedAuthor || '';
+  fields.url           = fields.url           || source.rawUrl || '';
+  fields.accessDate    = source.accessDate    || fields.accessDate || '';
+
+  const form = document.createElement('div');
+  form.className = 'sb-source__form';
+
+  // Source type
+  form.appendChild(formField_('Source type', selectInput_(SRC_TYPES, fields.sourceType, (v) => {
+    fields.sourceType = v;
+    saveSourcePatch_({ sourceType: v, citationFields: fields });
+    source.sourceType = v;
+    source.citationFieldsParsed = fields;
+    render();   // re-render to swap the field set
+  })));
+
+  // Per-type fields
+  sourceFieldsFor_(fields.sourceType).forEach((def) => {
+    const onChange = (v) => {
+      fields[def.key] = v;
+      saveSourcePatch_({ citationFields: fields });
+      source.citationFieldsParsed = fields;
+      updatePreview_(form, fields);
+    };
+    form.appendChild(formField_(def.label, textInput_(fields[def.key] || '', onChange, def.kind)));
+  });
+
+  // Primary/secondary radios
+  const psRow = document.createElement('div');
+  psRow.className = 'sb-source__form-row';
+  PS_OPTS.forEach((opt) => {
+    const lab = document.createElement('label');
+    const inp = document.createElement('input');
+    inp.type = 'radio'; inp.name = 'ed-ps'; inp.value = opt;
+    if ((source.primarySecondary || 'unset') === opt) inp.checked = true;
+    inp.addEventListener('change', () => {
+      saveSourcePatch_({ primarySecondary: opt });
+      source.primarySecondary = opt;
+    });
+    lab.appendChild(inp);
+    lab.appendChild(document.createTextNode(' ' + opt));
+    psRow.appendChild(lab);
+  });
+  form.appendChild(formField_('Classification', psRow));
+
+  // Annotation
+  const annWrap = document.createElement('div');
+  annWrap.className = 'sb-source__annotation';
+  const annLabel = document.createElement('label'); annLabel.textContent = 'Annotation';
+  const annTa = document.createElement('textarea');
+  annTa.value = source.annotation || '';
+  annTa.placeholder = '2–3 sentence annotation…';
+  let annTimer;
+  annTa.addEventListener('input', () => {
+    clearTimeout(annTimer);
+    annTimer = setTimeout(() => {
+      saveSourcePatch_({ annotation: annTa.value });
+      source.annotation = annTa.value;
+    }, 600);
+  });
+  annWrap.appendChild(annLabel);
+  annWrap.appendChild(annTa);
+  form.appendChild(annWrap);
+
+  // Live preview
+  const preview = document.createElement('div');
+  preview.className = 'sb-source__preview';
+  preview.id = 'ed-preview';
+  preview.innerHTML = '<em>Loading preview…</em>';
+  form.appendChild(preview);
+  updatePreview_(form, fields);
+
+  return form;
+}
+
+function sourceFieldsFor_(sourceType) {
+  switch (sourceType) {
+    case 'website':
+      return [
+        { key: 'title', label: 'Title', kind: 'text' },
+        { key: 'siteName', label: 'Site name', kind: 'text' },
+        { key: 'author', label: 'Author', kind: 'text' },
+        { key: 'publishedDate', label: 'Published date', kind: 'text' },
+        { key: 'url', label: 'URL', kind: 'text' },
+      ];
+    case 'article':
+      return [
+        { key: 'title', label: 'Article title', kind: 'text' },
+        { key: 'publication', label: 'Publication name', kind: 'text' },
+        { key: 'author', label: 'Author', kind: 'text' },
+        { key: 'publishedDate', label: 'Published date', kind: 'text' },
+        { key: 'volume', label: 'Volume (opt.)', kind: 'text' },
+        { key: 'issue', label: 'Issue (opt.)', kind: 'text' },
+        { key: 'pages', label: 'Pages (opt.)', kind: 'text' },
+        { key: 'url', label: 'URL', kind: 'text' },
+      ];
+    case 'book':
+      return [
+        { key: 'title', label: 'Book title', kind: 'text' },
+        { key: 'author', label: 'Author', kind: 'text' },
+        { key: 'publisher', label: 'Publisher', kind: 'text' },
+        { key: 'publishedDate', label: 'Year', kind: 'text' },
+      ];
+    case 'primary':
+      return [
+        { key: 'title', label: 'Title', kind: 'text' },
+        { key: 'author', label: 'Author / creator', kind: 'text' },
+        { key: 'publishedDate', label: 'Date', kind: 'text' },
+        { key: 'archive', label: 'Archive / repository', kind: 'text' },
+        { key: 'url', label: 'URL', kind: 'text' },
+      ];
+    default:
+      return [];
+  }
+}
+
+function formField_(labelText, control) {
+  const wrap = document.createElement('div');
+  const lab = document.createElement('label');
+  lab.textContent = labelText;
+  wrap.appendChild(lab);
+  wrap.appendChild(control);
+  return wrap;
+}
+
+function textInput_(value, onCommit, kind) {
+  const i = document.createElement('input');
+  i.type = kind === 'date' ? 'date' : 'text';
+  i.value = value || '';
+  i.addEventListener('change', () => onCommit(i.value));
+  i.addEventListener('blur', () => onCommit(i.value));
+  return i;
+}
+
+function selectInput_(options, value, onChange) {
+  const s = document.createElement('select');
+  options.forEach((o) => {
+    const opt = document.createElement('option');
+    opt.value = o; opt.textContent = o;
+    if (o === value) opt.selected = true;
+    s.appendChild(opt);
+  });
+  s.addEventListener('change', () => onChange(s.value));
+  return s;
+}
+
+function updatePreview_(form, fields) {
+  const previewEl = form.querySelector('#ed-preview') || form.querySelector('.sb-source__preview');
+  if (!previewEl) return;
+  google.script.run
+    .withSuccessHandler((res) => {
+      if (!res || !res.text) { previewEl.textContent = ''; return; }
+      previewEl.innerHTML = renderPreviewHtml_(res);
+    })
+    .withFailureHandler(() => { /* ignore preview errors */ })
+    .sidebarPreviewCitation(fields, 'mla');
+}
+
+function renderPreviewHtml_(formatted) {
+  const text = formatted.text || '';
+  const italics = formatted.italics || [];
+  let html = '';
+  let cursor = 0;
+  italics.forEach(([s, e]) => {
+    if (s > cursor) html += esc_(text.slice(cursor, s));
+    html += '<em>' + esc_(text.slice(s, e)) + '</em>';
+    cursor = e;
+  });
+  if (cursor < text.length) html += esc_(text.slice(cursor));
+  return html;
+}
+
+function saveSourcePatch_(patch) {
+  const merged = Object.assign({}, patch, { sourceId: ctx.sourceId, projectId: ctx.projectId });
+  google.script.run
+    .withSuccessHandler(() => setStatus('Saved.', 'good', 1500))
+    .withFailureHandler(onFail('saving source'))
+    .sidebarUpdateSource(merged);
 }
 </script>
