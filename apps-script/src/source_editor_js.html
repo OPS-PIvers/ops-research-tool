@@ -4,8 +4,10 @@ const PS_OPTS = ['primary', 'secondary', 'unset'];
 
 const ctx = window.OPS_EDITOR_CTX;
 const editor = {
-  source: null,
-  highlights: [],
+  source: null,            // the source currently being edited
+  highlights: [],          // highlights for the currently-edited source
+  allSources: [],          // full list — drives the source-switcher dropdown
+  allHighlights: [],       // full list — used when switching sources
   bundle: ctx.bundle || null,
   perSourceFilter: null,
   editingHighlightId: null,
@@ -14,16 +16,17 @@ const editor = {
 };
 
 const els = {
-  title:    document.getElementById('ed-title'),
-  close:    document.getElementById('ed-close'),
-  citation: document.getElementById('ed-citation'),
-  evHeader: document.getElementById('ed-evheader'),
-  filter:   document.getElementById('ed-filter'),
-  evidence: document.getElementById('ed-evidence'),
-  status:   document.getElementById('ed-status'),
+  sourceSelect: document.getElementById('ed-source-select'),
+  close:        document.getElementById('ed-close'),
+  citation:     document.getElementById('ed-citation'),
+  evHeader:     document.getElementById('ed-evheader'),
+  filter:       document.getElementById('ed-filter'),
+  evidence:     document.getElementById('ed-evidence'),
+  status:       document.getElementById('ed-status'),
 };
 
 els.close.addEventListener('click', () => google.script.host.close());
+els.sourceSelect.addEventListener('change', () => switchSource_(els.sourceSelect.value));
 
 bootstrap();
 
@@ -39,13 +42,16 @@ function onData(resp) {
     renderEmpty('Could not load this source.');
     return;
   }
-  editor.source = (resp.sources || []).find((s) => s.sourceId === ctx.sourceId) || null;
-  editor.highlights = (resp.highlights || []).filter((h) => h.sourceId === ctx.sourceId);
+  editor.allSources = resp.sources || [];
+  editor.allHighlights = resp.highlights || [];
+  editor.source = editor.allSources.find((s) => s.sourceId === ctx.sourceId) || null;
+  editor.highlights = editor.allHighlights.filter((h) => h.sourceId === ctx.sourceId);
   if (!editor.source) {
     renderEmpty('This source no longer exists. Close this window.');
     return;
   }
   setStatus('');
+  populateSourceSelect_();
   render();
   if (ctx.focusHighlightId) {
     // Pre-expand the editor for the target highlight, then re-render and scroll.
@@ -58,11 +64,53 @@ function onData(resp) {
   }
 }
 
+/**
+ * Switch the modal to a different source without closing/reopening. Resets
+ * per-source editor state so the new source starts clean.
+ */
+function switchSource_(newSourceId) {
+  if (!newSourceId || newSourceId === ctx.sourceId) return;
+  const next = editor.allSources.find((s) => s.sourceId === newSourceId);
+  if (!next) {
+    setStatus('That source is no longer available.', 'bad', 3000);
+    populateSourceSelect_();   // re-sync the select back to ctx.sourceId
+    return;
+  }
+  ctx.sourceId = newSourceId;
+  editor.source = next;
+  editor.highlights = editor.allHighlights.filter((h) => h.sourceId === newSourceId);
+  // Reset per-source UI state.
+  editor.perSourceFilter = null;
+  editor.editingHighlightId = null;
+  editor.confirmingHighlightDeleteId = null;
+  editor.confirmingSourceDelete = false;
+  render();
+}
+
+function sourceLabel_(s) {
+  const parsed = s.citationFieldsParsed || {};
+  return parsed.title || s.scrapedTitle || '(untitled)';
+}
+
+function populateSourceSelect_() {
+  els.sourceSelect.innerHTML = '';
+  editor.allSources.forEach((s) => {
+    const opt = document.createElement('option');
+    opt.value = s.sourceId;
+    opt.textContent = sourceLabel_(s);
+    if (s.sourceId === ctx.sourceId) opt.selected = true;
+    els.sourceSelect.appendChild(opt);
+  });
+  els.sourceSelect.disabled = editor.allSources.length <= 1;
+}
+
 function render() {
-  const title =
-    (editor.source.citationFieldsParsed && editor.source.citationFieldsParsed.title) ||
-    editor.source.scrapedTitle || '(untitled)';
-  els.title.textContent = title;
+  // Keep the select label in sync with whatever's currently shown — citation
+  // title edits should ripple into the dropdown option text.
+  if (editor.source) {
+    const opt = els.sourceSelect.querySelector('option[value="' + ctx.sourceId + '"]');
+    if (opt) opt.textContent = sourceLabel_(editor.source);
+  }
 
   els.evHeader.textContent = 'Evidence (' + editor.highlights.length + ')';
 
@@ -73,7 +121,8 @@ function render() {
 }
 
 function renderEmpty(message) {
-  els.title.textContent = '';
+  els.sourceSelect.innerHTML = '<option>(no source)</option>';
+  els.sourceSelect.disabled = true;
   els.citation.innerHTML = '';
   els.filter.innerHTML = '';
   els.evidence.innerHTML = '<div class="sb-empty">' + esc_(message) + '</div>';
