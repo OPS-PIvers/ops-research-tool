@@ -207,3 +207,64 @@ function consoleUnarchiveProject(projectId) {
   unarchiveProject_(projectId);
   return { ok: true, projectId };
 }
+
+/**
+ * Per-project dashboard data. Returns precomputed aggregates per student
+ * (no raw highlight/source data crosses the wire for the dashboard).
+ *
+ * Teacher: only sees students whose Class ∈ classes they teach AND ∈
+ * project.memberClasses. Admin: sees all students in the project.
+ */
+function consoleGetProjectDashboard(projectId) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  const bundle = getBundle_(project.bundleId);
+
+  const projectClasses = projectClassList_(project);
+  const teacherClasses = isAdmin_(staff) ? null : listClassesTaughtBy_(actorEmail);
+  const scopedClasses = isAdmin_(staff)
+    ? projectClasses
+    : projectClasses.filter((c) => teacherClasses.indexOf(c) >= 0);
+
+  const rosterRows = readAllAsObjects_(
+    getTab_(SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID), TABS.ROSTER),
+    HEADERS.ROSTER
+  );
+  const enrolled = rosterRows.filter(
+    (r) => r.Class && scopedClasses.indexOf(String(r.Class).trim()) >= 0
+  );
+
+  const students = enrolled.map((r) => {
+    const sources = readSourcesForActor_(r.Email, projectId);
+    const highlights = readHighlightsForActor_(r.Email, projectId);
+    const agg = aggregateStudent_(sources, highlights, bundle);
+    return {
+      email: r.Email,
+      name: String(r.Name || r.Email),
+      class: String(r.Class || ''),
+      categoryMix: agg.categoryMix,
+      sourceCount: agg.sourceCount,
+      highlightCount: agg.highlightCount,
+      completion: agg.completion,
+      gaps: agg.gaps,
+      lastActivity: agg.lastActivity,
+    };
+  });
+
+  return {
+    ok: true,
+    project: {
+      projectId: project.projectId,
+      name: project.name,
+      schoolYear: project.schoolYear,
+      bundleName: bundle ? bundle.name : '',
+      memberClasses: projectClasses,
+      scopedClasses,
+    },
+    students,
+    asOf: nowIso_(),
+  };
+}

@@ -499,3 +499,75 @@ function devTestConsoleCreateProject() {
 
   console.log(pass + '/' + (pass + fail) + ' passed');
 }
+
+/**
+ * Seeds 2 students with different activity patterns in the Dev Project,
+ * then calls consoleGetProjectDashboard and asserts the aggregates land
+ * with the expected per-student shapes.
+ *
+ * The "test students" use the caller's email + unique sourceIds so they
+ * land in the caller's own student sheet — devSeedDevProject already
+ * sets the caller up in class "DEV".
+ */
+function devTestConsoleDashboardEndToEnd() {
+  const project = devSeedDevProject();
+  const me = Session.getEffectiveUser().getEmail();
+  const ss = findOrCreateStudentSheet_(me, project);
+  const bundle = listBundles_().find((b) => b.bundleId === project.bundleId);
+  if (!bundle) throw new Error('Bundle missing — run setup()');
+
+  // Seed a fresh source + 3 highlights in different categories.
+  const sourceId = uuid_();
+  upsertSource_(ss, {
+    sourceId, projectId: project.projectId,
+    rawUrl: 'https://devtest.example.com/' + sourceId,
+    scrapedTitle: 'devTest Source',
+    primarySecondary: 'primary',
+    annotation: 'devTest annotation.',
+    citationFields: JSON.stringify({
+      title: 'devTest Source',
+      url: 'https://devtest.example.com/' + sourceId,
+    }),
+    createdByEmail: me,
+  });
+  const cats = [bundle.label1, bundle.label2, bundle.label1];   // 2 in cat1, 1 in cat2
+  cats.forEach((label) => upsertHighlight_(ss, {
+    highlightId: uuid_(), sourceId, projectId: project.projectId,
+    primaryCategory: label,
+    highlightedText: 'devTest highlight in ' + label,
+    createdByEmail: me,
+  }));
+
+  // Act.
+  const resp = consoleGetProjectDashboard(project.projectId);
+
+  let pass = 0, fail = 0;
+  const check = (label, cond) => {
+    if (cond) { pass++; console.log('PASS ' + label); }
+    else      { fail++; console.log('FAIL ' + label); }
+  };
+
+  check('resp.ok',                         resp && resp.ok === true);
+  check('project shape returned',          !!resp.project);
+  check('asOf present',                    !!resp.asOf);
+  check('students is an array',            Array.isArray(resp.students));
+  check('≥1 student returned',             resp.students.length >= 1);
+
+  const meRow = resp.students.find((s) => s.email === me);
+  check('caller appears as a student',     !!meRow);
+  if (meRow) {
+    check('meRow.categoryMix length 5',    meRow.categoryMix && meRow.categoryMix.length === 5);
+    // The devTest source contributes 2 highlights in cat1 + 1 in cat2.
+    // Earlier devTestRoundTrip / devTestSourceDedup may have seeded other
+    // highlights — assert that meRow.categoryMix[0].count ≥ 2.
+    check('cat1 count ≥ 2',                meRow.categoryMix[0].count >= 2);
+    check('cat2 count ≥ 1',                meRow.categoryMix[1].count >= 1);
+    check('sourceCount ≥ 1',               meRow.sourceCount >= 1);
+    check('highlightCount ≥ 3',            meRow.highlightCount >= 3);
+    check('completion shape correct',      meRow.completion && typeof meRow.completion.percent === 'number');
+    check('gaps shape correct',            meRow.gaps && typeof meRow.gaps.citation === 'number');
+    check('lastActivity present',          !!meRow.lastActivity);
+  }
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
