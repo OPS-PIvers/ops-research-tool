@@ -673,3 +673,71 @@ function adminDeleteStaffRow(email) {
   tab.deleteRow(rowIdx);
   return { ok: true, email: target };
 }
+
+// ============================================================
+// Archive school year
+// ============================================================
+
+/**
+ * Distinct schoolYear strings from currently-active projects, sorted
+ * descending (so newest year floats to the top of the dropdown).
+ */
+function adminListArchivableYears() {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  const set = {};
+  listProjects_().forEach((p) => {
+    if (p.status === PROJECT_STATUS.ACTIVE && p.schoolYear) set[p.schoolYear] = true;
+  });
+  return { ok: true, years: Object.keys(set).sort().reverse() };
+}
+
+/**
+ * The active projects in the given year + a summary row count, so the
+ * UI can show "this will affect N projects" before commit.
+ */
+function adminPreviewArchiveYear(schoolYear) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!schoolYear) throw new Error('schoolYear required');
+
+  const projects = listProjects_().filter(
+    (p) => p.schoolYear === schoolYear && p.status === PROJECT_STATUS.ACTIVE
+  );
+
+  // Roster-side student counts (no per-Sheet opens).
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const rosterRows = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER);
+
+  const out = projects.map((p) => {
+    const classes = projectClassList_(p);
+    const count = rosterRows.filter(
+      (r) => r.Class && classes.indexOf(String(r.Class).trim()) >= 0
+    ).length;
+    return {
+      projectId: p.projectId,
+      name: p.name,
+      memberClasses: classes,
+      studentCount: count,
+    };
+  });
+  return { ok: true, schoolYear, projects: out };
+}
+
+/**
+ * Bulk archive every active project in the given year. Confirm phrase
+ * must equal `ARCHIVE <schoolYear>` exactly (server re-checks client
+ * gating).
+ *
+ * Calls the shared archiveSchoolYear_ helper in 65_lifecycle.js.
+ */
+function adminArchiveSchoolYear(schoolYear, confirmPhrase) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!schoolYear) throw new Error('schoolYear required');
+  const expected = 'ARCHIVE ' + schoolYear;
+  if (String(confirmPhrase || '') !== expected) {
+    throw new Error('Confirm phrase mismatch — expected "' + expected + '"');
+  }
+  return archiveSchoolYear_(schoolYear, actorEmail);
+}

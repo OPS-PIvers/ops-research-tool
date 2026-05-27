@@ -265,7 +265,15 @@ function consoleGetProjectDashboard(projectId) {
     };
   });
 
-  return {
+  const unarchive = latestUnarchiveFor_(project.projectId);
+  const banner = (function () {
+    if (!unarchive) return undefined;
+    const ageMs = Date.now() - new Date(unarchive.at).getTime();
+    if (ageMs < 0 || ageMs > 7 * 24 * 3600 * 1000) return undefined;
+    return { eventId: unarchive.eventId, actor: unarchive.actor, at: unarchive.at };
+  })();
+
+  const resp = {
     ok: true,
     project: {
       projectId: project.projectId,
@@ -278,6 +286,8 @@ function consoleGetProjectDashboard(projectId) {
     students,
     asOf: nowIso_(),
   };
+  if (banner) resp.recentUnarchive = banner;
+  return resp;
 }
 
 /**
