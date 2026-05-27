@@ -18,6 +18,8 @@ const state = {
   lastDataJson: null,           // JSON of last sidebarGetProjectData response (polling diff)
   pollHandle: null,             // setInterval handle for the modal-open polling loop
   pollUnchangedTicks: 0,        // bounded fallback stop counter
+  openingSourceId: null,        // sourceId of a source card whose "Open in editor" click is in flight
+  openingHighlightId: null,     // highlightId of a highlight row whose "Open in editor" click is in flight
 };
 
 const els = {
@@ -406,7 +408,20 @@ function renderSource(source) {
     card.appendChild(hl);
   }
 
+  if (state.openingSourceId === source.sourceId) {
+    card.appendChild(makeCardOverlay_());
+  }
+
   return card;
+}
+
+function makeCardOverlay_() {
+  const o = document.createElement('div');
+  o.className = 'sb-card__overlay';
+  const sp = document.createElement('div');
+  sp.className = 'sb-loading__spinner';
+  o.appendChild(sp);
+  return o;
 }
 
 function renderSourceFilterRow(source) {
@@ -502,6 +517,10 @@ function renderHighlight(source, h) {
   actions.appendChild(openInEditor);
   row.appendChild(actions);
 
+  if (state.openingHighlightId === h.highlightId) {
+    row.appendChild(makeCardOverlay_());
+  }
+
   return row;
 }
 
@@ -528,13 +547,25 @@ function truncate_(s, n) {
 function openSourceEditor_(sourceId, focusHighlightId) {
   state.modalOpenForSourceId = sourceId;
   state.lastDataJson = JSON.stringify({ sources: state.sources, highlights: state.highlights });
+  // Track which card to overlay with the loading spinner. Cleared on success/failure.
+  if (focusHighlightId) state.openingHighlightId = focusHighlightId;
+  else state.openingSourceId = sourceId;
   startEditorPolling_();
   setStatus('Opening editor…');
+  render();
   google.script.run
-    .withSuccessHandler(() => setStatus(''))
+    .withSuccessHandler(() => {
+      state.openingSourceId = null;
+      state.openingHighlightId = null;
+      setStatus('');
+      render();
+    })
     .withFailureHandler((e) => {
       state.modalOpenForSourceId = null;
+      state.openingSourceId = null;
+      state.openingHighlightId = null;
       stopEditorPolling_();
+      render();
       onFail('opening editor')(e);
     })
     .sidebarOpenSourceEditor(state.projectId, sourceId, focusHighlightId || '');
