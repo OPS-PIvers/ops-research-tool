@@ -13,7 +13,10 @@ function devSeedDevProject() {
   const rosterSs = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
   const rosterTab = getTab_(rosterSs, TABS.ROSTER);
   if (findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', me) < 0) {
-    appendRow_(rosterTab, HEADERS.ROSTER, { Name: 'Dev Owner', Email: me, Class: 'DEV', Teacher: me });
+    appendRow_(rosterTab, HEADERS.ROSTER, {
+      ID: '', First: 'Dev', Last: 'Owner', Email: me, Class: 'DEV',
+      Teacher: 'Dev Owner', TeacherEmail: me,
+    });
   }
   // Add owner to staff as admin if missing.
   const staffTab = getTab_(rosterSs, TABS.STAFF);
@@ -719,10 +722,10 @@ function devTestAdminEmailChange() {
 
   adminAddRosterRow({First:'Rename', Last:'Probe', Email:oldE, Class:'DEV', Teacher:'Paul', TeacherEmail: getActorEmail_()});
   // Provision Sheet + populate one source + one highlight with createdByEmail=oldE.
-  const sheet = findOrCreateStudentSheet_(oldE, dev.project);
+  const sheet = findOrCreateStudentSheet_(oldE, dev);
   upsertSource_(sheet, {
     sourceId: 'rename-src',
-    projectId: dev.project.projectId,
+    projectId: dev.projectId,
     normalizedUrl: 'https://example.com/rename',
     rawUrl: 'https://example.com/rename',
     accessDate: nowIso_(),
@@ -734,13 +737,13 @@ function devTestAdminEmailChange() {
   upsertHighlight_(sheet, {
     highlightId: 'rename-hl',
     sourceId: 'rename-src',
-    projectId: dev.project.projectId,
+    projectId: dev.projectId,
     primaryCategory: 'Background',
     highlightedText: 'rename test',
     createdByEmail: oldE,
     createdAt: nowIso_(),
   });
-  setUserPref_(oldE, 'activeProjectId', dev.project.projectId);
+  setUserPref_(oldE, 'activeProjectId', dev.projectId);
 
   const result = adminChangeStudentEmail(oldE, newE);
   check('result.ok', result.ok === true);
@@ -753,7 +756,7 @@ function devTestAdminEmailChange() {
   check('new email has Sheet', found.length === 1);
 
   // Confirm pref carried over.
-  check('pref carried over', getUserPref_(newE, 'activeProjectId') === dev.project.projectId);
+  check('pref carried over', getUserPref_(newE, 'activeProjectId') === dev.projectId);
   check('old pref gone',     getUserPref_(oldE, 'activeProjectId') === null);
 
   // Cleanup.

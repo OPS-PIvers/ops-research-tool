@@ -40,11 +40,6 @@ function isStaff_(email) {
   return !!e;
 }
 
-function isAdmin_(email) {
-  const e = getStaffEntry_(email);
-  return !!e && e.Role === ROLES.ADMIN;
-}
-
 /**
  * Throws 'Not authorized' if the caller isn't on Staff at all, or
  * 'Admin only' if the caller is staff but not an admin. Returns the
