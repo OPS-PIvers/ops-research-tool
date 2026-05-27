@@ -992,4 +992,80 @@ select, input, textarea { font: inherit; }
 }
 .admin-staff__role:hover { border-color: #dadce0; background: #fff; }
 .admin-staff__role:disabled { color: #5f6368; cursor: not-allowed; }
+
+.admin-lifecycle {
+  max-width: 720px;
+  padding: 16px 0;
+}
+.admin-lifecycle__picker {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding-bottom: 16px;
+}
+.admin-lifecycle__picker label {
+  font-size: 14px;
+  color: #3c4043;
+}
+.admin-lifecycle__year {
+  padding: 6px 10px;
+  font: 14px 'Roboto', sans-serif;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+}
+.admin-lifecycle__head {
+  font-size: 14px;
+  color: #3c4043;
+  padding-bottom: 8px;
+  font-weight: 500;
+}
+.admin-lifecycle__list {
+  border: 1px solid #dadce0;
+  border-radius: 6px;
+  background: #f8f9fa;
+}
+.admin-lifecycle__item {
+  padding: 12px 16px;
+  border-bottom: 1px solid #e8eaed;
+}
+.admin-lifecycle__item:last-child { border-bottom: 0; }
+.admin-lifecycle__name { font-weight: 500; }
+.admin-lifecycle__meta { font-size: 13px; color: #5f6368; padding-top: 2px; }
+.admin-lifecycle__explain {
+  padding: 16px 0;
+  font-size: 14px;
+  color: #3c4043;
+}
+.admin-lifecycle__explain ul { margin: 8px 0 0 0; padding-left: 24px; }
+.admin-lifecycle__explain code { background: #f1f3f4; padding: 1px 4px; border-radius: 3px; }
+
+.admin-lifecycle__phrase-label { font-size: 14px; padding-bottom: 6px; }
+.admin-lifecycle__phrase-label code {
+  background: #e8eaed; padding: 2px 6px; border-radius: 3px;
+  color: #ad2122; font-weight: 600; letter-spacing: 0.5px;
+}
+.admin-lifecycle__phrase-input {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  font: 14px 'Roboto Mono', monospace;
+  box-sizing: border-box;
+}
+.admin-lifecycle__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 16px;
+}
+.admin-lifecycle__errors {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #e7c068;
+  background: #fff5e0;
+  border-radius: 4px;
+}
+.admin-lifecycle__errors-head { color: #b06000; font-weight: 500; padding-bottom: 6px; }
+.admin-lifecycle__errors ul { margin: 0; padding-left: 24px; font-size: 13px; color: #3c4043; }
 </style>

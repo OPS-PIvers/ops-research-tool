@@ -1075,8 +1075,193 @@ function openDeleteStaffModal_(r, host) {
 }
 
 function renderAdminLifecycle_(main) {
-  // Implemented in Task 17.
-  main.innerHTML = '<div class="console-empty">Archive School Year — coming in Task 17.</div>';
+  main.appendChild(buildAdminBreadcrumb_('Archive school year', null));
+
+  const wrap = document.createElement('div');
+  wrap.className = 'admin-lifecycle';
+  main.appendChild(wrap);
+
+  // Year picker
+  const pickerRow = document.createElement('div');
+  pickerRow.className = 'admin-lifecycle__picker';
+  pickerRow.innerHTML = '<label>Pick a school year to archive:</label>';
+  const sel = document.createElement('select');
+  sel.className = 'admin-lifecycle__year';
+  sel.disabled = true;
+  pickerRow.appendChild(sel);
+  wrap.appendChild(pickerRow);
+
+  const previewHost = document.createElement('div');
+  previewHost.className = 'admin-lifecycle__preview';
+  wrap.appendChild(previewHost);
+
+  const confirmHost = document.createElement('div');
+  confirmHost.className = 'admin-lifecycle__confirm';
+  wrap.appendChild(confirmHost);
+
+  // Fetch years
+  google.script.run
+    .withSuccessHandler((resp) => {
+      adminLifecycle.years = resp.years || [];
+      sel.disabled = false;
+      sel.innerHTML = '';
+      if (adminLifecycle.years.length === 0) {
+        const o = document.createElement('option');
+        o.textContent = '— no active projects —';
+        o.disabled = true;
+        o.selected = true;
+        sel.appendChild(o);
+        previewHost.innerHTML = '<div class="console-empty">No active projects to archive.</div>';
+        return;
+      }
+      adminLifecycle.years.forEach((y) => {
+        const o = document.createElement('option');
+        o.value = y; o.textContent = y;
+        sel.appendChild(o);
+      });
+      sel.value = adminLifecycle.years[0];
+      onPickYear_(sel.value, previewHost, confirmHost);
+      sel.addEventListener('change', () => onPickYear_(sel.value, previewHost, confirmHost));
+    })
+    .withFailureHandler(onFail_('loading years'))
+    .adminListArchivableYears();
+}
+
+function onPickYear_(year, previewHost, confirmHost) {
+  adminLifecycle.selectedYear = year;
+  adminLifecycle.preview = null;
+  previewHost.innerHTML = '<div class="admin-skeleton">Loading…</div>';
+  confirmHost.innerHTML = '';
+  google.script.run
+    .withSuccessHandler((resp) => {
+      adminLifecycle.preview = resp;
+      renderLifecyclePreview_(previewHost, resp);
+      renderLifecycleConfirm_(confirmHost, year);
+    })
+    .withFailureHandler(onFail_('previewing year'))
+    .adminPreviewArchiveYear(year);
+}
+
+function renderLifecyclePreview_(host, preview) {
+  host.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'admin-lifecycle__head';
+  head.textContent = preview.projects.length === 0
+    ? 'No active projects for this year.'
+    : 'This will affect ' + preview.projects.length + ' project' + (preview.projects.length === 1 ? '' : 's') + ':';
+  host.appendChild(head);
+
+  if (preview.projects.length === 0) return;
+
+  const list = document.createElement('div');
+  list.className = 'admin-lifecycle__list';
+  preview.projects.forEach((p) => {
+    const item = document.createElement('div');
+    item.className = 'admin-lifecycle__item';
+    const name = document.createElement('div');
+    name.className = 'admin-lifecycle__name';
+    name.textContent = p.name;
+    const meta = document.createElement('div');
+    meta.className = 'admin-lifecycle__meta';
+    meta.textContent = p.memberClasses.join(', ') + ' · ' + p.studentCount + ' student' + (p.studentCount === 1 ? '' : 's');
+    item.appendChild(name);
+    item.appendChild(meta);
+    list.appendChild(item);
+  });
+  host.appendChild(list);
+
+  const explain = document.createElement('div');
+  explain.className = 'admin-lifecycle__explain';
+  explain.innerHTML = `
+    <strong>For each project we will:</strong>
+    <ul>
+      <li>Flip status to <code>archived</code></li>
+      <li>Move the project folder into <code>OPS Research Tool / Archived /</code></li>
+      <li>Clear any student's saved active-project preference that points here</li>
+    </ul>`;
+  host.appendChild(explain);
+}
+
+function renderLifecycleConfirm_(host, year) {
+  host.innerHTML = '';
+  if (!adminLifecycle.preview || adminLifecycle.preview.projects.length === 0) return;
+
+  const phrase = 'ARCHIVE ' + year;
+  const label = document.createElement('div');
+  label.className = 'admin-lifecycle__phrase-label';
+  label.innerHTML = 'Type <code>' + esc_(phrase) + '</code> to confirm.';
+  host.appendChild(label);
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'admin-lifecycle__phrase-input';
+  input.autocomplete = 'off';
+  input.value = adminLifecycle.confirmText || '';
+  host.appendChild(input);
+
+  const actions = document.createElement('div');
+  actions.className = 'admin-lifecycle__actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'admin-btn-secondary';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => { input.value = ''; adminLifecycle.confirmText = ''; archiveBtn.disabled = true; });
+  const archiveBtn = document.createElement('button');
+  archiveBtn.className = 'admin-modal__danger';
+  archiveBtn.textContent = 'Archive ' + adminLifecycle.preview.projects.length + ' project' + (adminLifecycle.preview.projects.length === 1 ? '' : 's');
+  archiveBtn.disabled = (input.value !== phrase);
+
+  input.addEventListener('input', () => {
+    adminLifecycle.confirmText = input.value;
+    archiveBtn.disabled = (input.value !== phrase);
+  });
+
+  archiveBtn.addEventListener('click', () => {
+    archiveBtn.disabled = true;
+    archiveBtn.textContent = '…';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        const arch = (resp.archived || []).length;
+        const err = (resp.errors || []).length;
+        const msg = arch + ' archived' + (err > 0 ? ', ' + err + ' had errors' : '') + '.';
+        setStatus(msg, err > 0 ? 'bad' : 'good', 5000);
+        if (err > 0) {
+          renderLifecycleErrors_(host, resp.errors);
+        } else {
+          // Refresh.
+          adminLifecycle.years = null;
+          adminLifecycle.preview = null;
+          adminLifecycle.confirmText = '';
+          applyHash_();
+        }
+      })
+      .withFailureHandler((e) => {
+        archiveBtn.disabled = false;
+        archiveBtn.textContent = 'Archive';
+        setStatus(String(e && e.message || e), 'bad', 5000);
+      })
+      .adminArchiveSchoolYear(year, phrase);
+  });
+
+  actions.appendChild(cancel);
+  actions.appendChild(archiveBtn);
+  host.appendChild(actions);
+}
+
+function renderLifecycleErrors_(host, errors) {
+  const wrap = document.createElement('div');
+  wrap.className = 'admin-lifecycle__errors';
+  const head = document.createElement('div');
+  head.className = 'admin-lifecycle__errors-head';
+  head.textContent = errors.length + ' projects had errors:';
+  wrap.appendChild(head);
+  const list = document.createElement('ul');
+  errors.forEach((e) => {
+    const li = document.createElement('li');
+    li.textContent = (e.projectId || '?') + ' [' + e.step + ']: ' + e.error;
+    list.appendChild(li);
+  });
+  wrap.appendChild(list);
+  host.appendChild(wrap);
 }
 
 // ---------- Shared typed-confirm modal helper ----------
