@@ -443,4 +443,96 @@ select, input, textarea { font: inherit; }
 }
 .dd-comp-fill { height: 100%; }
 .dd-comp-pct { font-size: 12px; color: var(--c-muted); text-align: right; }
+
+/* ---- Drill-down: sources & highlights viewer ---- */
+.dd-sources {
+  background: var(--c-bg);
+  border: 1px solid var(--c-line);
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin-top: 20px;
+}
+.dd-sources__title {
+  font-family: var(--font-display);
+  font-size: 14px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--c-muted);
+  margin: 0 0 16px;
+}
+.dd-source-card {
+  border: 1px solid var(--c-line);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--c-soft);
+}
+.dd-source-card__head {
+  display: flex; align-items: baseline; gap: 8px;
+  flex-wrap: wrap;
+}
+.dd-source-card__title {
+  font-size: 15px; font-weight: 500; color: var(--c-text);
+  flex: 1; min-width: 0;
+}
+.dd-source-card__chip {
+  font-size: 10px; padding: 2px 6px; border-radius: 999px;
+}
+.dd-source-card__chip--primary   { background: #e6f4ea; color: var(--c-good); }
+.dd-source-card__chip--secondary { background: #e8f0fe; color: var(--c-accent); }
+.dd-source-card__chip--unset     { background: #fce8e6; color: var(--c-bad); }
+.dd-source-card__count {
+  font-size: 11px; color: var(--c-muted);
+}
+.dd-source-card__flags {
+  display: inline-flex; gap: 4px; margin-left: auto;
+}
+.dd-source-card__flag {
+  font-size: 10px; padding: 2px 6px; border-radius: 999px;
+  background: var(--c-bg); border: 1px solid var(--c-line);
+  color: var(--c-muted);
+}
+.dd-source-card__flag--complete { background: #e6f4ea; color: var(--c-good); border-color: transparent; }
+.dd-source-card__flag--gap      { background: #fce8e6; color: var(--c-bad); border-color: transparent; }
+.dd-source-card__citation {
+  font-size: 12px; color: var(--c-text); margin-top: 8px;
+  background: var(--c-bg); padding: 8px 10px; border-radius: 4px;
+  border: 1px solid var(--c-line);
+}
+.dd-source-card__citation em { font-style: italic; }
+.dd-source-card__annotation {
+  font-size: 12px; color: var(--c-text); margin-top: 6px; font-style: italic;
+}
+.dd-cat-group {
+  margin-top: 8px;
+}
+.dd-cat-group__title {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--c-muted); margin: 6px 0 4px;
+}
+.dd-hl {
+  position: relative;
+  padding: 6px 8px 6px 14px;
+  background: var(--c-bg);
+  border: 1px solid var(--c-line); border-radius: 4px;
+  font-size: 12px; line-height: 1.4;
+  margin-bottom: 4px;
+}
+.dd-hl__bar {
+  position: absolute; top: 6px; bottom: 6px; left: 4px; width: 4px; border-radius: 2px;
+}
+.dd-hl__note {
+  font-style: italic; color: var(--c-muted); font-size: 11px; margin-top: 4px;
+}
+.dd-source-card__expand {
+  background: transparent; border: none; color: var(--c-accent);
+  font-size: 12px; padding: 4px 0;
+}
+.dd-show-all {
+  margin-top: 12px; text-align: center;
+}
+.dd-show-all button {
+  background: var(--c-bg); border: 1px solid var(--c-line);
+  border-radius: 4px; padding: 8px 14px;
+  color: var(--c-accent); font-size: 13px;
+}
 </style>

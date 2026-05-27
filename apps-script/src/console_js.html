@@ -1050,10 +1050,189 @@ function paintStudentDetail_() {
   if (!body) return;
   body.innerHTML = '';
   body.appendChild(buildDrillGrid_());
+  body.appendChild(buildSourcesViewer_());
 
   // Chart blocks need their canvas elements in the DOM first. Build the
   // Chart.js instances after this microtask so the canvas refs resolve.
   setTimeout(buildDrillCharts_, 0);
+}
+
+const SOURCES_DEFAULT_VISIBLE = 5;
+const SOURCES_DEFAULT_HL_COLLAPSE = 8;
+
+function buildSourcesViewer_() {
+  const d = studentDetail.data;
+  const wrap = document.createElement('div');
+  wrap.className = 'dd-sources';
+  const title = document.createElement('h3');
+  title.className = 'dd-sources__title';
+  title.textContent = 'Sources & highlights';
+  wrap.appendChild(title);
+
+  const showAll = !!studentDetail.showAllSources;
+  const visible = showAll ? d.sources : d.sources.slice(0, SOURCES_DEFAULT_VISIBLE);
+
+  if (visible.length === 0) {
+    const e = document.createElement('div');
+    e.className = 'console-empty';
+    e.textContent = 'No sources yet.';
+    e.style.padding = '20px';
+    wrap.appendChild(e);
+    return wrap;
+  }
+
+  visible.forEach((s) => wrap.appendChild(buildSourceCard_(s)));
+
+  if (!showAll && d.sources.length > SOURCES_DEFAULT_VISIBLE) {
+    const more = document.createElement('div');
+    more.className = 'dd-show-all';
+    const btn = document.createElement('button');
+    btn.textContent = 'Show all (' + d.sources.length + ')';
+    btn.addEventListener('click', () => {
+      studentDetail.showAllSources = true;
+      paintStudentDetail_();
+    });
+    more.appendChild(btn);
+    wrap.appendChild(more);
+  }
+  return wrap;
+}
+
+function buildSourceCard_(s) {
+  const card = document.createElement('div');
+  card.className = 'dd-source-card';
+
+  // Head: title + ps chip + count + completion flags
+  const head = document.createElement('div');
+  head.className = 'dd-source-card__head';
+  const t = document.createElement('div');
+  t.className = 'dd-source-card__title';
+  t.textContent = (s.citationFieldsParsed && s.citationFieldsParsed.title) || s.scrapedTitle || '(untitled)';
+  head.appendChild(t);
+
+  const chip = document.createElement('span');
+  chip.className = 'dd-source-card__chip dd-source-card__chip--' + s.primarySecondary;
+  chip.textContent = s.primarySecondary;
+  head.appendChild(chip);
+
+  const cnt = document.createElement('span');
+  cnt.className = 'dd-source-card__count';
+  cnt.textContent = s.highlights.length + ' highlight' + (s.highlights.length === 1 ? '' : 's');
+  head.appendChild(cnt);
+
+  const flags = document.createElement('div');
+  flags.className = 'dd-source-card__flags';
+  flags.appendChild(makeFlagChip_('cit', s.completionFlags.citation));
+  flags.appendChild(makeFlagChip_('cls', s.completionFlags.classification));
+  flags.appendChild(makeFlagChip_('ann', s.completionFlags.annotation));
+  head.appendChild(flags);
+
+  card.appendChild(head);
+
+  // Citation (with italics)
+  if (s.formattedCitation && s.formattedCitation.text) {
+    const cite = document.createElement('div');
+    cite.className = 'dd-source-card__citation';
+    cite.innerHTML = renderCitationHtml_(s.formattedCitation);
+    card.appendChild(cite);
+  }
+
+  // Annotation (if present)
+  if (s.annotation) {
+    const ann = document.createElement('div');
+    ann.className = 'dd-source-card__annotation';
+    ann.textContent = '"' + s.annotation + '"';
+    card.appendChild(ann);
+  }
+
+  // Highlights grouped by primary category. Collapsed if many.
+  if (s.highlights.length > 0) {
+    const collapseByDefault = s.highlights.length > SOURCES_DEFAULT_HL_COLLAPSE;
+    const key = 'expand:' + s.sourceId;
+    const expanded = studentDetail.expanded && studentDetail.expanded[key];
+    if (collapseByDefault && !expanded) {
+      const btn = document.createElement('button');
+      btn.className = 'dd-source-card__expand';
+      btn.textContent = 'Show ' + s.highlights.length + ' highlights';
+      btn.addEventListener('click', () => {
+        studentDetail.expanded = studentDetail.expanded || {};
+        studentDetail.expanded[key] = true;
+        paintStudentDetail_();
+      });
+      card.appendChild(btn);
+    } else {
+      card.appendChild(buildHighlightGroups_(s));
+    }
+  }
+
+  return card;
+}
+
+function makeFlagChip_(kind, complete) {
+  const chip = document.createElement('span');
+  chip.className = 'dd-source-card__flag ' + (complete ? 'dd-source-card__flag--complete' : 'dd-source-card__flag--gap');
+  chip.textContent = (complete ? '✓ ' : '✗ ') + kind;
+  return chip;
+}
+
+function buildHighlightGroups_(s) {
+  const wrap = document.createElement('div');
+  const groups = {};
+  s.highlights.forEach((h) => {
+    const k = h.primaryCategory || '(no category)';
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(h);
+  });
+  Object.keys(groups).forEach((cat) => {
+    const g = document.createElement('div');
+    g.className = 'dd-cat-group';
+    const gt = document.createElement('div');
+    gt.className = 'dd-cat-group__title';
+    gt.textContent = cat + ': ' + groups[cat].length + ' highlight' + (groups[cat].length === 1 ? '' : 's');
+    g.appendChild(gt);
+    groups[cat].forEach((h) => g.appendChild(buildHighlightItem_(h)));
+    wrap.appendChild(g);
+  });
+  return wrap;
+}
+
+function buildHighlightItem_(h) {
+  const row = document.createElement('div');
+  row.className = 'dd-hl';
+  const bar = document.createElement('div');
+  bar.className = 'dd-hl__bar';
+  bar.style.backgroundColor = colorForCategoryInDrill_(h.primaryCategory) || '#dadce0';
+  row.appendChild(bar);
+  const txt = document.createElement('div');
+  txt.textContent = h.highlightedText || '';
+  row.appendChild(txt);
+  if (h.note) {
+    const note = document.createElement('div');
+    note.className = 'dd-hl__note';
+    note.textContent = h.note;
+    row.appendChild(note);
+  }
+  return row;
+}
+
+function colorForCategoryInDrill_(label) {
+  if (!studentDetail.data || !studentDetail.data.aggregates) return null;
+  const found = studentDetail.data.aggregates.categoryMix.find((m) => m.label === label);
+  return found ? found.color : null;
+}
+
+function renderCitationHtml_(formatted) {
+  const text = formatted.text || '';
+  const italics = formatted.italics || [];
+  let html = '';
+  let cursor = 0;
+  italics.forEach(([s, e]) => {
+    if (s > cursor) html += esc_(text.slice(cursor, s));
+    html += '<em>' + esc_(text.slice(s, e)) + '</em>';
+    cursor = e;
+  });
+  if (cursor < text.length) html += esc_(text.slice(cursor));
+  return html;
 }
 
 function buildDrillGrid_() {
