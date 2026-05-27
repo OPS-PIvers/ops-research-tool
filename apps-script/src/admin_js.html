@@ -1,0 +1,229 @@
+<script>
+// ============================================================
+// OPS Research Tool — Admin views
+//
+// Loaded alongside console_js.html. Shares the `state`, `setStatus`,
+// `onFail_`, `esc_`, `navigate_` globals defined there.
+//
+// Adds three views: ADMIN_ROSTER, ADMIN_STAFF, ADMIN_LIFECYCLE.
+// Tasks 14-17 fill in the view bodies.
+// ============================================================
+
+// ---------- Shared admin state objects ----------
+
+const adminRoster = {
+  rows: null,
+  search: '',
+  classFilter: 'All',
+  teacherFilter: 'All',
+  sort: { column: 'Last', dir: 'asc' },
+  openMenuEmail: null,
+};
+
+const adminStaff = {
+  rows: null,
+  openMenuEmail: null,
+};
+
+const adminLifecycle = {
+  years: null,
+  selectedYear: null,
+  preview: null,
+  confirmText: '',
+};
+
+// ---------- View entry points (stubs replaced by Tasks 14-17) ----------
+
+function renderAdminRoster_(main) {
+  // Implemented in Task 14.
+  main.innerHTML = '<div class="console-empty">Admin Roster — coming in Task 14.</div>';
+}
+
+function renderAdminStaff_(main) {
+  // Implemented in Task 16.
+  main.innerHTML = '<div class="console-empty">Admin Staff — coming in Task 16.</div>';
+}
+
+function renderAdminLifecycle_(main) {
+  // Implemented in Task 17.
+  main.innerHTML = '<div class="console-empty">Archive School Year — coming in Task 17.</div>';
+}
+
+// ---------- Shared typed-confirm modal helper ----------
+
+/**
+ * Open a typed-confirm modal. The danger button stays disabled until the
+ * user types `args.phrase` exactly (case-sensitive). Closes on Cancel,
+ * on Esc, or after onConfirm completes.
+ *
+ * args:
+ *   title: string
+ *   bodyHtml: string (innerHTML — caller is responsible for escaping)
+ *   phrase: string                       (e.g., 'CHANGE EMAIL')
+ *   dangerLabel: string                  (button label, e.g., 'Change email')
+ *   onConfirm: function () -> Promise|void
+ *
+ * Returns nothing.
+ */
+function typedConfirmModal_(args) {
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'admin-modal admin-modal--typed';
+
+  const header = document.createElement('div');
+  header.className = 'admin-modal__header';
+  header.textContent = args.title;
+  modal.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'admin-modal__body';
+  body.innerHTML = args.bodyHtml;
+  modal.appendChild(body);
+
+  const phrase = document.createElement('div');
+  phrase.className = 'admin-modal__phrase';
+  phrase.innerHTML = 'Type <code></code> to confirm.';
+  phrase.querySelector('code').textContent = args.phrase;
+  modal.appendChild(phrase);
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'admin-modal__input';
+  input.autocomplete = 'off';
+  modal.appendChild(input);
+
+  const actions = document.createElement('div');
+  actions.className = 'admin-modal__actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'admin-modal__cancel';
+  cancel.textContent = 'Cancel';
+  const confirm = document.createElement('button');
+  confirm.className = 'admin-modal__danger';
+  confirm.textContent = args.dangerLabel;
+  confirm.disabled = true;
+  actions.appendChild(cancel);
+  actions.appendChild(confirm);
+  modal.appendChild(actions);
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const close = () => {
+    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    document.removeEventListener('keydown', escListener);
+  };
+  const escListener = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', escListener);
+
+  input.addEventListener('input', () => {
+    confirm.disabled = (input.value !== args.phrase);
+  });
+
+  cancel.addEventListener('click', close);
+  confirm.addEventListener('click', () => {
+    confirm.disabled = true;
+    confirm.textContent = '…';
+    const ret = args.onConfirm();
+    if (ret && typeof ret.then === 'function') {
+      ret.then(close).catch((e) => {
+        confirm.disabled = false;
+        confirm.textContent = args.dangerLabel;
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      });
+    } else {
+      close();
+    }
+  });
+
+  setTimeout(() => input.focus(), 50);
+}
+
+/**
+ * Open a plain (no typed phrase) confirm modal. Cleaner than the
+ * typed shell when the operation is reversible (e.g., unarchive,
+ * delete row with no work).
+ */
+function plainConfirmModal_(args) {
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'admin-modal';
+
+  const header = document.createElement('div');
+  header.className = 'admin-modal__header';
+  header.textContent = args.title;
+  modal.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'admin-modal__body';
+  body.innerHTML = args.bodyHtml;
+  modal.appendChild(body);
+
+  const actions = document.createElement('div');
+  actions.className = 'admin-modal__actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'admin-modal__cancel';
+  cancel.textContent = 'Cancel';
+  const confirm = document.createElement('button');
+  confirm.className = args.danger ? 'admin-modal__danger' : 'admin-modal__primary';
+  confirm.textContent = args.confirmLabel || 'OK';
+  actions.appendChild(cancel);
+  actions.appendChild(confirm);
+  modal.appendChild(actions);
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const close = () => {
+    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    document.removeEventListener('keydown', escListener);
+  };
+  const escListener = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', escListener);
+  cancel.addEventListener('click', close);
+  confirm.addEventListener('click', () => {
+    confirm.disabled = true;
+    confirm.textContent = '…';
+    const ret = args.onConfirm();
+    if (ret && typeof ret.then === 'function') {
+      ret.then(close).catch((e) => {
+        confirm.disabled = false;
+        confirm.textContent = args.confirmLabel || 'OK';
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      });
+    } else {
+      close();
+    }
+  });
+}
+
+// ---------- Shared helper: breadcrumb header for admin views ----------
+
+function buildAdminBreadcrumb_(label, rightContent) {
+  const wrap = document.createElement('div');
+  wrap.className = 'admin-breadcrumb';
+  const back = document.createElement('a');
+  back.className = 'admin-breadcrumb__back';
+  back.textContent = '← Admin';
+  back.href = '#/admin/roster';
+  wrap.appendChild(back);
+  const sep = document.createElement('span');
+  sep.className = 'admin-breadcrumb__sep';
+  sep.textContent = ' / ';
+  wrap.appendChild(sep);
+  const here = document.createElement('span');
+  here.className = 'admin-breadcrumb__current';
+  here.textContent = label;
+  wrap.appendChild(here);
+  if (rightContent) {
+    const right = document.createElement('div');
+    right.className = 'admin-breadcrumb__right';
+    right.appendChild(rightContent);
+    wrap.appendChild(right);
+  }
+  return wrap;
+}
+</script>
