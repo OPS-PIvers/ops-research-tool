@@ -33,11 +33,50 @@ function onContext_(ctx) {
     renderUnauthed_();
     return;
   }
-  // Real navigation comes in Task 9 (URL hash router). For now: just land
-  // on the (empty) My Projects view so the shell + header render and we
-  // can confirm the path end-to-end.
-  state.view = 'MY_PROJECTS';
+  // Set up hash routing. parseHash_ → state mutation → render.
+  window.addEventListener('hashchange', onHashChange_);
+  applyHash_();   // initial route from whatever the URL is
+}
+
+function onHashChange_() {
+  applyHash_();
+}
+
+function applyHash_() {
+  const r = parseHash_(window.location.hash);
+  state.view = r.view;
+  state.projectId = r.projectId;
+  state.studentEmail = r.studentEmail;
   renderShell_();
+}
+
+/**
+ * Parse the URL hash into a route descriptor.
+ *
+ *   ''  or '#/projects'                                 → MY_PROJECTS
+ *   '#/projects/<id>'                                   → DASHBOARD
+ *   '#/projects/<id>/students/<encodedEmail>'           → STUDENT
+ *   anything else                                       → MY_PROJECTS (default)
+ */
+function parseHash_(hash) {
+  const h = String(hash || '').replace(/^#\/?/, '');
+  if (!h || h === 'projects') return { view: 'MY_PROJECTS' };
+  const parts = h.split('/');
+  if (parts[0] !== 'projects') return { view: 'MY_PROJECTS' };
+  if (parts.length === 2)
+    return { view: 'DASHBOARD', projectId: decodeURIComponent(parts[1]) };
+  if (parts.length === 4 && parts[2] === 'students')
+    return {
+      view: 'STUDENT',
+      projectId: decodeURIComponent(parts[1]),
+      studentEmail: decodeURIComponent(parts[3]),
+    };
+  return { view: 'MY_PROJECTS' };
+}
+
+function navigate_(path) {
+  // path is a hash without the leading '#' (e.g., '/projects/<id>')
+  window.location.hash = path;
 }
 
 function renderBoot_() {
@@ -79,20 +118,36 @@ function renderShell_() {
   main.className = 'console-main';
   main.id = 'console-main';
   root.appendChild(main);
-  // Real views populate #console-main in Tasks 9+.
-  const placeholder = document.createElement('div');
-  placeholder.className = 'console-empty';
-  placeholder.textContent = 'My Projects · Dashboard · Drill-down render here in later tasks.';
-  main.appendChild(placeholder);
+  renderView_(main);
 }
+
+function renderView_(main) {
+  switch (state.view) {
+    case 'MY_PROJECTS': return renderMyProjects_(main);
+    case 'DASHBOARD':   return renderDashboard_(main);
+    case 'STUDENT':     return renderStudentDetail_(main);
+    default:
+      main.innerHTML = '<div class="console-empty">Unknown view.</div>';
+  }
+}
+
+// View render functions — placeholders filled in Tasks 10+.
+function renderMyProjects_(main)    { main.innerHTML = '<div class="console-empty">My Projects (Task 10).</div>'; }
+function renderDashboard_(main)     { main.innerHTML = '<div class="console-empty">Dashboard (Tasks 13–15).</div>'; }
+function renderStudentDetail_(main) { main.innerHTML = '<div class="console-empty">Drill-down (Tasks 16–18).</div>'; }
 
 function buildHeader_() {
   const h = document.createElement('header');
   h.className = 'console-header';
+
+  // Title — clickable to return to My Projects.
   const title = document.createElement('div');
   title.className = 'console-header__title';
   title.textContent = 'OPS Research Tool';
+  title.style.cursor = 'pointer';
+  title.addEventListener('click', () => navigate_('/projects'));
   h.appendChild(title);
+
   const actor = document.createElement('div');
   actor.className = 'console-header__actor';
   actor.innerHTML = '<strong></strong>';
