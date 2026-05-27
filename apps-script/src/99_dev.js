@@ -178,3 +178,74 @@ function devTestSourceDedup() {
   const ok = lookup.source && lookup.source.sourceId === sourceId1;
   console.log(ok ? 'PASS — same normalized URL resolved to existing sourceId' : 'FAIL — should have matched the existing source');
 }
+
+/**
+ * Tests sidebarDeleteSource:
+ *   - deletes all highlights pointing at the target source
+ *   - deletes the source row itself
+ *   - leaves other sources and their highlights untouched
+ *   - idempotent on a missing source (returns deletedSource:false, no throw)
+ */
+function devTestDeleteSource() {
+  const project = devSeedDevProject();
+  const me = Session.getEffectiveUser().getEmail();
+  const ss = findOrCreateStudentSheet_(me, project);
+
+  // Seed: one target source with 3 highlights + one control source with 1 highlight.
+  const targetSourceId = uuid_();
+  const controlSourceId = uuid_();
+  const targetHl = [uuid_(), uuid_(), uuid_()];
+  const controlHl = uuid_();
+
+  upsertSource_(ss, {
+    sourceId: targetSourceId, projectId: project.projectId,
+    rawUrl: 'https://target.example.com/page',
+    scrapedTitle: 'Target', createdByEmail: me,
+  });
+  upsertSource_(ss, {
+    sourceId: controlSourceId, projectId: project.projectId,
+    rawUrl: 'https://control.example.com/page',
+    scrapedTitle: 'Control', createdByEmail: me,
+  });
+  targetHl.forEach((hid) => upsertHighlight_(ss, {
+    highlightId: hid, sourceId: targetSourceId, projectId: project.projectId,
+    primaryCategory: 'Background', highlightedText: 'target text ' + hid,
+    createdByEmail: me,
+  }));
+  upsertHighlight_(ss, {
+    highlightId: controlHl, sourceId: controlSourceId, projectId: project.projectId,
+    primaryCategory: 'Background', highlightedText: 'control text',
+    createdByEmail: me,
+  });
+
+  // Act.
+  const result = sidebarDeleteSource(project.projectId, targetSourceId);
+  console.log('Delete result: ' + JSON.stringify(result));
+
+  // Assert response shape.
+  let pass = 0, fail = 0;
+  const check = (label, cond) => {
+    if (cond) { pass++; console.log('PASS ' + label); }
+    else      { fail++; console.log('FAIL ' + label); }
+  };
+  check('result.ok',                   result && result.ok === true);
+  check('deletedHighlights === 3',     result && result.deletedHighlights === 3);
+  check('deletedSource === true',      result && result.deletedSource === true);
+
+  // Assert sheet state.
+  const sourcesAfter    = readSourcesForActor_(me, project.projectId);
+  const highlightsAfter = readHighlightsForActor_(me, project.projectId);
+  check('target source row gone',       !sourcesAfter.find((s) => s.sourceId === targetSourceId));
+  check('control source row present',   !!sourcesAfter.find((s) => s.sourceId === controlSourceId));
+  check('zero highlights for target',   highlightsAfter.filter((h) => h.sourceId === targetSourceId).length === 0);
+  check('control highlight present',    !!highlightsAfter.find((h) => h.highlightId === controlHl));
+
+  // Idempotency: deleting again should not throw.
+  const result2 = sidebarDeleteSource(project.projectId, targetSourceId);
+  console.log('Re-delete result: ' + JSON.stringify(result2));
+  check('idempotent ok',                result2 && result2.ok === true);
+  check('idempotent deletedHighlights', result2 && result2.deletedHighlights === 0);
+  check('idempotent deletedSource',     result2 && result2.deletedSource === false);
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
