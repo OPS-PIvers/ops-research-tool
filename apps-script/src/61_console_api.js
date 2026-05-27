@@ -26,7 +26,7 @@ function consoleGetContext() {
 }
 
 /**
- * Classes whose Teacher column equals this email in the Roster.
+ * Classes whose TeacherEmail column equals this email in the Roster.
  * Distinct, trimmed, non-empty. Returns [] if the actor teaches nothing.
  */
 function listClassesTaughtBy_(actorEmail) {
@@ -34,7 +34,7 @@ function listClassesTaughtBy_(actorEmail) {
   const rows = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER);
   const set = {};
   rows.forEach((r) => {
-    if (r.Teacher && String(r.Teacher).trim().toLowerCase() === actorEmail.toLowerCase()) {
+    if (r.TeacherEmail && String(r.TeacherEmail).trim().toLowerCase() === actorEmail.toLowerCase()) {
       const cls = String(r.Class || '').trim();
       if (cls) set[cls] = true;
     }

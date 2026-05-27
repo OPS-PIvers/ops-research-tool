@@ -19,7 +19,7 @@ const TABS = {
 };
 
 const HEADERS = {
-  ROSTER: ['Name', 'Email', 'Class', 'Teacher'],
+  ROSTER: ['ID', 'First', 'Last', 'Email', 'Class', 'Teacher', 'TeacherEmail'],
   STAFF: ['Name', 'Email', 'Role'],
 
   PROJECTS: [
