@@ -879,9 +879,67 @@ function openSourceEditor_(sourceId, focusHighlightId) {
     .sidebarOpenSourceEditor(state.projectId, sourceId, focusHighlightId || '');
 }
 
-// Placeholders so calls work before Task 12 lands.
-function startEditorPolling_() { /* implemented in Task 12 */ }
-function stopEditorPolling_()  { /* implemented in Task 12 */ }
+const POLL_INTERVAL_MS = 3000;
+const POLL_MAX_UNCHANGED_TICKS = 200;   // ~10 minutes — bounded fallback stop
+
+/**
+ * While a modal is open, refetch project data every 3s and diff against
+ * the previous response. On change, update local state and re-render.
+ *
+ * Stop conditions:
+ *   (a) the sourceId the modal opened on disappears from the response
+ *       (the modal deleted the source);
+ *   (b) we hit POLL_MAX_UNCHANGED_TICKS unchanged ticks in a row (the
+ *       user closed the modal without edits and we shouldn't poll
+ *       forever).
+ */
+function startEditorPolling_() {
+  if (state.pollHandle) return;
+  state.pollUnchangedTicks = 0;
+  state.pollHandle = setInterval(pollTick_, POLL_INTERVAL_MS);
+}
+
+function stopEditorPolling_() {
+  if (!state.pollHandle) return;
+  clearInterval(state.pollHandle);
+  state.pollHandle = null;
+  state.modalOpenForSourceId = null;
+  state.pollUnchangedTicks = 0;
+}
+
+function pollTick_() {
+  if (!state.modalOpenForSourceId || !state.projectId) {
+    stopEditorPolling_();
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(onPollResponse_)
+    .withFailureHandler(() => { /* swallow transient errors; retry next tick */ })
+    .sidebarGetProjectData(state.projectId);
+}
+
+function onPollResponse_(resp) {
+  if (!resp || !resp.ok) return;
+  const json = JSON.stringify({ sources: resp.sources, highlights: resp.highlights });
+  if (json === state.lastDataJson) {
+    state.pollUnchangedTicks++;
+    if (state.pollUnchangedTicks >= POLL_MAX_UNCHANGED_TICKS) stopEditorPolling_();
+    return;
+  }
+  state.pollUnchangedTicks = 0;
+  state.lastDataJson = json;
+  state.sources = resp.sources || [];
+  state.highlights = resp.highlights || [];
+  state.confirmingDeleteId = null;
+  els.insert.disabled = state.sources.length === 0;
+  renderFilter();
+  render();
+
+  // Heuristic: if the source the modal opened on is gone, the modal closed
+  // via a source delete. Stop polling.
+  const stillExists = state.sources.some((s) => s.sourceId === state.modalOpenForSourceId);
+  if (!stillExists) stopEditorPolling_();
+}
 
 function saveSourcePatch_(source, patch) {
   const merged = Object.assign({}, patch, { sourceId: source.sourceId, projectId: state.projectId });
