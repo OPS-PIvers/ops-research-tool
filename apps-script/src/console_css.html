@@ -1,24 +1,108 @@
 <style>
+/* ---- OPS brand tokens ---- */
+/* BRAND: replace with values from anthropic-skills:ops-brand-guidelines.
+   Below are placeholders consistent with the rest of the codebase. */
 :root {
-  --c-text: #202124;
-  --c-muted: #5f6368;
-  --c-line: #dadce0;
-  --c-bg: #ffffff;
-  --c-soft: #f8f9fa;
-  --c-accent: #1a73e8;
-  --c-good: #0f9d58;
-  --c-warn: #b06000;
-  --c-bad: #d93025;
+  --c-text:   #202124;
+  --c-muted:  #5f6368;
+  --c-line:   #dadce0;
+  --c-bg:     #ffffff;
+  --c-soft:   #f8f9fa;
+  --c-accent: #1a73e8;   /* BRAND: OPS primary blue */
+  --c-good:   #0f9d58;
+  --c-warn:   #b06000;
+  --c-bad:    #d93025;
+  --c-brand-primary:   #1a73e8;  /* BRAND: replace with OPS primary */
+  --c-brand-secondary: #c5221f;  /* BRAND: replace with OPS secondary */
+  --font-display: "Lexend", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-body:    "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 * { box-sizing: border-box; }
+html, body { height: 100%; }
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-body);
   font-size: 14px;
   color: var(--c-text);
   background: var(--c-soft);
 }
+button { font: inherit; cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+select, input, textarea { font: inherit; }
+
+/* ---- Loading + boot states ---- */
 .console-boot {
   padding: 60px 24px; text-align: center; color: var(--c-muted);
 }
+.console-spinner {
+  width: 32px; height: 32px; border-radius: 50%;
+  border: 3px solid var(--c-line);
+  border-top-color: var(--c-brand-primary);
+  animation: console-spin 0.7s linear infinite;
+  margin: 0 auto 12px;
+}
+@keyframes console-spin { to { transform: rotate(360deg); } }
+
+/* ---- Top header (visible after auth) ---- */
+.console-header {
+  background: var(--c-bg);
+  border-bottom: 1px solid var(--c-line);
+  padding: 12px 24px;
+  display: flex; align-items: center; gap: 16px;
+}
+.console-header__title {
+  font-family: var(--font-display);
+  font-size: 18px; font-weight: 600;
+  flex: 1; min-width: 0;
+}
+.console-header__actor {
+  font-size: 12px; color: var(--c-muted);
+}
+.console-header__actor strong { color: var(--c-text); font-weight: 500; }
+.console-header__role-tag {
+  display: inline-block; padding: 2px 8px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  border-radius: 999px;
+  background: var(--c-soft); color: var(--c-muted);
+  margin-left: 6px;
+}
+.console-header__role-tag--admin {
+  background: #fce8e6; color: var(--c-bad);
+}
+
+/* ---- Main app area ---- */
+.console-main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+.console-empty { padding: 40px 24px; text-align: center; color: var(--c-muted); }
+
+/* ---- Not authorized panel ---- */
+.console-unauthed {
+  max-width: 480px; margin: 80px auto;
+  background: var(--c-bg);
+  border: 1px solid var(--c-line);
+  border-radius: 8px;
+  padding: 32px;
+  text-align: center;
+}
+.console-unauthed h1 {
+  font-family: var(--font-display);
+  margin: 0 0 12px; font-size: 20px; color: var(--c-text);
+}
+.console-unauthed p { color: var(--c-muted); line-height: 1.5; }
+.console-unauthed code {
+  background: var(--c-soft); padding: 1px 6px; border-radius: 3px;
+  font-size: 13px;
+}
+
+/* ---- Status pill (toasts) ---- */
+.console-status {
+  position: fixed; right: 16px; bottom: 16px;
+  padding: 8px 14px; border-radius: 999px;
+  font-size: 13px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  background: var(--c-text); color: #fff;
+  transition: opacity 0.3s;
+  z-index: 100;
+}
+.console-status--good { background: var(--c-good); }
+.console-status--bad  { background: var(--c-bad); }
+.console-status--hide { opacity: 0; pointer-events: none; }
 </style>

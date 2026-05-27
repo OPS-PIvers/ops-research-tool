@@ -1,4 +1,136 @@
 <script>
-// Stub — replaced in Task 8 with the real shell.
-document.getElementById('console-root').textContent = 'OPS Research Tool — Coming soon.';
+// ============================================================
+// OPS Research Tool — Teacher Console
+//
+// Bootstrap → consoleGetContext → render auth-gated shell or
+// "Not authorized" panel. Real screens land in Tasks 9+.
+// ============================================================
+
+const state = {
+  ctx: null,
+  view: null,            // 'MY_PROJECTS' | 'DASHBOARD' | 'STUDENT' | 'UNAUTHED' | 'BOOT'
+  projectId: null,
+  studentEmail: null,
+};
+
+const root = document.getElementById('console-root');
+
+bootstrap();
+
+function bootstrap() {
+  state.view = 'BOOT';
+  renderBoot_();
+  google.script.run
+    .withSuccessHandler(onContext_)
+    .withFailureHandler(onFail_('loading session'))
+    .consoleGetContext();
+}
+
+function onContext_(ctx) {
+  state.ctx = ctx;
+  if (!ctx || !ctx.staff) {
+    state.view = 'UNAUTHED';
+    renderUnauthed_();
+    return;
+  }
+  // Real navigation comes in Task 9 (URL hash router). For now: just land
+  // on the (empty) My Projects view so the shell + header render and we
+  // can confirm the path end-to-end.
+  state.view = 'MY_PROJECTS';
+  renderShell_();
+}
+
+function renderBoot_() {
+  root.innerHTML = '';
+  const el = document.createElement('div');
+  el.className = 'console-boot';
+  const sp = document.createElement('div');
+  sp.className = 'console-spinner';
+  el.appendChild(sp);
+  const label = document.createElement('div');
+  label.textContent = 'Loading…';
+  el.appendChild(label);
+  root.appendChild(el);
+}
+
+function renderUnauthed_() {
+  root.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'console-unauthed';
+  const h1 = document.createElement('h1');
+  h1.textContent = 'Not authorized';
+  wrap.appendChild(h1);
+  const p1 = document.createElement('p');
+  p1.textContent = 'This tool is staff-only. Sign in with your district account, or contact your district admin if you believe this is a mistake.';
+  wrap.appendChild(p1);
+  if (state.ctx && state.ctx.actor) {
+    const p2 = document.createElement('p');
+    p2.innerHTML = 'Signed in as <code></code>.';
+    p2.querySelector('code').textContent = state.ctx.actor;
+    wrap.appendChild(p2);
+  }
+  root.appendChild(wrap);
+}
+
+function renderShell_() {
+  root.innerHTML = '';
+  root.appendChild(buildHeader_());
+  const main = document.createElement('main');
+  main.className = 'console-main';
+  main.id = 'console-main';
+  root.appendChild(main);
+  // Real views populate #console-main in Tasks 9+.
+  const placeholder = document.createElement('div');
+  placeholder.className = 'console-empty';
+  placeholder.textContent = 'My Projects · Dashboard · Drill-down render here in later tasks.';
+  main.appendChild(placeholder);
+}
+
+function buildHeader_() {
+  const h = document.createElement('header');
+  h.className = 'console-header';
+  const title = document.createElement('div');
+  title.className = 'console-header__title';
+  title.textContent = 'OPS Research Tool';
+  h.appendChild(title);
+  const actor = document.createElement('div');
+  actor.className = 'console-header__actor';
+  actor.innerHTML = '<strong></strong>';
+  actor.querySelector('strong').textContent = state.ctx.staff.Name || state.ctx.actor;
+  const tag = document.createElement('span');
+  tag.className = 'console-header__role-tag' + (state.ctx.role === 'admin' ? ' console-header__role-tag--admin' : '');
+  tag.textContent = state.ctx.role;
+  actor.appendChild(tag);
+  h.appendChild(actor);
+  return h;
+}
+
+// ---------- shared helpers ----------
+
+function setStatus(text, kind, autoClearMs) {
+  let pill = document.getElementById('console-status-pill');
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.id = 'console-status-pill';
+    pill.className = 'console-status';
+    document.body.appendChild(pill);
+  }
+  pill.textContent = text || '';
+  pill.className = 'console-status' + (kind ? ' console-status--' + kind : '') + (text ? '' : ' console-status--hide');
+  if (autoClearMs) {
+    setTimeout(() => {
+      if (pill.textContent === text) {
+        pill.className = 'console-status console-status--hide';
+      }
+    }, autoClearMs);
+  }
+}
+
+function onFail_(stage) {
+  return (e) => setStatus(stage + ': ' + (e && e.message || e), 'bad', 4000);
+}
+
+function esc_(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 </script>
