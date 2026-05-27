@@ -268,3 +268,90 @@ function consoleGetProjectDashboard(projectId) {
     asOf: nowIso_(),
   };
 }
+
+/**
+ * Per-student detail for the drill-down. Includes the full aggregate set
+ * (with activity-by-day), plus the student's sources with precomputed
+ * formattedCitation and highlights[] embedded per source.
+ *
+ * Class-scope check: teachers can only fetch detail for students in
+ * classes they teach. Admins can fetch any student in the project.
+ */
+function consoleGetStudentDetail(projectId, studentEmail) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId)    throw new Error('projectId required');
+  if (!studentEmail) throw new Error('studentEmail required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  const bundle = getBundle_(project.bundleId);
+
+  // Class-scope check.
+  const rosterEntry = getStudentRosterEntry_(studentEmail);
+  if (!rosterEntry) throw new Error('Student not on roster: ' + studentEmail);
+  const studentClass = String(rosterEntry.Class || '').trim();
+  if (!isAdmin_(staff)) {
+    const teacherClasses = listClassesTaughtBy_(actorEmail);
+    if (teacherClasses.indexOf(studentClass) < 0) {
+      throw new Error('Not authorized for student ' + studentEmail);
+    }
+  }
+  if (projectClassList_(project).indexOf(studentClass) < 0) {
+    throw new Error('Student class not enrolled in this project');
+  }
+
+  const sources = readSourcesForActor_(studentEmail, projectId);
+  const highlights = readHighlightsForActor_(studentEmail, projectId);
+
+  // Enrich each source: parsed citationFields, formattedCitation, completion flags,
+  // and embedded highlights array filtered to that source.
+  const enriched = sources.map((s) => {
+    const parsed = parseCitationFields_(s);
+    const formatted = formatCitation(
+      Object.assign({}, parsed, {
+        sourceType: parsed.sourceType || s.sourceType || 'website',
+        title:      parsed.title      || s.scrapedTitle  || '',
+        siteName:   parsed.siteName   || s.scrapedSite   || '',
+        author:     parsed.author     || s.scrapedAuthor || '',
+        publishedDate: parsed.publishedDate || s.scrapedDate || '',
+        url:        parsed.url        || s.rawUrl || '',
+        accessDate: s.accessDate || parsed.accessDate || '',
+      }),
+      bundle ? bundle.style : 'mla'
+    );
+    return {
+      sourceId: s.sourceId,
+      scrapedTitle: s.scrapedTitle,
+      citationFieldsParsed: parsed,
+      primarySecondary: s.primarySecondary || 'unset',
+      annotation: s.annotation || '',
+      formattedCitation: formatted,
+      completionFlags: {
+        citation:       !!(parsed.title && parsed.url),
+        classification: s.primarySecondary && s.primarySecondary !== 'unset',
+        annotation:     !!(s.annotation && String(s.annotation).trim().length > 0),
+      },
+      highlights: highlights
+        .filter((h) => h.sourceId === s.sourceId)
+        .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')),
+      createdAt: s.createdAt,
+    };
+  });
+
+  // Sort sources by createdAt desc (newest first) for the viewer.
+  enriched.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+  const aggregates = aggregateStudentDetail_(sources, highlights, bundle, project.createdAt);
+
+  return {
+    ok: true,
+    student: {
+      email: studentEmail,
+      name: String(rosterEntry.Name || studentEmail),
+      class: studentClass,
+    },
+    aggregates,
+    sources: enriched,
+    asOf: nowIso_(),
+  };
+}
