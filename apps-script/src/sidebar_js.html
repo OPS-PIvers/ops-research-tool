@@ -94,7 +94,10 @@ function setViewMode_(mode) {
 function onContext(ctx) {
   state.ctx = ctx;
   if (!ctx || !ctx.ok) { setStatus('Could not load. ' + (ctx && ctx.error || ''), 'bad'); return; }
-  els.actor.textContent = (ctx.roster && ctx.roster.Name ? ctx.roster.Name + ' · ' : '') + (ctx.actor || '');
+  const rosterName = ctx.roster
+    ? ((String(ctx.roster.Last || '') + ', ' + String(ctx.roster.First || '')).replace(/^, |, $/g, '') || ctx.roster.Name || '')
+    : '';
+  els.actor.textContent = (rosterName ? rosterName + ' · ' : '') + (ctx.actor || '');
   populateProjectPicker(ctx.projects, ctx.activeProjectId);
   if (ctx.activeProjectId) {
     state.projectId = ctx.activeProjectId;

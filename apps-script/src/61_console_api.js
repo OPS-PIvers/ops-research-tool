@@ -11,6 +11,17 @@
  */
 
 /**
+ * Compose a display name from roster Last + First, falling back to email
+ * when both name fields are blank. Matches the 7-col roster schema.
+ * @param {Object} rosterRow - object with Last, First, Email properties
+ * @returns {string}
+ */
+function composeStudentName_(rosterRow) {
+  const composed = (String(rosterRow.Last || '') + ', ' + String(rosterRow.First || '')).replace(/^, |, $/g, '');
+  return composed || String(rosterRow.Email || '');
+}
+
+/**
  * Bootstrap data: caller identity + staff entry + role + classes the
  * caller teaches. The Console JS gates the UI on `staff === null`.
  */
@@ -26,7 +37,7 @@ function consoleGetContext() {
 }
 
 /**
- * Classes whose Teacher column equals this email in the Roster.
+ * Classes whose TeacherEmail column equals this email in the Roster.
  * Distinct, trimmed, non-empty. Returns [] if the actor teaches nothing.
  */
 function listClassesTaughtBy_(actorEmail) {
@@ -34,7 +45,7 @@ function listClassesTaughtBy_(actorEmail) {
   const rows = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER);
   const set = {};
   rows.forEach((r) => {
-    if (r.Teacher && String(r.Teacher).trim().toLowerCase() === actorEmail.toLowerCase()) {
+    if (r.TeacherEmail && String(r.TeacherEmail).trim().toLowerCase() === actorEmail.toLowerCase()) {
       const cls = String(r.Class || '').trim();
       if (cls) set[cls] = true;
     }
@@ -187,25 +198,25 @@ function consoleCreateProject(args) {
 }
 
 /**
- * Flip a project's status to archived. Anyone on staff can archive any
- * project. (Authorization is by staff role, not project ownership, per the
- * Phase 4 spec — admins and teachers both can archive.)
+ * Flip a project's status to archived, move its Drive folder under
+ * Archived/, clear any stale activeProjectId prefs, and write an audit
+ * event. Anyone on staff can archive any project (authorization is by
+ * staff role, not project ownership — both admins and teachers).
  */
 function consoleArchiveProject(projectId) {
-  getActorEmail_();   // not used but ensures we throw if no session
-  assertStaff_(getActorEmail_());
+  const actorEmail = getActorEmail_();
+  assertStaff_(actorEmail);
   if (!projectId) throw new Error('projectId required');
-  if (!getProject_(projectId)) throw new Error('Unknown project ' + projectId);
-  archiveProject_(projectId);
-  return { ok: true, projectId };
+  const result = archiveProjectFully_(projectId, AUDIT_ACTIONS.ARCHIVE, actorEmail, '');
+  return { ok: true, projectId, errors: result.errors };
 }
 
 function consoleUnarchiveProject(projectId) {
-  assertStaff_(getActorEmail_());
+  const actorEmail = getActorEmail_();
+  assertStaff_(actorEmail);
   if (!projectId) throw new Error('projectId required');
-  if (!getProject_(projectId)) throw new Error('Unknown project ' + projectId);
-  unarchiveProject_(projectId);
-  return { ok: true, projectId };
+  const result = unarchiveProjectFully_(projectId, actorEmail, '');
+  return { ok: true, projectId, errors: result.errors };
 }
 
 /**
@@ -243,7 +254,7 @@ function consoleGetProjectDashboard(projectId) {
     const agg = aggregateStudent_(sources, highlights, bundle);
     return {
       email: r.Email,
-      name: String(r.Name || r.Email),
+      name: composeStudentName_(r),
       class: String(r.Class || ''),
       categoryMix: agg.categoryMix,
       sourceCount: agg.sourceCount,
@@ -254,7 +265,15 @@ function consoleGetProjectDashboard(projectId) {
     };
   });
 
-  return {
+  const unarchive = latestUnarchiveFor_(project.projectId);
+  const banner = (function () {
+    if (!unarchive) return undefined;
+    const ageMs = Date.now() - new Date(unarchive.at).getTime();
+    if (ageMs < 0 || ageMs > 7 * 24 * 3600 * 1000) return undefined;
+    return { eventId: unarchive.eventId, actor: unarchive.actor, at: unarchive.at };
+  })();
+
+  const resp = {
     ok: true,
     project: {
       projectId: project.projectId,
@@ -267,6 +286,8 @@ function consoleGetProjectDashboard(projectId) {
     students,
     asOf: nowIso_(),
   };
+  if (banner) resp.recentUnarchive = banner;
+  return resp;
 }
 
 /**
@@ -356,7 +377,7 @@ function consoleGetStudentDetail(projectId, studentEmail) {
     ok: true,
     student: {
       email: studentEmail,
-      name: String(rosterEntry.Name || studentEmail),
+      name: composeStudentName_(rosterEntry),
       class: studentClass,
     },
     aggregates,

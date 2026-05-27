@@ -69,6 +69,16 @@ function parseHash_(hash) {
   const h = String(hash || '').replace(/^#\/?/, '');
   if (!h || h === 'projects') return { view: 'MY_PROJECTS' };
   const parts = h.split('/');
+
+  // Admin routes.
+  if (parts[0] === 'admin') {
+    if (parts[1] === 'roster')        return { view: 'ADMIN_ROSTER' };
+    if (parts[1] === 'staff')         return { view: 'ADMIN_STAFF' };
+    if (parts[1] === 'archive-year')  return { view: 'ADMIN_LIFECYCLE' };
+    return { view: 'ADMIN_ROSTER' };  // default admin landing
+  }
+
+  // Existing teacher routes.
   if (parts[0] !== 'projects') return { view: 'MY_PROJECTS' };
   if (parts.length === 2)
     return { view: 'DASHBOARD', projectId: decodeURIComponent(parts[1]) };
@@ -130,9 +140,12 @@ function renderShell_() {
 
 function renderView_(main) {
   switch (state.view) {
-    case 'MY_PROJECTS': return renderMyProjects_(main);
-    case 'DASHBOARD':   return renderDashboard_(main);
-    case 'STUDENT':     return renderStudentDetail_(main);
+    case 'MY_PROJECTS':    return renderMyProjects_(main);
+    case 'DASHBOARD':      return renderDashboard_(main);
+    case 'STUDENT':        return renderStudentDetail_(main);
+    case 'ADMIN_ROSTER':   return renderAdminRoster_(main);
+    case 'ADMIN_STAFF':    return renderAdminStaff_(main);
+    case 'ADMIN_LIFECYCLE':return renderAdminLifecycle_(main);
     default:
       main.innerHTML = '<div class="console-empty">Unknown view.</div>';
   }
@@ -724,6 +737,43 @@ function fetchDashboard_(projectId, isRefresh) {
     .consoleGetProjectDashboard(projectId);
 }
 
+function maybeRenderUnarchiveBanner_(main, data) {
+  if (!data.recentUnarchive) return;
+  const dismissedKey = 'dismissedUnarchive:' + data.recentUnarchive.eventId;
+  if (localStorage.getItem(dismissedKey)) return;
+
+  const banner = document.createElement('div');
+  banner.className = 'unarchive-banner';
+
+  const icon = document.createElement('span');
+  icon.className = 'unarchive-banner__icon';
+  icon.textContent = 'ⓘ';
+  banner.appendChild(icon);
+
+  const text = document.createElement('div');
+  text.className = 'unarchive-banner__text';
+  const when = new Date(data.recentUnarchive.at);
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const dateStr = monthNames[when.getMonth()] + ' ' + when.getDate() + ', ' + when.getFullYear();
+  text.innerHTML =
+    '<strong>This project was unarchived</strong> by ' +
+    esc_(data.recentUnarchive.actor) + ' on ' + dateStr + '.<br>' +
+    '<span class="unarchive-banner__sub">Students who had it set as active will need to re-select it.</span>';
+  banner.appendChild(text);
+
+  const close = document.createElement('button');
+  close.className = 'unarchive-banner__close';
+  close.textContent = '×';
+  close.title = 'Dismiss';
+  close.addEventListener('click', () => {
+    localStorage.setItem(dismissedKey, '1');
+    if (banner.parentNode) banner.parentNode.removeChild(banner);
+  });
+  banner.appendChild(close);
+
+  main.appendChild(banner);
+}
+
 function paintDashboard_() {
   if (!dashboard.data) return;
   const proj = dashboard.data.project;
@@ -737,6 +787,8 @@ function paintDashboard_() {
   const body = document.getElementById('db-body');
   if (!body) return;
   body.innerHTML = '';
+
+  maybeRenderUnarchiveBanner_(body, dashboard.data);
 
   if (dashboard.data.students.length === 0) {
     const e = document.createElement('div');
@@ -1442,6 +1494,14 @@ function buildHeader_() {
   title.addEventListener('click', () => navigate_('/projects'));
   h.appendChild(title);
 
+  const right = document.createElement('div');
+  right.className = 'console-header__right';
+
+  // Admin dropdown — visible only when role === 'admin'.
+  if (state.ctx && state.ctx.role === 'admin') {
+    right.appendChild(buildAdminDropdown_());
+  }
+
   const actor = document.createElement('div');
   actor.className = 'console-header__actor';
   actor.innerHTML = '<strong></strong>';
@@ -1450,8 +1510,50 @@ function buildHeader_() {
   tag.className = 'console-header__role-tag' + (state.ctx.role === 'admin' ? ' console-header__role-tag--admin' : '');
   tag.textContent = state.ctx.role;
   actor.appendChild(tag);
-  h.appendChild(actor);
+  right.appendChild(actor);
+
+  h.appendChild(right);
   return h;
+}
+
+function buildAdminDropdown_() {
+  const wrap = document.createElement('div');
+  wrap.className = 'console-header__admin';
+
+  const btn = document.createElement('button');
+  btn.className = 'console-header__admin-btn';
+  btn.textContent = 'Admin ▾';
+  wrap.appendChild(btn);
+
+  const menu = document.createElement('div');
+  menu.className = 'console-header__admin-menu';
+  const opts = [
+    { label: 'Roster',                path: '/admin/roster' },
+    { label: 'Staff',                 path: '/admin/staff' },
+    { label: 'Archive school year',   path: '/admin/archive-year' },
+  ];
+  opts.forEach((o) => {
+    const a = document.createElement('button');
+    a.className = 'console-header__admin-item';
+    a.textContent = o.label;
+    a.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.classList.remove('console-header__admin-menu--open');
+      navigate_(o.path);
+    });
+    menu.appendChild(a);
+  });
+  wrap.appendChild(menu);
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.classList.toggle('console-header__admin-menu--open');
+  });
+  // Click anywhere else closes it.
+  document.addEventListener('click', () => {
+    menu.classList.remove('console-header__admin-menu--open');
+  });
+  return wrap;
 }
 
 // ---------- shared helpers ----------

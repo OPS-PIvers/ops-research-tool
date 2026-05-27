@@ -13,7 +13,10 @@ function devSeedDevProject() {
   const rosterSs = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
   const rosterTab = getTab_(rosterSs, TABS.ROSTER);
   if (findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', me) < 0) {
-    appendRow_(rosterTab, HEADERS.ROSTER, { Name: 'Dev Owner', Email: me, Class: 'DEV', Teacher: me });
+    appendRow_(rosterTab, HEADERS.ROSTER, {
+      ID: '', First: 'Dev', Last: 'Owner', Email: me, Class: 'DEV',
+      Teacher: 'Dev Owner', TeacherEmail: me,
+    });
   }
   // Add owner to staff as admin if missing.
   const staffTab = getTab_(rosterSs, TABS.STAFF);
@@ -570,4 +573,277 @@ function devTestConsoleDashboardEndToEnd() {
   }
 
   console.log(pass + '/' + (pass + fail) + ' passed');
+}
+
+// ============================================================
+// Sub-project C: admin area + lifecycle
+// ============================================================
+
+/**
+ * Verifies that every admin* endpoint rejects non-admin callers.
+ *
+ * Approach: stash the actor's true row, demote them to teacher, run
+ * every endpoint, expect each to throw 'Admin only', restore the actor.
+ * Editor-only because we need a real Session.getActiveUser context.
+ */
+function devTestAdminAuthGate() {
+  const checks = [];
+  const check = (label, ok) => { checks.push({ label, ok }); };
+
+  const actor = getActorEmail_();
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.STAFF);
+  const rowIdx = findRowByKeyCi_(tab, HEADERS.STAFF, 'Email', actor);
+  if (rowIdx < 0) {
+    console.log('devTestAdminAuthGate skipped — actor not in Staff sheet');
+    return { ok: false, reason: 'actor not in Staff' };
+  }
+  // Add a second admin so we don't trigger the last-admin guard mid-test.
+  adminAddStaffRow({Name: 'Backup Admin', Email: 'backup.admin@orono.k12.mn.us', Role: 'admin'});
+
+  // Demote.
+  const roleCol = HEADERS.STAFF.indexOf('Role') + 1;
+  tab.getRange(rowIdx, roleCol).setValue(ROLES.TEACHER);
+
+  const endpoints = [
+    () => adminGetRoster(),
+    () => adminAddRosterRow({First:'X', Last:'Y', Email:'x@orono.k12.mn.us', Class:'X', TeacherEmail:actor}),
+    () => adminUpdateRosterRow('any@orono.k12.mn.us', {First:'X'}),
+    () => adminChangeStudentEmail('a@orono.k12.mn.us', 'b@orono.k12.mn.us'),
+    () => adminDeleteRosterRow('any@orono.k12.mn.us'),
+    () => adminGetStaff(),
+    () => adminListArchivableYears(),
+    () => adminPreviewArchiveYear('any'),
+  ];
+  endpoints.forEach((fn, i) => {
+    try { fn(); check('endpoint ' + i + ' should have thrown', false); }
+    catch (e) { check('endpoint ' + i + ' rejected: ' + e.message, String(e.message).indexOf('Admin only') >= 0); }
+  });
+
+  // Restore.
+  tab.getRange(rowIdx, roleCol).setValue(ROLES.ADMIN);
+  adminDeleteStaffRow('backup.admin@orono.k12.mn.us');
+
+  const pass = checks.every((c) => c.ok);
+  console.log(JSON.stringify({ ok: pass, checks }, null, 2));
+  return { ok: pass };
+}
+
+/**
+ * Roster CRUD: add, update, set ID, change ID, delete. Cleans up after itself.
+ */
+function devTestAdminRosterCrud() {
+  const checks = [];
+  const check = (label, ok) => { checks.push({ label, ok }); };
+  const e = 'crud.probe@orono.k12.mn.us';
+
+  const added = adminAddRosterRow({First:'Crud', Last:'Probe', Email:e, Class:'PROBE', TeacherEmail: getActorEmail_()});
+  check('added.ok', added.ok === true);
+  check('added.row.Email', added.row.Email === e);
+
+  const updated = adminUpdateRosterRow(e, {First: 'CrudUpdated'});
+  check('updated.ok', updated.ok === true);
+  check('updated.First', updated.row.First === 'CrudUpdated');
+
+  const ided = adminSetStudentId(e, 'CRUD-001');
+  check('set id ok', ided.ok === true);
+  check('id stored', ided.row.ID === 'CRUD-001');
+
+  try { adminSetStudentId(e, 'CRUD-002'); check('refused second set', false); }
+  catch (err) { check('refused second set', String(err.message).indexOf('already set') >= 0); }
+
+  const changed = adminChangeStudentId(e, 'CRUD-999');
+  check('change id ok', changed.ok === true);
+  check('changed id', changed.row.ID === 'CRUD-999');
+
+  const deleted = adminDeleteRosterRow(e);
+  check('deleted.ok', deleted.ok === true);
+
+  // Verify the row is gone.
+  const r = adminGetRoster();
+  check('row removed', !r.rows.find((x) => x.Email === e));
+
+  const pass = checks.every((c) => c.ok);
+  console.log(JSON.stringify({ ok: pass, checks }, null, 2));
+  return { ok: pass };
+}
+
+/**
+ * Bulk replace: snapshot current → replace with a small set → assert
+ * shape → restore. Never leaves the roster in a broken state even on
+ * test failure (cleanup runs regardless via try/finally).
+ */
+function devTestAdminRosterReplace() {
+  const checks = [];
+  const check = (label, ok) => { checks.push({ label, ok }); };
+
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.STAFF);
+  const before = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER);
+  const tester = getActorEmail_();
+  try {
+    const sample = [
+      {ID:'R1', First:'Replace', Last:'One',   Email:'r1@orono.k12.mn.us', Class:'PROBE', Teacher:'Paul', TeacherEmail: tester},
+      {ID:'R2', First:'Replace', Last:'Two',   Email:'r2@orono.k12.mn.us', Class:'PROBE', Teacher:'Paul', TeacherEmail: tester},
+      {ID:'R3', First:'Replace', Last:'Three', Email:'r3@orono.k12.mn.us', Class:'PROBE', Teacher:'Paul', TeacherEmail: tester},
+    ];
+    const preview = adminPreviewReplaceRoster(sample);
+    check('preview ok', preview.ok === true);
+    check('preview no errors', preview.errors.length === 0);
+    check('preview added 3', preview.added === 3);
+    const replaced = adminReplaceRoster(sample);
+    check('replaced ok', replaced.ok === true);
+    const after = adminGetRoster();
+    check('roster has 3 rows', after.rows.length === 3);
+    check('roster includes r2', !!after.rows.find((r) => r.Email === 'r2@orono.k12.mn.us'));
+  } finally {
+    // Restore — always runs.
+    adminReplaceRoster(before.map((r) => ({
+      ID: r.ID, First: r.First, Last: r.Last, Email: r.Email,
+      Class: r.Class, Teacher: r.Teacher, TeacherEmail: r.TeacherEmail,
+    })));
+  }
+
+  const pass = checks.every((c) => c.ok);
+  console.log(JSON.stringify({ ok: pass, checks }, null, 2));
+  return { ok: pass };
+}
+
+/**
+ * Atomic email change: stand up a student + per-student Sheet + scratch
+ * pref → rename → assert all five places updated → cleanup.
+ */
+function devTestAdminEmailChange() {
+  const checks = [];
+  const check = (label, ok) => { checks.push({ label, ok }); };
+  const dev = devSeedDevProject();
+  const oldE = 'rename.old@orono.k12.mn.us';
+  const newE = 'rename.new@orono.k12.mn.us';
+
+  adminAddRosterRow({First:'Rename', Last:'Probe', Email:oldE, Class:'DEV', Teacher:'Paul', TeacherEmail: getActorEmail_()});
+  // Provision Sheet + populate one source + one highlight with createdByEmail=oldE.
+  const sheet = findOrCreateStudentSheet_(oldE, dev);
+  upsertSource_(sheet, {
+    sourceId: 'rename-src',
+    projectId: dev.projectId,
+    normalizedUrl: 'https://example.com/rename',
+    rawUrl: 'https://example.com/rename',
+    accessDate: nowIso_(),
+    scrapedTitle: 'Rename probe',
+    sourceType: 'website',
+    createdByEmail: oldE,
+    createdAt: nowIso_(),
+  });
+  upsertHighlight_(sheet, {
+    highlightId: 'rename-hl',
+    sourceId: 'rename-src',
+    projectId: dev.projectId,
+    primaryCategory: 'Background',
+    highlightedText: 'rename test',
+    createdByEmail: oldE,
+    createdAt: nowIso_(),
+  });
+  setUserPref_(oldE, 'activeProjectId', dev.projectId);
+
+  const result = adminChangeStudentEmail(oldE, newE);
+  check('result.ok', result.ok === true);
+  check('renamedSheets >= 1', result.renamedSheets >= 1);
+  check('rewrittenCells >= 3', result.rewrittenCells >= 3);   // Meta + Sources + Highlights
+  check('rekeyedPrefs === 1', result.rekeyedPrefs === 1);
+
+  // Confirm Sheet file rename.
+  const found = findStudentSheetsForEmail_(newE);
+  check('new email has Sheet', found.length === 1);
+
+  // Confirm pref carried over.
+  check('pref carried over', getUserPref_(newE, 'activeProjectId') === dev.projectId);
+  check('old pref gone',     getUserPref_(oldE, 'activeProjectId') === null);
+
+  // Cleanup.
+  adminDeleteRosterRow(newE);
+  setUserPref_(newE, 'activeProjectId', '');
+  // Sheet file is preserved (intended); ok for dev junk.
+
+  const pass = checks.every((c) => c.ok);
+  console.log(JSON.stringify({ ok: pass, checks }, null, 2));
+  return { ok: pass };
+}
+
+/**
+ * Bulk archive school year: seed 3 projects in 'dev-yy' + 1 in 'other-yy';
+ * archive 'dev-yy'; verify; unarchive one; verify; cleanup.
+ *
+ * NOTE: this test creates Drive folders. They are cleaned at the end but
+ * Apps Script Drive ops are not transactional — if the test crashes mid-
+ * run, the dev folder layout will need a manual cleanup pass.
+ */
+function devTestArchiveSchoolYear() {
+  const checks = [];
+  const check = (label, ok) => { checks.push({ label, ok }); };
+  const actor = getActorEmail_();
+  const bundleId = listBundles_()[0].bundleId;
+  const ids = [];
+  try {
+    ['dev-yy:Alpha', 'dev-yy:Beta', 'dev-yy:Gamma', 'other-yy:Delta'].forEach((label) => {
+      const [year, name] = label.split(':');
+      const p = createProject_({
+        name: 'archive-test ' + name,
+        schoolYear: year,
+        bundleId,
+        memberClasses: ['DEV'],
+        createdBy: actor,
+      });
+      ids.push(p.projectId);
+    });
+
+    const result = adminArchiveSchoolYear('dev-yy', 'ARCHIVE dev-yy');
+    check('result ok',       result.ok === true);
+    check('archived 3',      result.archived.length === 3);
+    check('errors empty',    result.errors.length === 0);
+
+    // Confirm registry states.
+    const allAfter = listProjects_();
+    const dyyArchived = allAfter.filter((p) => p.schoolYear === 'dev-yy' && p.status === PROJECT_STATUS.ARCHIVED);
+    check('dev-yy all archived', dyyArchived.length === 3);
+    const otherActive = allAfter.find((p) => p.schoolYear === 'other-yy' && p.name === 'archive-test Delta');
+    check('other-yy untouched',   otherActive && otherActive.status === PROJECT_STATUS.ACTIVE);
+
+    // Confirm Drive moves on first archived project.
+    const firstArchived = allAfter.find((p) => p.projectId === ids[0]);
+    const folder = DriveApp.getFolderById(firstArchived.rootFolderId);
+    const parents = folder.getParents();
+    let underArchived = false;
+    while (parents.hasNext()) {
+      if (parents.next().getName() === NAMES.ARCHIVED_FOLDER) underArchived = true;
+    }
+    check('first project under Archived/', underArchived);
+
+    // Confirm 3 audit events written.
+    const events = ids.slice(0, 3).map((id) => listAuditEventsForProject_(id));
+    check('audit events for each', events.every((arr) => arr.length >= 1));
+
+    // Unarchive one — separate path. Verify audit + folder restore.
+    const unResult = consoleUnarchiveProject(ids[0]);
+    check('unarchive ok', unResult.ok === true);
+    const restoredFolder = DriveApp.getFolderById(firstArchived.rootFolderId);
+    const restoredParents = restoredFolder.getParents();
+    let underRoot = false;
+    while (restoredParents.hasNext()) {
+      if (restoredParents.next().getId() === CONFIG.ROOT_FOLDER_ID) underRoot = true;
+    }
+    check('first project restored to root', underRoot);
+
+    const unEvents = listAuditEventsForProject_(ids[0]).filter((e) => e.action === AUDIT_ACTIONS.UNARCHIVE);
+    check('unarchive audit event written', unEvents.length === 1);
+  } finally {
+    // Cleanup: archive the unarchived one back, then "delete" all 4 projects
+    // by archiving them — actual deletion is out of scope. The dev folders
+    // accumulate; clean by hand in the GAS UI / Drive if they pile up.
+    ids.forEach((id) => {
+      try { archiveProject_(id); } catch (e) { /* may already be archived */ }
+    });
+  }
+  const pass = checks.every((c) => c.ok);
+  console.log(JSON.stringify({ ok: pass, checks }, null, 2));
+  return { ok: pass };
 }

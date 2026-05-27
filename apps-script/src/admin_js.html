@@ -1,0 +1,1444 @@
+<script>
+// ============================================================
+// OPS Research Tool — Admin views
+//
+// Loaded alongside console_js.html. Shares the `state`, `setStatus`,
+// `onFail_`, `esc_`, `navigate_` globals defined there.
+//
+// Adds three views: ADMIN_ROSTER, ADMIN_STAFF, ADMIN_LIFECYCLE.
+// Tasks 14-17 fill in the view bodies.
+// ============================================================
+
+// ---------- Shared admin state objects ----------
+
+const adminRoster = {
+  rows: null,
+  search: '',
+  classFilter: 'All',
+  teacherFilter: 'All',
+  sort: { column: 'Last', dir: 'asc' },
+  openMenuEmail: null,
+};
+
+const adminStaff = {
+  rows: null,
+  openMenuEmail: null,
+};
+
+const adminLifecycle = {
+  years: null,
+  selectedYear: null,
+  preview: null,
+  confirmText: '',
+};
+
+// ---------- View entry points (stubs replaced by Tasks 14-17) ----------
+
+function renderAdminRoster_(main) {
+  // Breadcrumb + actions
+  const importBtn = document.createElement('button');
+  importBtn.className = 'admin-btn-secondary';
+  importBtn.textContent = '⤓ Import roster…';
+  importBtn.addEventListener('click', openRosterImportDialog_);
+  const addBtn = document.createElement('button');
+  addBtn.className = 'admin-btn-primary';
+  addBtn.textContent = '+ Add student';
+  addBtn.style.marginLeft = '8px';
+  addBtn.addEventListener('click', openAddStudentModal_);
+  const actions = document.createElement('div');
+  actions.appendChild(importBtn);
+  actions.appendChild(addBtn);
+
+  main.appendChild(buildAdminBreadcrumb_('Roster', actions));
+
+  // Filter bar
+  const filterBar = document.createElement('div');
+  filterBar.className = 'admin-filter-bar';
+
+  const search = document.createElement('input');
+  search.type = 'text';
+  search.placeholder = 'Search name, email, or ID';
+  search.className = 'admin-search';
+  search.value = adminRoster.search;
+  search.addEventListener('input', () => {
+    adminRoster.search = search.value;
+    renderRosterTable_(tableHost);
+  });
+  filterBar.appendChild(search);
+
+  const classSel = document.createElement('select');
+  classSel.className = 'admin-filter-select';
+  filterBar.appendChild(labeled_('Class', classSel));
+
+  const teacherSel = document.createElement('select');
+  teacherSel.className = 'admin-filter-select';
+  filterBar.appendChild(labeled_('Teacher', teacherSel));
+
+  const count = document.createElement('div');
+  count.className = 'admin-filter-count';
+  filterBar.appendChild(count);
+
+  main.appendChild(filterBar);
+
+  const tableHost = document.createElement('div');
+  tableHost.className = 'admin-table-host';
+  main.appendChild(tableHost);
+
+  // Initial load
+  if (adminRoster.rows === null) {
+    tableHost.innerHTML = '<div class="admin-skeleton">Loading roster…</div>';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        adminRoster.rows = resp.rows || [];
+        populateFilterSelects_(classSel, teacherSel, () => renderRosterTable_(tableHost));
+        renderRosterTable_(tableHost);
+        count.textContent = adminRoster.rows.length + ' students';
+      })
+      .withFailureHandler(onFail_('loading roster'))
+      .adminGetRoster();
+  } else {
+    populateFilterSelects_(classSel, teacherSel, () => renderRosterTable_(tableHost));
+    renderRosterTable_(tableHost);
+    count.textContent = adminRoster.rows.length + ' students';
+  }
+}
+
+function labeled_(label, control) {
+  const wrap = document.createElement('label');
+  wrap.className = 'admin-filter-label';
+  const sp = document.createElement('span');
+  sp.textContent = label + ':';
+  wrap.appendChild(sp);
+  wrap.appendChild(control);
+  return wrap;
+}
+
+function populateFilterSelects_(classSel, teacherSel, onChange) {
+  const classes = ['All'].concat(distinct_(adminRoster.rows.map((r) => r.Class)).sort());
+  const teachers = ['All'].concat(distinct_(adminRoster.rows.map((r) => r.Teacher)).sort());
+  fillSelect_(classSel, classes, adminRoster.classFilter);
+  fillSelect_(teacherSel, teachers, adminRoster.teacherFilter);
+  classSel.addEventListener('change', () => { adminRoster.classFilter = classSel.value; onChange(); });
+  teacherSel.addEventListener('change', () => { adminRoster.teacherFilter = teacherSel.value; onChange(); });
+}
+
+function distinct_(arr) {
+  const seen = {};
+  arr.forEach((v) => { if (v) seen[v] = true; });
+  return Object.keys(seen);
+}
+
+function fillSelect_(sel, values, selected) {
+  sel.innerHTML = '';
+  values.forEach((v) => {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = v;
+    if (v === selected) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+function renderRosterTable_(host) {
+  host.innerHTML = '';
+  const filtered = filterAndSortRoster_(adminRoster.rows);
+  if (filtered.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'console-empty';
+    empty.textContent = adminRoster.rows.length === 0
+      ? 'No roster rows yet. Click + Add student or Import roster to get started.'
+      : 'No rows match the current filters.';
+    host.appendChild(empty);
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'admin-table';
+  const thead = document.createElement('thead');
+  thead.appendChild(buildRosterHeader_(host));
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  filtered.forEach((r) => tbody.appendChild(buildRosterRow_(r, host)));
+  table.appendChild(tbody);
+  host.appendChild(table);
+}
+
+function buildRosterHeader_(host) {
+  const tr = document.createElement('tr');
+  const cols = [
+    { label: 'ID',        sortKey: 'ID' },
+    { label: 'Name',      sortKey: 'Last' },
+    { label: 'Email',     sortKey: 'Email' },
+    { label: 'Class',     sortKey: 'Class' },
+    { label: 'Teacher',   sortKey: 'Teacher' },
+    { label: '',          sortKey: null },   // kebab
+  ];
+  cols.forEach((c) => {
+    const th = document.createElement('th');
+    th.textContent = c.label;
+    if (c.sortKey) {
+      th.classList.add('admin-table__sortable');
+      th.addEventListener('click', () => {
+        if (adminRoster.sort.column === c.sortKey) {
+          adminRoster.sort.dir = adminRoster.sort.dir === 'asc' ? 'desc' : 'asc';
+        } else {
+          adminRoster.sort.column = c.sortKey;
+          adminRoster.sort.dir = 'asc';
+        }
+        renderRosterTable_(host);
+      });
+      if (adminRoster.sort.column === c.sortKey) {
+        th.classList.add(adminRoster.sort.dir === 'asc' ? 'admin-table__sort-asc' : 'admin-table__sort-desc');
+      }
+    }
+    tr.appendChild(th);
+  });
+  return tr;
+}
+
+function filterAndSortRoster_(rows) {
+  const q = adminRoster.search.toLowerCase().trim();
+  let out = rows.slice();
+  if (q) {
+    out = out.filter((r) => {
+      return (r.First + ' ' + r.Last + ' ' + r.Email + ' ' + r.ID).toLowerCase().indexOf(q) >= 0;
+    });
+  }
+  if (adminRoster.classFilter && adminRoster.classFilter !== 'All') {
+    out = out.filter((r) => r.Class === adminRoster.classFilter);
+  }
+  if (adminRoster.teacherFilter && adminRoster.teacherFilter !== 'All') {
+    out = out.filter((r) => r.Teacher === adminRoster.teacherFilter);
+  }
+  const col = adminRoster.sort.column;
+  const dir = adminRoster.sort.dir === 'asc' ? 1 : -1;
+  out.sort((a, b) => String(a[col] || '').localeCompare(String(b[col] || '')) * dir);
+  return out;
+}
+
+function buildRosterRow_(r, host) {
+  const tr = document.createElement('tr');
+  tr.dataset.email = r.Email;
+
+  tr.appendChild(buildIdCell_(r, host));
+
+  const nameCell = document.createElement('td');
+  nameCell.className = 'admin-table__name';
+  const lastCell = inlineEditCell_('Last', r);
+  const firstCell = inlineEditCell_('First', r);
+  nameCell.appendChild(lastCell);
+  nameCell.appendChild(document.createTextNode(', '));
+  nameCell.appendChild(firstCell);
+  tr.appendChild(nameCell);
+
+  // Email — NOT click-to-edit; opens typed-confirm.
+  const emailCell = document.createElement('td');
+  emailCell.className = 'admin-table__email';
+  emailCell.textContent = r.Email;
+  emailCell.addEventListener('click', () => openChangeEmailModal_(r));
+  tr.appendChild(emailCell);
+
+  tr.appendChild(inlineEditTd_('Class', r));
+  tr.appendChild(inlineEditTd_('Teacher', r));
+
+  // Kebab cell
+  const kebabCell = document.createElement('td');
+  kebabCell.className = 'admin-table__kebab';
+  const kebab = document.createElement('button');
+  kebab.className = 'admin-table__kebab-btn';
+  kebab.textContent = '⋯';
+  kebab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    adminRoster.openMenuEmail = adminRoster.openMenuEmail === r.Email ? null : r.Email;
+    renderRosterTable_(host);
+  });
+  kebabCell.appendChild(kebab);
+  if (adminRoster.openMenuEmail === r.Email) {
+    kebabCell.appendChild(buildRosterKebabMenu_(r, host));
+  }
+  tr.appendChild(kebabCell);
+
+  return tr;
+}
+
+function buildIdCell_(r, host) {
+  const td = document.createElement('td');
+  td.className = 'admin-table__id';
+  if (!r.ID) {
+    const setBtn = document.createElement('button');
+    setBtn.className = 'admin-link-btn';
+    setBtn.textContent = 'Set ID';
+    setBtn.addEventListener('click', () => openSetIdModal_(r, host));
+    td.appendChild(document.createTextNode('— '));
+    td.appendChild(setBtn);
+  } else {
+    td.textContent = r.ID;
+  }
+  return td;
+}
+
+function inlineEditTd_(field, r) {
+  const td = document.createElement('td');
+  td.appendChild(inlineEditCell_(field, r));
+  return td;
+}
+
+function inlineEditCell_(field, r) {
+  const span = document.createElement('span');
+  span.className = 'admin-edit';
+  span.textContent = r[field] || '';
+  span.title = 'Click to edit';
+  span.addEventListener('click', () => activateInlineEdit_(span, field, r));
+  return span;
+}
+
+function activateInlineEdit_(span, field, r) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'admin-edit__input';
+  input.value = span.textContent;
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+  let committed = false;
+  const commit = () => {
+    if (committed) return;
+    committed = true;
+    const newVal = input.value;
+    if (newVal === r[field]) {
+      input.replaceWith(span); return;
+    }
+    const fields = {}; fields[field] = newVal;
+    google.script.run
+      .withSuccessHandler((resp) => {
+        r[field] = resp.row[field];
+        span.textContent = r[field] || '';
+        input.replaceWith(span);
+        setStatus('Saved.', 'good', 1500);
+      })
+      .withFailureHandler((e) => {
+        setStatus('Update failed: ' + (e && e.message || e), 'bad', 4000);
+        input.replaceWith(span);
+      })
+      .adminUpdateRosterRow(r.Email, fields);
+  };
+  const cancel = () => {
+    committed = true;
+    input.replaceWith(span);
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+}
+
+function buildRosterKebabMenu_(r, host) {
+  const menu = document.createElement('div');
+  menu.className = 'admin-table__kebab-menu';
+  const editEmail = document.createElement('button');
+  editEmail.textContent = 'Edit email…';
+  editEmail.addEventListener('click', (e) => { e.stopPropagation(); openChangeEmailModal_(r); });
+  menu.appendChild(editEmail);
+
+  if (r.ID) {
+    const editId = document.createElement('button');
+    editId.textContent = 'Change ID…';
+    editId.addEventListener('click', (e) => { e.stopPropagation(); openChangeIdModal_(r, host); });
+    menu.appendChild(editId);
+  }
+
+  const del = document.createElement('button');
+  del.className = 'admin-table__kebab-danger';
+  del.textContent = 'Delete row…';
+  del.addEventListener('click', (e) => { e.stopPropagation(); openDeleteRowModal_(r, host); });
+  menu.appendChild(del);
+  return menu;
+}
+
+// ---------- Roster modals ----------
+
+function openAddStudentModal_() {
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'admin-modal';
+  modal.innerHTML = `
+    <div class="admin-modal__header">Add student</div>
+    <div class="admin-modal__form">
+      <label>ID (optional)<input data-field="ID" type="text"></label>
+      <label>First<input data-field="First" type="text" required></label>
+      <label>Last<input data-field="Last" type="text" required></label>
+      <label>Email<input data-field="Email" type="email" required></label>
+      <label>Class<input data-field="Class" type="text" required></label>
+      <label>Teacher (display)<input data-field="Teacher" type="text"></label>
+      <label>Teacher Email<input data-field="TeacherEmail" type="email" required></label>
+    </div>
+    <div class="admin-modal__actions">
+      <button class="admin-modal__cancel">Cancel</button>
+      <button class="admin-modal__primary" disabled>Add student</button>
+    </div>`;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const inputs = modal.querySelectorAll('input[data-field]');
+  const primary = modal.querySelector('.admin-modal__primary');
+  const checkValid = () => {
+    let ok = true;
+    inputs.forEach((i) => { if (i.required && !i.value.trim()) ok = false; });
+    primary.disabled = !ok;
+  };
+  inputs.forEach((i) => i.addEventListener('input', checkValid));
+
+  const close = () => overlay.parentNode && overlay.parentNode.removeChild(overlay);
+  modal.querySelector('.admin-modal__cancel').addEventListener('click', close);
+  primary.addEventListener('click', () => {
+    const row = {};
+    inputs.forEach((i) => row[i.dataset.field] = i.value.trim());
+    primary.disabled = true;
+    primary.textContent = '…';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        adminRoster.rows.push(Object.assign({ hasWork: false }, resp.row));
+        setStatus('Added.', 'good', 2000);
+        close();
+        applyHash_();   // re-render via hash to pick up new row
+      })
+      .withFailureHandler((e) => {
+        primary.disabled = false;
+        primary.textContent = 'Add student';
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      })
+      .adminAddRosterRow(row);
+  });
+}
+
+function openSetIdModal_(r, host) {
+  plainConfirmModal_({
+    title: 'Set student ID',
+    bodyHtml: `Set the SIS ID for <strong>${esc_(r.Last)}, ${esc_(r.First)}</strong>. Once set, changing it requires a typed confirm.<br><br><label class="admin-modal__form-row">ID:<input id="set-id-input" type="text" style="margin-left: 8px"></label>`,
+    confirmLabel: 'Set ID',
+    onConfirm: () => new Promise((resolve, reject) => {
+      const val = (document.getElementById('set-id-input') || {}).value || '';
+      if (!val.trim()) { reject(new Error('ID required')); return; }
+      google.script.run
+        .withSuccessHandler((resp) => {
+          r.ID = resp.row.ID;
+          renderRosterTable_(host);
+          setStatus('ID set.', 'good', 2000);
+          resolve();
+        })
+        .withFailureHandler((e) => reject(e))
+        .adminSetStudentId(r.Email, val.trim());
+    }),
+  });
+}
+
+function openChangeIdModal_(r, host) {
+  typedConfirmModal_({
+    title: 'Change student ID?',
+    bodyHtml: `<p>The current ID for <strong>${esc_(r.Last)}, ${esc_(r.First)}</strong> is <code>${esc_(r.ID)}</code>.</p>
+               <label class="admin-modal__form-row">New ID:<input id="change-id-input" type="text" style="margin-left: 8px"></label>`,
+    phrase: 'CHANGE ID',
+    dangerLabel: 'Change ID',
+    onConfirm: () => new Promise((resolve, reject) => {
+      const val = (document.getElementById('change-id-input') || {}).value || '';
+      if (!val.trim()) { reject(new Error('New ID required')); return; }
+      google.script.run
+        .withSuccessHandler((resp) => {
+          r.ID = resp.row.ID;
+          renderRosterTable_(host);
+          setStatus('ID changed.', 'good', 2000);
+          resolve();
+        })
+        .withFailureHandler((e) => reject(e))
+        .adminChangeStudentId(r.Email, val.trim());
+    }),
+  });
+}
+
+function openChangeEmailModal_(r) {
+  const workNote = r.hasWork
+    ? `<p>This student has saved research. Changing their email will also:</p>
+       <ul>
+         <li>Rename their per-student Sheet(s) in every project</li>
+         <li>Rewrite <code>createdByEmail</code> on every source + highlight row</li>
+         <li>Rekey their saved active-project preference</li>
+       </ul>`
+    : `<p>This student has no saved research yet. Only the roster row and any active-project preference will change.</p>`;
+  typedConfirmModal_({
+    title: 'Change student email?',
+    bodyHtml: `<p><strong>${esc_(r.Last)}, ${esc_(r.First)}</strong>'s email is <code>${esc_(r.Email)}</code>.</p>
+               ${workNote}
+               <label class="admin-modal__form-row">New email:<input id="change-email-input" type="email" style="margin-left: 8px"></label>`,
+    phrase: 'CHANGE EMAIL',
+    dangerLabel: 'Change email',
+    onConfirm: () => new Promise((resolve, reject) => {
+      const val = (document.getElementById('change-email-input') || {}).value || '';
+      if (!val.trim()) { reject(new Error('New email required')); return; }
+      google.script.run
+        .withSuccessHandler(() => {
+          setStatus('Email changed.', 'good', 2500);
+          adminRoster.rows = null; // force refetch
+          resolve();
+          applyHash_();
+        })
+        .withFailureHandler((e) => reject(e))
+        .adminChangeStudentEmail(r.Email, val.trim().toLowerCase());
+    }),
+  });
+}
+
+function openDeleteRowModal_(r, host) {
+  if (!r.hasWork) {
+    plainConfirmModal_({
+      title: 'Delete roster row?',
+      bodyHtml: `Remove <strong>${esc_(r.Last)}, ${esc_(r.First)}</strong> (${esc_(r.Email)}) from the roster?`,
+      confirmLabel: 'Delete row',
+      danger: true,
+      onConfirm: () => new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(() => {
+            adminRoster.rows = adminRoster.rows.filter((x) => x.Email !== r.Email);
+            renderRosterTable_(host);
+            setStatus('Deleted.', 'good', 2000);
+            resolve();
+          })
+          .withFailureHandler((e) => reject(e))
+          .adminDeleteRosterRow(r.Email);
+      }),
+    });
+  } else {
+    typedConfirmModal_({
+      title: 'Delete roster row?',
+      bodyHtml: `<p><strong>${esc_(r.Last)}, ${esc_(r.First)}</strong> has saved research in one or more projects.</p>
+                 <p>Per-student Sheet(s) will be <strong>preserved</strong> — the data stays in Drive even after the roster row is removed.</p>`,
+      phrase: 'DELETE ROW',
+      dangerLabel: 'Delete row',
+      onConfirm: () => new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(() => {
+            adminRoster.rows = adminRoster.rows.filter((x) => x.Email !== r.Email);
+            renderRosterTable_(host);
+            setStatus('Deleted.', 'good', 2000);
+            resolve();
+          })
+          .withFailureHandler((e) => reject(e))
+          .adminDeleteRosterRow(r.Email);
+      }),
+    });
+  }
+}
+
+function openRosterImportDialog_() {
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'admin-modal admin-modal--import';
+
+  const head = document.createElement('div');
+  head.className = 'admin-modal__header';
+  head.textContent = 'Import roster';
+  modal.appendChild(head);
+
+  // Mode toggle
+  const modeBar = document.createElement('div');
+  modeBar.className = 'admin-import__modebar';
+  const tsvBtn = document.createElement('button');
+  tsvBtn.textContent = 'Paste all columns (TSV)';
+  tsvBtn.className = 'admin-import__mode-active';
+  const wizardBtn = document.createElement('button');
+  wizardBtn.textContent = 'Paste columns separately';
+  modeBar.appendChild(tsvBtn);
+  modeBar.appendChild(wizardBtn);
+  modal.appendChild(modeBar);
+
+  const bodyHost = document.createElement('div');
+  bodyHost.className = 'admin-import__body';
+  modal.appendChild(bodyHost);
+
+  const previewHost = document.createElement('div');
+  previewHost.className = 'admin-import__preview';
+  modal.appendChild(previewHost);
+
+  const actions = document.createElement('div');
+  actions.className = 'admin-modal__actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'admin-modal__cancel';
+  cancel.textContent = 'Cancel';
+  const previewBtn = document.createElement('button');
+  previewBtn.className = 'admin-modal__primary';
+  previewBtn.textContent = 'Preview diff';
+  const replaceBtn = document.createElement('button');
+  replaceBtn.className = 'admin-modal__danger';
+  replaceBtn.textContent = 'Replace roster';
+  replaceBtn.disabled = true;
+  actions.appendChild(cancel);
+  actions.appendChild(previewBtn);
+  actions.appendChild(replaceBtn);
+  modal.appendChild(actions);
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.parentNode && overlay.parentNode.removeChild(overlay);
+  cancel.addEventListener('click', close);
+
+  // State for current mode + parsed rows + preview result
+  const ctx = { mode: 'tsv', rows: null, preview: null };
+
+  tsvBtn.addEventListener('click', () => {
+    ctx.mode = 'tsv';
+    tsvBtn.className = 'admin-import__mode-active';
+    wizardBtn.className = '';
+    renderTsvMode_(bodyHost, ctx, () => { previewBtn.disabled = !ctx.rows; });
+  });
+  wizardBtn.addEventListener('click', () => {
+    ctx.mode = 'wizard';
+    wizardBtn.className = 'admin-import__mode-active';
+    tsvBtn.className = '';
+    renderWizardMode_(bodyHost, ctx, () => { previewBtn.disabled = !ctx.rows; });
+  });
+
+  // Default to TSV
+  renderTsvMode_(bodyHost, ctx, () => { previewBtn.disabled = !ctx.rows; });
+
+  previewBtn.addEventListener('click', () => {
+    if (!ctx.rows) { setStatus('Paste rows first.', 'bad', 2500); return; }
+    previewBtn.disabled = true;
+    previewBtn.textContent = '…';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        ctx.preview = resp;
+        renderPreview_(previewHost, resp);
+        replaceBtn.disabled = (resp.errors.length > 0);
+        previewBtn.disabled = false;
+        previewBtn.textContent = 'Preview diff';
+      })
+      .withFailureHandler((e) => {
+        previewBtn.disabled = false;
+        previewBtn.textContent = 'Preview diff';
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      })
+      .adminPreviewReplaceRoster(ctx.rows);
+  });
+
+  replaceBtn.addEventListener('click', () => {
+    if (!ctx.rows) return;
+    replaceBtn.disabled = true;
+    replaceBtn.textContent = '…';
+    google.script.run
+      .withSuccessHandler(() => {
+        setStatus('Roster replaced.', 'good', 3000);
+        adminRoster.rows = null;
+        close();
+        applyHash_();
+      })
+      .withFailureHandler((e) => {
+        replaceBtn.disabled = false;
+        replaceBtn.textContent = 'Replace roster';
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      })
+      .adminReplaceRoster(ctx.rows);
+  });
+}
+
+function renderTsvMode_(host, ctx, onChange) {
+  host.innerHTML = '';
+  const help = document.createElement('div');
+  help.className = 'admin-import__help';
+  help.innerHTML = 'Paste a tab-separated block from Google Sheets. Header row optional. Required columns in this order:<br><code>ID&nbsp;&nbsp;First&nbsp;&nbsp;Last&nbsp;&nbsp;Email&nbsp;&nbsp;Class&nbsp;&nbsp;Teacher&nbsp;&nbsp;TeacherEmail</code>';
+  host.appendChild(help);
+  const ta = document.createElement('textarea');
+  ta.className = 'admin-import__textarea';
+  ta.rows = 14;
+  ta.placeholder = '10234\tAlex\tSmith\tasmith@orono.k12.mn.us\t7A\tShogren\tbshogren@orono.k12.mn.us\n...';
+  host.appendChild(ta);
+
+  ta.addEventListener('input', () => {
+    ctx.rows = parseTsv_(ta.value);
+    onChange();
+  });
+}
+
+function parseTsv_(text) {
+  const lines = String(text || '').split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return null;
+  // Skip header if first cell looks like 'ID' or 'First' (case-insensitive).
+  const firstCell = String((lines[0].split('\t')[0] || '')).trim().toLowerCase();
+  const start = (firstCell === 'id' || firstCell === 'first') ? 1 : 0;
+  const out = [];
+  for (let i = start; i < lines.length; i++) {
+    const c = lines[i].split('\t').map((s) => s.trim());
+    while (c.length < 7) c.push('');
+    out.push({
+      ID:           c[0],
+      First:        c[1],
+      Last:         c[2],
+      Email:        c[3],
+      Class:        c[4],
+      Teacher:      c[5],
+      TeacherEmail: c[6],
+    });
+  }
+  return out;
+}
+
+function renderWizardMode_(host, ctx, onChange) {
+  host.innerHTML = '';
+  const fields = ['ID', 'First', 'Last', 'Email', 'Class', 'Teacher', 'TeacherEmail'];
+  const values = {};
+  fields.forEach((f) => { values[f] = ''; });
+
+  const step = { i: 0 };
+  function rerender() {
+    host.innerHTML = '';
+    const f = fields[step.i];
+    const label = document.createElement('div');
+    label.className = 'admin-import__wizard-label';
+    label.innerHTML = `Step <strong>${step.i + 1}</strong> of ${fields.length}: paste <code>${f}</code> column (one value per line)`;
+    host.appendChild(label);
+
+    const ta = document.createElement('textarea');
+    ta.className = 'admin-import__textarea';
+    ta.rows = 14;
+    ta.value = values[f];
+    ta.addEventListener('input', () => { values[f] = ta.value; });
+    host.appendChild(ta);
+
+    const nav = document.createElement('div');
+    nav.className = 'admin-import__wizard-nav';
+    const back = document.createElement('button');
+    back.textContent = '← Back';
+    back.className = 'admin-btn-secondary';
+    back.disabled = step.i === 0;
+    back.addEventListener('click', () => { step.i--; rerender(); });
+    const next = document.createElement('button');
+    next.className = 'admin-btn-primary';
+    next.textContent = step.i === fields.length - 1 ? 'Done' : 'Next →';
+    next.addEventListener('click', () => {
+      // Validate row counts match.
+      if (step.i === 0) {
+        // first non-empty step sets the count
+      }
+      const lines0 = values[fields[0]].split(/\r?\n/).filter((l) => l.trim().length >= 0);
+      const linesCur = values[f].split(/\r?\n/).filter((l) => l.trim().length >= 0);
+      // ID column may be optional; allow blanks, but count must match other columns.
+      if (step.i > 0 && linesCur.length !== lines0.length && fields[0] === 'ID') {
+        // Use the first non-blank-required column (First) as the count source.
+        const linesFirst = values['First'].split(/\r?\n/).filter((l) => l.trim().length >= 0);
+        if (linesCur.length !== linesFirst.length) {
+          setStatus(`Row count mismatch: ${f} has ${linesCur.length}, First has ${linesFirst.length}`, 'bad', 4000);
+          return;
+        }
+      }
+      step.i++;
+      if (step.i >= fields.length) {
+        ctx.rows = composeWizardRows_(values, fields);
+        onChange();
+      } else {
+        rerender();
+      }
+    });
+    nav.appendChild(back);
+    nav.appendChild(next);
+    host.appendChild(nav);
+  }
+  rerender();
+}
+
+function composeWizardRows_(values, fields) {
+  // Use the longest non-empty column as the row count.
+  let n = 0;
+  fields.forEach((f) => {
+    const lines = String(values[f] || '').split(/\r?\n/);
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    if (lines.length > n) n = lines.length;
+  });
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const row = {};
+    fields.forEach((f) => {
+      const lines = String(values[f] || '').split(/\r?\n/);
+      row[f] = (lines[i] || '').trim();
+    });
+    out.push(row);
+  }
+  return out;
+}
+
+function renderPreview_(host, preview) {
+  host.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'admin-import__preview-inner';
+  if (preview.errors.length > 0) {
+    const errHead = document.createElement('div');
+    errHead.className = 'admin-import__errors-head';
+    errHead.textContent = preview.errors.length + ' validation errors — fix and re-preview:';
+    wrap.appendChild(errHead);
+    const list = document.createElement('ul');
+    list.className = 'admin-import__errors';
+    preview.errors.slice(0, 50).forEach((e) => {
+      const li = document.createElement('li');
+      li.textContent = 'row ' + e.rowIndex + ': ' + e.error;
+      list.appendChild(li);
+    });
+    wrap.appendChild(list);
+  } else {
+    const summary = document.createElement('div');
+    summary.className = 'admin-import__summary';
+    summary.innerHTML = `
+      <span class="admin-import__added">${preview.added} added</span>
+      <span class="admin-import__removed">${preview.removed} removed</span>
+      <span class="admin-import__changed">${preview.changed} changed</span>
+      <span class="admin-import__unchanged">${preview.unchanged} unchanged</span>
+    `;
+    wrap.appendChild(summary);
+  }
+  host.appendChild(wrap);
+}
+
+function renderAdminStaff_(main) {
+  const addBtn = document.createElement('button');
+  addBtn.className = 'admin-btn-primary';
+  addBtn.textContent = '+ Add staff';
+  addBtn.addEventListener('click', openAddStaffModal_);
+
+  main.appendChild(buildAdminBreadcrumb_('Staff', addBtn));
+
+  const tableHost = document.createElement('div');
+  tableHost.className = 'admin-table-host';
+  main.appendChild(tableHost);
+
+  if (adminStaff.rows === null) {
+    tableHost.innerHTML = '<div class="admin-skeleton">Loading staff…</div>';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        adminStaff.rows = resp.rows || [];
+        renderStaffTable_(tableHost);
+      })
+      .withFailureHandler(onFail_('loading staff'))
+      .adminGetStaff();
+  } else {
+    renderStaffTable_(tableHost);
+  }
+}
+
+function renderStaffTable_(host) {
+  host.innerHTML = '';
+  if (adminStaff.rows.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'console-empty';
+    empty.textContent = 'No staff rows yet. Click + Add staff to get started.';
+    host.appendChild(empty);
+    return;
+  }
+  const adminCount = adminStaff.rows.filter((r) => r.Role === 'admin').length;
+
+  const table = document.createElement('table');
+  table.className = 'admin-table';
+  const thead = document.createElement('thead');
+  thead.innerHTML = '<tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr>';
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  adminStaff.rows.forEach((r) => tbody.appendChild(buildStaffRow_(r, host, adminCount)));
+  table.appendChild(tbody);
+  host.appendChild(table);
+}
+
+function buildStaffRow_(r, host, adminCount) {
+  const isOnlyAdmin = (r.Role === 'admin' && adminCount === 1);
+
+  const tr = document.createElement('tr');
+  tr.dataset.email = r.Email;
+
+  // Name — inline edit
+  const nameTd = document.createElement('td');
+  nameTd.appendChild(inlineEditStaffCell_('Name', r));
+  tr.appendChild(nameTd);
+
+  // Email — typed-confirm modal
+  const emailTd = document.createElement('td');
+  emailTd.className = 'admin-table__email';
+  emailTd.textContent = r.Email;
+  emailTd.addEventListener('click', () => openChangeStaffEmailModal_(r));
+  tr.appendChild(emailTd);
+
+  // Role — dropdown cell
+  const roleTd = document.createElement('td');
+  roleTd.appendChild(buildRoleCell_(r, host, isOnlyAdmin));
+  tr.appendChild(roleTd);
+
+  // Kebab
+  const kebabTd = document.createElement('td');
+  kebabTd.className = 'admin-table__kebab';
+  const kebab = document.createElement('button');
+  kebab.className = 'admin-table__kebab-btn';
+  kebab.textContent = '⋯';
+  kebab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    adminStaff.openMenuEmail = adminStaff.openMenuEmail === r.Email ? null : r.Email;
+    renderStaffTable_(host);
+  });
+  kebabTd.appendChild(kebab);
+  if (adminStaff.openMenuEmail === r.Email) {
+    const menu = document.createElement('div');
+    menu.className = 'admin-table__kebab-menu';
+    const editEmail = document.createElement('button');
+    editEmail.textContent = 'Change email…';
+    editEmail.addEventListener('click', (e) => { e.stopPropagation(); openChangeStaffEmailModal_(r); });
+    menu.appendChild(editEmail);
+    const del = document.createElement('button');
+    del.className = 'admin-table__kebab-danger';
+    del.textContent = 'Delete row…';
+    if (isOnlyAdmin) {
+      del.disabled = true;
+      del.title = 'Cannot remove the only admin';
+    } else {
+      del.addEventListener('click', (e) => { e.stopPropagation(); openDeleteStaffModal_(r, host); });
+    }
+    menu.appendChild(del);
+    kebabTd.appendChild(menu);
+  }
+  tr.appendChild(kebabTd);
+
+  return tr;
+}
+
+function inlineEditStaffCell_(field, r) {
+  const span = document.createElement('span');
+  span.className = 'admin-edit';
+  span.textContent = r[field] || '';
+  span.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'admin-edit__input';
+    input.value = span.textContent;
+    span.replaceWith(input);
+    input.focus(); input.select();
+    let done = false;
+    const commit = () => {
+      if (done) return;
+      done = true;
+      const newVal = input.value;
+      if (newVal === r[field]) { input.replaceWith(span); return; }
+      const fields = {}; fields[field] = newVal;
+      google.script.run
+        .withSuccessHandler((resp) => {
+          r[field] = resp.row[field];
+          span.textContent = r[field] || '';
+          input.replaceWith(span);
+          setStatus('Saved.', 'good', 1500);
+        })
+        .withFailureHandler((e) => {
+          setStatus(String(e && e.message || e), 'bad', 4000);
+          input.replaceWith(span);
+        })
+        .adminUpdateStaffRow(r.Email, fields);
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter')  { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { done = true; input.replaceWith(span); }
+    });
+  });
+  return span;
+}
+
+function buildRoleCell_(r, host, isOnlyAdmin) {
+  const sel = document.createElement('select');
+  sel.className = 'admin-staff__role';
+  ['teacher', 'admin'].forEach((role) => {
+    const o = document.createElement('option');
+    o.value = role; o.textContent = role;
+    if (role === r.Role) o.selected = true;
+    sel.appendChild(o);
+  });
+  if (isOnlyAdmin) {
+    sel.disabled = true;
+    sel.title = 'Cannot demote the only admin';
+  }
+  sel.addEventListener('change', () => {
+    if (sel.value === r.Role) return;
+    google.script.run
+      .withSuccessHandler((resp) => {
+        r.Role = resp.row.Role;
+        setStatus('Role updated.', 'good', 2000);
+        renderStaffTable_(host);
+      })
+      .withFailureHandler((e) => {
+        sel.value = r.Role;
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      })
+      .adminUpdateStaffRow(r.Email, { Role: sel.value });
+  });
+  return sel;
+}
+
+// ---------- Staff modals ----------
+
+function openAddStaffModal_() {
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'admin-modal';
+  modal.innerHTML = `
+    <div class="admin-modal__header">Add staff</div>
+    <div class="admin-modal__form">
+      <label>Name<input data-field="Name" type="text" required></label>
+      <label>Email<input data-field="Email" type="email" required></label>
+      <label>Role
+        <select data-field="Role">
+          <option value="teacher">teacher</option>
+          <option value="admin">admin</option>
+        </select>
+      </label>
+    </div>
+    <div class="admin-modal__actions">
+      <button class="admin-modal__cancel">Cancel</button>
+      <button class="admin-modal__primary" disabled>Add staff</button>
+    </div>`;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  const inputs = modal.querySelectorAll('input[data-field], select[data-field]');
+  const primary = modal.querySelector('.admin-modal__primary');
+  const check = () => {
+    let ok = true;
+    inputs.forEach((i) => { if (i.required && !i.value.trim()) ok = false; });
+    primary.disabled = !ok;
+  };
+  inputs.forEach((i) => i.addEventListener('input', check));
+  const close = () => overlay.parentNode && overlay.parentNode.removeChild(overlay);
+  modal.querySelector('.admin-modal__cancel').addEventListener('click', close);
+  primary.addEventListener('click', () => {
+    const row = {};
+    inputs.forEach((i) => row[i.dataset.field] = i.value.trim());
+    primary.disabled = true;
+    primary.textContent = '…';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        adminStaff.rows.push(resp.row);
+        close();
+        applyHash_();
+        setStatus('Added.', 'good', 2000);
+      })
+      .withFailureHandler((e) => {
+        primary.disabled = false;
+        primary.textContent = 'Add staff';
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      })
+      .adminAddStaffRow(row);
+  });
+}
+
+function openChangeStaffEmailModal_(r) {
+  typedConfirmModal_({
+    title: 'Change staff email?',
+    bodyHtml: `<p><strong>${esc_(r.Name)}</strong>'s email is <code>${esc_(r.Email)}</code>.</p>
+               <p>This changes the Staff sheet join key. The Roster's <code>TeacherEmail</code> column does NOT auto-update (separate join key, owned by the roster); roster updates are a separate action.</p>
+               <label class="admin-modal__form-row">New email:<input id="change-staff-email-input" type="email" style="margin-left: 8px"></label>`,
+    phrase: 'CHANGE EMAIL',
+    dangerLabel: 'Change email',
+    onConfirm: () => new Promise((resolve, reject) => {
+      const val = (document.getElementById('change-staff-email-input') || {}).value || '';
+      if (!val.trim()) { reject(new Error('New email required')); return; }
+      google.script.run
+        .withSuccessHandler(() => {
+          adminStaff.rows = null;
+          applyHash_();
+          setStatus('Email changed.', 'good', 2500);
+          resolve();
+        })
+        .withFailureHandler((e) => reject(e))
+        .adminChangeStaffEmail(r.Email, val.trim().toLowerCase());
+    }),
+  });
+}
+
+function openDeleteStaffModal_(r, host) {
+  plainConfirmModal_({
+    title: 'Delete staff row?',
+    bodyHtml: `Remove <strong>${esc_(r.Name)}</strong> (${esc_(r.Email)}) from the Staff sheet?`,
+    confirmLabel: 'Delete row',
+    danger: true,
+    onConfirm: () => new Promise((resolve, reject) => {
+      google.script.run
+        .withSuccessHandler(() => {
+          adminStaff.rows = adminStaff.rows.filter((x) => x.Email !== r.Email);
+          renderStaffTable_(host);
+          setStatus('Deleted.', 'good', 2000);
+          resolve();
+        })
+        .withFailureHandler((e) => reject(e))
+        .adminDeleteStaffRow(r.Email);
+    }),
+  });
+}
+
+function renderAdminLifecycle_(main) {
+  main.appendChild(buildAdminBreadcrumb_('Archive school year', null));
+
+  const wrap = document.createElement('div');
+  wrap.className = 'admin-lifecycle';
+  main.appendChild(wrap);
+
+  // Year picker
+  const pickerRow = document.createElement('div');
+  pickerRow.className = 'admin-lifecycle__picker';
+  pickerRow.innerHTML = '<label>Pick a school year to archive:</label>';
+  const sel = document.createElement('select');
+  sel.className = 'admin-lifecycle__year';
+  sel.disabled = true;
+  pickerRow.appendChild(sel);
+  wrap.appendChild(pickerRow);
+
+  const previewHost = document.createElement('div');
+  previewHost.className = 'admin-lifecycle__preview';
+  wrap.appendChild(previewHost);
+
+  const confirmHost = document.createElement('div');
+  confirmHost.className = 'admin-lifecycle__confirm';
+  wrap.appendChild(confirmHost);
+
+  // Fetch years
+  google.script.run
+    .withSuccessHandler((resp) => {
+      adminLifecycle.years = resp.years || [];
+      sel.disabled = false;
+      sel.innerHTML = '';
+      if (adminLifecycle.years.length === 0) {
+        const o = document.createElement('option');
+        o.textContent = '— no active projects —';
+        o.disabled = true;
+        o.selected = true;
+        sel.appendChild(o);
+        previewHost.innerHTML = '<div class="console-empty">No active projects to archive.</div>';
+        return;
+      }
+      adminLifecycle.years.forEach((y) => {
+        const o = document.createElement('option');
+        o.value = y; o.textContent = y;
+        sel.appendChild(o);
+      });
+      sel.value = adminLifecycle.years[0];
+      onPickYear_(sel.value, previewHost, confirmHost);
+      sel.addEventListener('change', () => onPickYear_(sel.value, previewHost, confirmHost));
+    })
+    .withFailureHandler(onFail_('loading years'))
+    .adminListArchivableYears();
+}
+
+function onPickYear_(year, previewHost, confirmHost) {
+  adminLifecycle.selectedYear = year;
+  adminLifecycle.preview = null;
+  previewHost.innerHTML = '<div class="admin-skeleton">Loading…</div>';
+  confirmHost.innerHTML = '';
+  google.script.run
+    .withSuccessHandler((resp) => {
+      adminLifecycle.preview = resp;
+      renderLifecyclePreview_(previewHost, resp);
+      renderLifecycleConfirm_(confirmHost, year);
+    })
+    .withFailureHandler(onFail_('previewing year'))
+    .adminPreviewArchiveYear(year);
+}
+
+function renderLifecyclePreview_(host, preview) {
+  host.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'admin-lifecycle__head';
+  head.textContent = preview.projects.length === 0
+    ? 'No active projects for this year.'
+    : 'This will affect ' + preview.projects.length + ' project' + (preview.projects.length === 1 ? '' : 's') + ':';
+  host.appendChild(head);
+
+  if (preview.projects.length === 0) return;
+
+  const list = document.createElement('div');
+  list.className = 'admin-lifecycle__list';
+  preview.projects.forEach((p) => {
+    const item = document.createElement('div');
+    item.className = 'admin-lifecycle__item';
+    const name = document.createElement('div');
+    name.className = 'admin-lifecycle__name';
+    name.textContent = p.name;
+    const meta = document.createElement('div');
+    meta.className = 'admin-lifecycle__meta';
+    meta.textContent = p.memberClasses.join(', ') + ' · ' + p.studentCount + ' student' + (p.studentCount === 1 ? '' : 's');
+    item.appendChild(name);
+    item.appendChild(meta);
+    list.appendChild(item);
+  });
+  host.appendChild(list);
+
+  const explain = document.createElement('div');
+  explain.className = 'admin-lifecycle__explain';
+  explain.innerHTML = `
+    <strong>For each project we will:</strong>
+    <ul>
+      <li>Flip status to <code>archived</code></li>
+      <li>Move the project folder into <code>OPS Research Tool / Archived /</code></li>
+      <li>Clear any student's saved active-project preference that points here</li>
+    </ul>`;
+  host.appendChild(explain);
+}
+
+function renderLifecycleConfirm_(host, year) {
+  host.innerHTML = '';
+  if (!adminLifecycle.preview || adminLifecycle.preview.projects.length === 0) return;
+
+  const phrase = 'ARCHIVE ' + year;
+  const label = document.createElement('div');
+  label.className = 'admin-lifecycle__phrase-label';
+  label.innerHTML = 'Type <code>' + esc_(phrase) + '</code> to confirm.';
+  host.appendChild(label);
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'admin-lifecycle__phrase-input';
+  input.autocomplete = 'off';
+  input.value = adminLifecycle.confirmText || '';
+  host.appendChild(input);
+
+  const actions = document.createElement('div');
+  actions.className = 'admin-lifecycle__actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'admin-btn-secondary';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => { input.value = ''; adminLifecycle.confirmText = ''; archiveBtn.disabled = true; });
+  const archiveBtn = document.createElement('button');
+  archiveBtn.className = 'admin-modal__danger';
+  archiveBtn.textContent = 'Archive ' + adminLifecycle.preview.projects.length + ' project' + (adminLifecycle.preview.projects.length === 1 ? '' : 's');
+  archiveBtn.disabled = (input.value !== phrase);
+
+  input.addEventListener('input', () => {
+    adminLifecycle.confirmText = input.value;
+    archiveBtn.disabled = (input.value !== phrase);
+  });
+
+  archiveBtn.addEventListener('click', () => {
+    archiveBtn.disabled = true;
+    archiveBtn.textContent = '…';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        const arch = (resp.archived || []).length;
+        const err = (resp.errors || []).length;
+        const msg = arch + ' archived' + (err > 0 ? ', ' + err + ' had errors' : '') + '.';
+        setStatus(msg, err > 0 ? 'bad' : 'good', 5000);
+        if (err > 0) {
+          renderLifecycleErrors_(host, resp.errors);
+        } else {
+          // Refresh.
+          adminLifecycle.years = null;
+          adminLifecycle.preview = null;
+          adminLifecycle.confirmText = '';
+          applyHash_();
+        }
+      })
+      .withFailureHandler((e) => {
+        archiveBtn.disabled = false;
+        archiveBtn.textContent = 'Archive';
+        setStatus(String(e && e.message || e), 'bad', 5000);
+      })
+      .adminArchiveSchoolYear(year, phrase);
+  });
+
+  actions.appendChild(cancel);
+  actions.appendChild(archiveBtn);
+  host.appendChild(actions);
+}
+
+function renderLifecycleErrors_(host, errors) {
+  const wrap = document.createElement('div');
+  wrap.className = 'admin-lifecycle__errors';
+  const head = document.createElement('div');
+  head.className = 'admin-lifecycle__errors-head';
+  head.textContent = errors.length + ' projects had errors:';
+  wrap.appendChild(head);
+  const list = document.createElement('ul');
+  errors.forEach((e) => {
+    const li = document.createElement('li');
+    li.textContent = (e.projectId || '?') + ' [' + e.step + ']: ' + e.error;
+    list.appendChild(li);
+  });
+  wrap.appendChild(list);
+  host.appendChild(wrap);
+}
+
+// ---------- Shared typed-confirm modal helper ----------
+
+/**
+ * Open a typed-confirm modal. The danger button stays disabled until the
+ * user types `args.phrase` exactly (case-sensitive). Closes on Cancel,
+ * on Esc, or after onConfirm completes.
+ *
+ * args:
+ *   title: string
+ *   bodyHtml: string (innerHTML — caller is responsible for escaping)
+ *   phrase: string                       (e.g., 'CHANGE EMAIL')
+ *   dangerLabel: string                  (button label, e.g., 'Change email')
+ *   onConfirm: function () -> Promise|void
+ *
+ * Returns nothing.
+ */
+function typedConfirmModal_(args) {
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'admin-modal admin-modal--typed';
+
+  const header = document.createElement('div');
+  header.className = 'admin-modal__header';
+  header.textContent = args.title;
+  modal.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'admin-modal__body';
+  body.innerHTML = args.bodyHtml;
+  modal.appendChild(body);
+
+  const phrase = document.createElement('div');
+  phrase.className = 'admin-modal__phrase';
+  phrase.innerHTML = 'Type <code></code> to confirm.';
+  phrase.querySelector('code').textContent = args.phrase;
+  modal.appendChild(phrase);
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'admin-modal__input';
+  input.autocomplete = 'off';
+  modal.appendChild(input);
+
+  const actions = document.createElement('div');
+  actions.className = 'admin-modal__actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'admin-modal__cancel';
+  cancel.textContent = 'Cancel';
+  const confirm = document.createElement('button');
+  confirm.className = 'admin-modal__danger';
+  confirm.textContent = args.dangerLabel;
+  confirm.disabled = true;
+  actions.appendChild(cancel);
+  actions.appendChild(confirm);
+  modal.appendChild(actions);
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const close = () => {
+    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    document.removeEventListener('keydown', escListener);
+  };
+  const escListener = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', escListener);
+
+  input.addEventListener('input', () => {
+    confirm.disabled = (input.value !== args.phrase);
+  });
+
+  cancel.addEventListener('click', close);
+  confirm.addEventListener('click', () => {
+    confirm.disabled = true;
+    confirm.textContent = '…';
+    const ret = args.onConfirm();
+    if (ret && typeof ret.then === 'function') {
+      ret.then(close).catch((e) => {
+        confirm.disabled = false;
+        confirm.textContent = args.dangerLabel;
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      });
+    } else {
+      close();
+    }
+  });
+
+  setTimeout(() => input.focus(), 50);
+}
+
+/**
+ * Open a plain (no typed phrase) confirm modal. Cleaner than the
+ * typed shell when the operation is reversible (e.g., unarchive,
+ * delete row with no work).
+ */
+function plainConfirmModal_(args) {
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'admin-modal';
+
+  const header = document.createElement('div');
+  header.className = 'admin-modal__header';
+  header.textContent = args.title;
+  modal.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'admin-modal__body';
+  body.innerHTML = args.bodyHtml;
+  modal.appendChild(body);
+
+  const actions = document.createElement('div');
+  actions.className = 'admin-modal__actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'admin-modal__cancel';
+  cancel.textContent = 'Cancel';
+  const confirm = document.createElement('button');
+  confirm.className = args.danger ? 'admin-modal__danger' : 'admin-modal__primary';
+  confirm.textContent = args.confirmLabel || 'OK';
+  actions.appendChild(cancel);
+  actions.appendChild(confirm);
+  modal.appendChild(actions);
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const close = () => {
+    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    document.removeEventListener('keydown', escListener);
+  };
+  const escListener = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', escListener);
+  cancel.addEventListener('click', close);
+  confirm.addEventListener('click', () => {
+    confirm.disabled = true;
+    confirm.textContent = '…';
+    const ret = args.onConfirm();
+    if (ret && typeof ret.then === 'function') {
+      ret.then(close).catch((e) => {
+        confirm.disabled = false;
+        confirm.textContent = args.confirmLabel || 'OK';
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      });
+    } else {
+      close();
+    }
+  });
+}
+
+// ---------- Shared helper: breadcrumb header for admin views ----------
+
+function buildAdminBreadcrumb_(label, rightContent) {
+  const wrap = document.createElement('div');
+  wrap.className = 'admin-breadcrumb';
+  const back = document.createElement('a');
+  back.className = 'admin-breadcrumb__back';
+  back.textContent = '← Admin';
+  back.href = '#/admin/roster';
+  wrap.appendChild(back);
+  const sep = document.createElement('span');
+  sep.className = 'admin-breadcrumb__sep';
+  sep.textContent = ' / ';
+  wrap.appendChild(sep);
+  const here = document.createElement('span');
+  here.className = 'admin-breadcrumb__current';
+  here.textContent = label;
+  wrap.appendChild(here);
+  if (rightContent) {
+    const right = document.createElement('div');
+    right.className = 'admin-breadcrumb__right';
+    right.appendChild(rightContent);
+    wrap.appendChild(right);
+  }
+  return wrap;
+}
+</script>

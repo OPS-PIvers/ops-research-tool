@@ -40,14 +40,26 @@ function isStaff_(email) {
   return !!e;
 }
 
-function isAdmin_(email) {
-  const e = getStaffEntry_(email);
-  return !!e && e.Role === ROLES.ADMIN;
+/**
+ * Throws 'Not authorized' if the caller isn't on Staff at all, or
+ * 'Admin only' if the caller is staff but not an admin. Returns the
+ * staff entry so callers can read .Email / .Name without re-fetching.
+ *
+ * The two error messages are deliberately distinct so the client toast
+ * can communicate "you're not staff at all" vs. "you're a teacher,
+ * this surface is admin-only".
+ */
+function assertAdmin_(actorEmail) {
+  const staff = getStaffEntry_(actorEmail);
+  if (!staff) throw new Error('Not authorized');
+  if (staff.Role !== ROLES.ADMIN) throw new Error('Admin only');
+  return staff;
 }
 
 /**
  * Validate the roster: every email present, unique, lowercase-comparable; every
- * student row has a Class string. Returns {ok, errors}.
+ * student row has First/Last/Class/TeacherEmail. ID optional but must be unique
+ * when present. Returns {ok, errors}.
  * Run from the editor or from setup() after wholesale roster replacement.
  */
 function validateRoster() {
@@ -55,21 +67,29 @@ function validateRoster() {
   const roster = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER);
   const staff = readAllAsObjects_(getTab_(ss, TABS.STAFF), HEADERS.STAFF);
   const errors = [];
-  const seen = new Set();
+  const emailSeen = new Set();
+  const idSeen = new Set();
   roster.forEach((r, i) => {
     const rowNum = i + 2;
     if (!r.Email) errors.push(`Roster row ${rowNum}: blank Email`);
-    if (!r.Name) errors.push(`Roster row ${rowNum}: blank Name`);
+    if (!r.First) errors.push(`Roster row ${rowNum}: blank First`);
+    if (!r.Last)  errors.push(`Roster row ${rowNum}: blank Last`);
     if (!r.Class) errors.push(`Roster row ${rowNum}: blank Class`);
+    if (!r.TeacherEmail) errors.push(`Roster row ${rowNum}: blank TeacherEmail`);
     const e = String(r.Email || '').toLowerCase();
-    if (e && seen.has(e)) errors.push(`Roster row ${rowNum}: duplicate Email ${e}`);
-    seen.add(e);
+    if (e && emailSeen.has(e)) errors.push(`Roster row ${rowNum}: duplicate Email ${e}`);
+    emailSeen.add(e);
+    const id = String(r.ID || '').trim();
+    if (id) {
+      if (idSeen.has(id)) errors.push(`Roster row ${rowNum}: duplicate ID ${id}`);
+      idSeen.add(id);
+    }
   });
   const staffSeen = new Set();
   staff.forEach((r, i) => {
     const rowNum = i + 2;
     if (!r.Email) errors.push(`Staff row ${rowNum}: blank Email`);
-    if (!r.Role) errors.push(`Staff row ${rowNum}: blank Role`);
+    if (!r.Role)  errors.push(`Staff row ${rowNum}: blank Role`);
     if (r.Role && r.Role !== ROLES.TEACHER && r.Role !== ROLES.ADMIN) {
       errors.push(`Staff row ${rowNum}: bad Role "${r.Role}" (must be teacher|admin)`);
     }

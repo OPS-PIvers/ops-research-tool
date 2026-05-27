@@ -50,12 +50,13 @@ function findOrCreateStudentSheet_(actorEmail, project) {
   ensureHeaders_(getTab_(ss, TABS.META), HEADERS.META);
   ensureHeaders_(getTab_(ss, TABS.SOURCES), HEADERS.SOURCES);
   ensureHeaders_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
-  // Populate Meta (single row)
+  // Populate Meta (single row) — names composed from First/Last; teacher
+  // is the display string (TeacherEmail is the join key, kept in roster).
   appendRow_(getTab_(ss, TABS.META), HEADERS.META, {
-    studentName: rosterEntry.Name,
+    studentName: (String(rosterEntry.Last || '') + ', ' + String(rosterEntry.First || '')).replace(/^, |, $/g, ''),
     studentEmail: actorEmail,
     class: rosterEntry.Class,
-    teacher: rosterEntry.Teacher,
+    teacher: rosterEntry.Teacher || rosterEntry.TeacherEmail || '',
     projectId: project.projectId,
     groupId: '',
   });
