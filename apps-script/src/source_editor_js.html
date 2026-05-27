@@ -181,6 +181,12 @@ function renderCitationForm() {
   form.appendChild(preview);
   updatePreview_(form, fields);
 
+  // Delete source — at the bottom of the left pane, after preview.
+  const dangerWrap = document.createElement('div');
+  dangerWrap.className = 'sb-modal__danger';
+  dangerWrap.appendChild(renderDeleteSourceUi_());
+  form.appendChild(dangerWrap);
+
   return form;
 }
 
@@ -589,5 +595,61 @@ function makeFilterChip_(value, label, color, count, active) {
     render();
   });
   return chip;
+}
+
+function renderDeleteSourceUi_() {
+  const wrap = document.createElement('div');
+  if (editor.confirmingSourceDelete) {
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'sb-modal__btn sb-modal__btn--cancel';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', () => {
+      editor.confirmingSourceDelete = false;
+      render();
+    });
+    wrap.appendChild(cancel);
+
+    const confirm = document.createElement('button');
+    confirm.type = 'button';
+    confirm.className = 'sb-modal__btn sb-modal__btn--danger';
+    const n = editor.highlights.length;
+    confirm.textContent = n > 0
+      ? 'Confirm — delete source and ' + n + ' piece' + (n === 1 ? '' : 's') + ' of evidence'
+      : 'Confirm — delete source';
+    confirm.addEventListener('click', performDeleteSource_);
+    wrap.appendChild(confirm);
+  } else {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'sb-modal__btn sb-modal__btn--danger-outline';
+    btn.textContent = '🗑  Delete source';
+    btn.addEventListener('click', () => {
+      editor.confirmingSourceDelete = true;
+      render();
+    });
+    wrap.appendChild(btn);
+  }
+  return wrap;
+}
+
+/**
+ * Non-optimistic delete — modal stays open until the server confirms. On
+ * success, close the modal; the sidebar's polling loop picks up the
+ * deletion on its next tick. On failure, revert to the initial single-button
+ * state and surface the error.
+ */
+function performDeleteSource_() {
+  setStatus('Deleting…');
+  google.script.run
+    .withSuccessHandler(() => {
+      google.script.host.close();
+    })
+    .withFailureHandler((e) => {
+      editor.confirmingSourceDelete = false;
+      render();
+      setStatus('Delete failed: ' + (e && e.message || e), 'bad');
+    })
+    .sidebarDeleteSource(ctx.projectId, ctx.sourceId);
 }
 </script>

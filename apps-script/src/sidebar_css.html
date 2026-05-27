@@ -355,4 +355,23 @@ select, input, textarea { font: inherit; }
   background: #fef7e0; border: 1px solid #f0d000; border-radius: 4px;
   padding: 8px 10px; font-size: 12px; color: #5f4400; margin-bottom: 8px;
 }
+.sb-modal__danger {
+  margin-top: 16px; padding-top: 12px;
+  border-top: 1px solid var(--c-line);
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+.sb-modal__btn {
+  padding: 6px 10px; border-radius: 4px; font-size: 12px;
+  border: 1px solid var(--c-line); background: #fff; cursor: pointer;
+}
+.sb-modal__btn--cancel { color: var(--c-muted); }
+.sb-modal__btn--danger-outline {
+  color: var(--c-bad); border-color: var(--c-bad); background: #fff;
+}
+.sb-modal__btn--danger-outline:hover { background: #fce8e6; }
+.sb-modal__btn--danger {
+  background: var(--c-bad); color: #fff; border-color: var(--c-bad);
+  font-weight: 500;
+}
+.sb-modal__btn--danger:hover { filter: brightness(1.05); }
 </style>
