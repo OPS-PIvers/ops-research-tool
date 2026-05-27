@@ -13,7 +13,10 @@ function devSeedDevProject() {
   const rosterSs = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
   const rosterTab = getTab_(rosterSs, TABS.ROSTER);
   if (findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', me) < 0) {
-    appendRow_(rosterTab, HEADERS.ROSTER, { Name: 'Dev Owner', Email: me, Class: 'DEV', Teacher: me });
+    appendRow_(rosterTab, HEADERS.ROSTER, {
+      ID: '', First: 'Dev', Last: 'Owner', Email: me, Class: 'DEV',
+      Teacher: 'Dev Owner', TeacherEmail: me
+    });
   }
   // Add owner to staff as admin if missing.
   const staffTab = getTab_(rosterSs, TABS.STAFF);
