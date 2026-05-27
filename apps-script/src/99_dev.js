@@ -328,3 +328,38 @@ function devTestAggregateStudent() {
 
   console.log(pass + '/' + (pass + fail) + ' passed');
 }
+
+/**
+ * Tests consoleGetContext + assertStaff_ behavior.
+ * Note: this test uses the caller's real identity. The dev-seed harness
+ * adds the caller to the Staff sheet as admin, so the "is staff" branch
+ * is what we can directly assert. We assert the structural shape too.
+ */
+function devTestConsoleAuth() {
+  devSeedDevProject();   // ensures caller is staff + admin
+  const ctx = consoleGetContext();
+
+  let pass = 0, fail = 0;
+  const check = (label, cond) => {
+    if (cond) { pass++; console.log('PASS ' + label); }
+    else      { fail++; console.log('FAIL ' + label); }
+  };
+
+  check('ctx.ok',                       ctx && ctx.ok === true);
+  check('actor is the caller email',    ctx.actor === Session.getEffectiveUser().getEmail());
+  check('staff entry present',          !!ctx.staff);
+  check('role is admin',                ctx.role === 'admin');
+  check('teacherClasses is null (admin)', ctx.teacherClasses === null);
+
+  // assertStaff_ for the caller should NOT throw.
+  let throwsForStaff = false;
+  try { assertStaff_(ctx.actor); } catch (e) { throwsForStaff = true; }
+  check('assertStaff_ does not throw for staff', !throwsForStaff);
+
+  // assertStaff_ for a definitely-not-staff email SHOULD throw.
+  let throwsForRando = false;
+  try { assertStaff_('definitely-not-staff@example.com'); } catch (e) { throwsForRando = true; }
+  check('assertStaff_ throws for non-staff', throwsForRando);
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
