@@ -282,6 +282,13 @@ function saveSourcePatch_(patch) {
 
 function renderEvidenceList_() {
   els.evidence.innerHTML = '';
+  if (editor.highlights.length === 0 && editor.source) {
+    const banner = document.createElement('div');
+    banner.className = 'sb-modal__banner';
+    banner.textContent =
+      'This source has no evidence. The source still exists — close the editor, or click "Delete source" below to remove it.';
+    els.evidence.appendChild(banner);
+  }
   const visible = editor.highlights.filter(highlightPassesFilter_);
   if (visible.length === 0) {
     const e = document.createElement('div');
@@ -347,7 +354,34 @@ function renderEvidenceCard(h) {
     render();
   });
   actions.appendChild(editBtn);
-  // Delete button comes in Task 7.
+  if (editor.confirmingHighlightDeleteId === h.highlightId) {
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'sb-highlight__btn sb-highlight__btn--cancel';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => {
+      editor.confirmingHighlightDeleteId = null;
+      render();
+    });
+    actions.appendChild(cancelBtn);
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'sb-highlight__btn sb-highlight__btn--confirm';
+    confirmBtn.textContent = 'Confirm delete';
+    confirmBtn.addEventListener('click', () => optimisticallyDeleteHighlight_(h));
+    actions.appendChild(confirmBtn);
+  } else {
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'sb-highlight__btn sb-highlight__btn--delete';
+    delBtn.textContent = 'Delete';
+    delBtn.addEventListener('click', () => {
+      editor.confirmingHighlightDeleteId = h.highlightId;
+      render();
+    });
+    actions.appendChild(delBtn);
+  }
   card.appendChild(actions);
 
   if (editor.editingHighlightId === h.highlightId) {
@@ -463,5 +497,35 @@ function saveHighlightPatch_(highlight, patch) {
     .withSuccessHandler(() => setStatus('Saved.', 'good', 1500))
     .withFailureHandler(onFail('saving highlight'))
     .sidebarUpdateHighlight(merged);
+}
+
+/**
+ * Same snapshot/restore pattern the sidebar uses today, scoped to the modal's
+ * local state. cascadeSource is ALWAYS false from the modal — the modal has
+ * its own explicit "Delete source" button, so it never triggers an implicit
+ * source-cascade when the last highlight goes away.
+ */
+function optimisticallyDeleteHighlight_(highlight) {
+  const snapshotIdx = editor.highlights.findIndex((h) => h.highlightId === highlight.highlightId);
+  const snapshot = highlight;
+
+  editor.highlights = editor.highlights.filter((h) => h.highlightId !== highlight.highlightId);
+  editor.confirmingHighlightDeleteId = null;
+  if (editor.editingHighlightId === highlight.highlightId) editor.editingHighlightId = null;
+  render();
+  setStatus('Deleted.', 'good', 1500);
+
+  google.script.run
+    .withSuccessHandler(() => { /* already reflected */ })
+    .withFailureHandler((e) => {
+      const insertAt = (arr, idx, item) => {
+        if (idx < 0 || idx > arr.length) arr.push(item);
+        else arr.splice(idx, 0, item);
+      };
+      insertAt(editor.highlights, snapshotIdx, snapshot);
+      render();
+      setStatus('Delete failed: ' + (e && e.message || e), 'bad');
+    })
+    .sidebarDeleteHighlight(highlight.highlightId, ctx.projectId, false);
 }
 </script>
