@@ -738,17 +738,13 @@ function paintDashboard_() {
   if (!body) return;
   body.innerHTML = '';
 
-  // Real table render lands in Task 14; for now, just confirm we have data.
   if (dashboard.data.students.length === 0) {
     const e = document.createElement('div');
     e.className = 'db-empty';
     e.textContent = 'No students enrolled in your classes for this project.';
     body.appendChild(e);
   } else {
-    const e = document.createElement('div');
-    e.className = 'db-empty';
-    e.textContent = 'Loaded ' + dashboard.data.students.length + ' students. Table render — Task 14.';
-    body.appendChild(e);
+    body.appendChild(buildDashboardTable_());
   }
 
   updateAsOf_();
@@ -774,6 +770,182 @@ function relativeTime_(iso) {
   if (diff < 3600)  return Math.floor(diff / 60) + 'm ago';
   if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
   return Math.floor(diff / 86400) + 'd ago';
+}
+
+function buildDashboardTable_() {
+  const table = document.createElement('table');
+  table.className = 'db-table';
+
+  const headers = [
+    { key: 'name',         label: 'Student' },
+    { key: 'highlights',   label: 'Category mix' },
+    { key: 'completion',   label: 'Completion' },
+    { key: 'gaps',         label: 'Gaps' },
+    { key: 'activity',     label: 'Activity' },
+  ];
+
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  headers.forEach((h) => {
+    const th = document.createElement('th');
+    const sortable = (h.key !== 'gaps');   // gaps don't make sense as a sort key
+    th.textContent = h.label;
+    if (sortable) {
+      const arrow = document.createElement('span');
+      arrow.className = 'db-th-arrow';
+      arrow.textContent = dashboard.sortKey === h.key ? (dashboard.sortDir === 'asc' ? '▲' : '▼') : '';
+      th.appendChild(arrow);
+      th.addEventListener('click', () => {
+        if (dashboard.sortKey === h.key) {
+          dashboard.sortDir = dashboard.sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          dashboard.sortKey = h.key;
+          dashboard.sortDir = (h.key === 'name') ? 'asc' : 'desc';
+        }
+        paintDashboard_();
+      });
+    } else {
+      th.style.cursor = 'default';
+    }
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  sortedStudents_().forEach((s) => tbody.appendChild(buildStudentRow_(s)));
+  table.appendChild(tbody);
+
+  return table;
+}
+
+function sortedStudents_() {
+  const arr = dashboard.data.students.slice();
+  const dir = dashboard.sortDir === 'asc' ? 1 : -1;
+  switch (dashboard.sortKey) {
+    case 'name':
+      arr.sort((a, b) => dir * formatLastFirst_(a.name).localeCompare(formatLastFirst_(b.name)));
+      break;
+    case 'completion':
+      arr.sort((a, b) => dir * (a.completion.percent - b.completion.percent));
+      break;
+    case 'highlights':
+      arr.sort((a, b) => dir * (a.highlightCount - b.highlightCount));
+      break;
+    case 'sources':
+      arr.sort((a, b) => dir * (a.sourceCount - b.sourceCount));
+      break;
+    case 'activity':
+    default:
+      arr.sort((a, b) => dir * String(a.lastActivity || '').localeCompare(String(b.lastActivity || '')));
+  }
+  return arr;
+}
+
+function buildStudentRow_(s) {
+  const tr = document.createElement('tr');
+  tr.addEventListener('click', () => {
+    navigate_('/projects/' + encodeURIComponent(state.projectId) + '/students/' + encodeURIComponent(s.email));
+  });
+
+  // Name
+  const tdName = document.createElement('td');
+  const nameWrap = document.createElement('div');
+  nameWrap.className = 'db-row__name';
+  nameWrap.textContent = formatLastFirst_(s.name);
+  tdName.appendChild(nameWrap);
+  if (s.class) {
+    const cls = document.createElement('div');
+    cls.className = 'db-row__name-class';
+    cls.textContent = s.class;
+    tdName.appendChild(cls);
+  }
+  tr.appendChild(tdName);
+
+  // Category mix stack-bar
+  const tdMix = document.createElement('td');
+  tdMix.appendChild(buildMixBar_(s.categoryMix));
+  tr.appendChild(tdMix);
+
+  // Completion
+  const tdComp = document.createElement('td');
+  tdComp.appendChild(buildCompletionCell_(s.completion));
+  tr.appendChild(tdComp);
+
+  // Gaps
+  const tdGaps = document.createElement('td');
+  tdGaps.appendChild(buildGapsCell_(s.gaps));
+  tr.appendChild(tdGaps);
+
+  // Activity
+  const tdAct = document.createElement('td');
+  tdAct.className = 'db-activity' + (s.lastActivity ? '' : ' db-activity--never');
+  tdAct.textContent = s.lastActivity ? relativeTime_(s.lastActivity) : '—';
+  tr.appendChild(tdAct);
+
+  return tr;
+}
+
+function buildMixBar_(mix) {
+  const wrap = document.createElement('div');
+  wrap.className = 'db-mix';
+  const total = mix.reduce((acc, m) => acc + m.count, 0);
+  if (total === 0) return wrap;   // empty bar — hatched background only
+  mix.forEach((m) => {
+    if (m.count === 0) return;
+    const seg = document.createElement('div');
+    seg.className = 'db-mix__seg';
+    seg.style.backgroundColor = m.color;
+    seg.style.flex = m.count + ' 0 auto';
+    seg.title = m.label + ': ' + m.count;
+    wrap.appendChild(seg);
+  });
+  return wrap;
+}
+
+function buildCompletionCell_(comp) {
+  const wrap = document.createElement('div');
+  wrap.className = 'db-completion-wrap';
+  const bar = document.createElement('div');
+  bar.className = 'db-completion-bar';
+  const fill = document.createElement('div');
+  const klass = comp.percent >= 80 ? 'db-completion-fill--good'
+             : comp.percent >= 40 ? 'db-completion-fill--warn'
+             : 'db-completion-fill--bad';
+  fill.className = 'db-completion-fill ' + klass;
+  fill.style.width = comp.percent + '%';
+  bar.appendChild(fill);
+  wrap.appendChild(bar);
+  const pct = document.createElement('div');
+  pct.className = 'db-completion-pct';
+  pct.textContent = comp.percent + '%';
+  wrap.appendChild(pct);
+  return wrap;
+}
+
+function buildGapsCell_(gaps) {
+  const wrap = document.createElement('div');
+  wrap.className = 'db-gaps';
+  ['citation', 'classification', 'annotation'].forEach((kind) => {
+    const n = gaps[kind] || 0;
+    const chip = document.createElement('span');
+    const klass = n === 0 ? '' : (n <= 3 ? 'db-gap--warn' : 'db-gap--bad');
+    chip.className = 'db-gap ' + klass;
+    const short = kind === 'citation' ? 'cit' : (kind === 'classification' ? 'cls' : 'ann');
+    chip.textContent = short + ':' + n;
+    chip.title = kind + ': ' + n + ' missing';
+    wrap.appendChild(chip);
+  });
+  return wrap;
+}
+
+/** Format roster Name ("Alex Smith") as "Smith, Alex". Falls back to as-is. */
+function formatLastFirst_(name) {
+  const s = String(name || '').trim();
+  if (!s) return '';
+  const sp = s.lastIndexOf(' ');
+  if (sp < 0) return s;
+  return s.slice(sp + 1) + ', ' + s.slice(0, sp);
 }
 
 // View render functions — placeholders filled in Tasks 10+.
