@@ -19,6 +19,10 @@ const state = {
   expandedSourceId: null,   // sourceId whose citation form is open (singular)
   editingHighlightId: null,
   confirmingDeleteId: null, // highlightId whose Delete button is in its second-click "Confirm" state
+  modalOpenForSourceId: null,   // sourceId of the currently-open modal (drives polling)
+  lastDataJson: null,           // JSON of last sidebarGetProjectData response (polling diff)
+  pollHandle: null,             // setInterval handle for the modal-open polling loop
+  pollUnchangedTicks: 0,        // bounded fallback stop counter
 };
 
 const els = {
@@ -375,6 +379,16 @@ function renderSource(source) {
   inlineBtn.title = 'Insert MLA in-text citation at the cursor';
   inlineBtn.addEventListener('click', (e) => { e.stopPropagation(); insertInlineForSource(source); });
   meta.appendChild(inlineBtn);
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.className = 'sb-source__action';
+  openBtn.textContent = 'Open in editor';
+  openBtn.title = 'Open this source in the editor';
+  openBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openSourceEditor_(source.sourceId, null);
+  });
+  meta.appendChild(openBtn);
   const expand = document.createElement('button');
   expand.type = 'button';
   expand.className = 'sb-source__action sb-source__expand';
@@ -697,6 +711,13 @@ function renderHighlight(source, h) {
   });
   actions.appendChild(editBtn);
 
+  const openInEditor = document.createElement('button');
+  openInEditor.type = 'button';
+  openInEditor.className = 'sb-highlight__btn sb-highlight__btn--edit';
+  openInEditor.textContent = 'Open in editor';
+  openInEditor.addEventListener('click', () => openSourceEditor_(source.sourceId, h.highlightId));
+  actions.appendChild(openInEditor);
+
   // Two-step inline delete. First click on Delete turns the action row
   // into [Cancel][Confirm delete]; second click optimistically removes
   // the row locally and fires the server delete in the background.
@@ -840,6 +861,27 @@ function truncate_(s, n) {
 }
 
 // ---------- save / failure plumbing ----------
+
+/**
+ * Open the per-source editor modal. Stores the sourceId in state so the
+ * sidebar's polling loop (Task 12) knows to refresh while the modal is open.
+ */
+function openSourceEditor_(sourceId, focusHighlightId) {
+  state.modalOpenForSourceId = sourceId;
+  state.lastDataJson = JSON.stringify({ sources: state.sources, highlights: state.highlights });
+  startEditorPolling_();   // defined in Task 12
+  google.script.run
+    .withFailureHandler((e) => {
+      state.modalOpenForSourceId = null;
+      stopEditorPolling_();   // defined in Task 12
+      onFail('opening editor')(e);
+    })
+    .sidebarOpenSourceEditor(state.projectId, sourceId, focusHighlightId || '');
+}
+
+// Placeholders so calls work before Task 12 lands.
+function startEditorPolling_() { /* implemented in Task 12 */ }
+function stopEditorPolling_()  { /* implemented in Task 12 */ }
 
 function saveSourcePatch_(source, patch) {
   const merged = Object.assign({}, patch, { sourceId: source.sourceId, projectId: state.projectId });
