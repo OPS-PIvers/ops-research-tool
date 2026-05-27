@@ -1,0 +1,1485 @@
+<script>
+// ============================================================
+// OPS Research Tool — Teacher Console
+//
+// Bootstrap → consoleGetContext → render auth-gated shell or
+// "Not authorized" panel. Real screens land in Tasks 9+.
+// ============================================================
+
+const state = {
+  ctx: null,
+  view: null,            // 'MY_PROJECTS' | 'DASHBOARD' | 'STUDENT' | 'UNAUTHED' | 'BOOT'
+  projectId: null,
+  studentEmail: null,
+};
+
+const root = document.getElementById('console-root');
+
+bootstrap();
+
+document.addEventListener('click', () => {
+  if (myProjects.openMenuId !== null) {
+    myProjects.openMenuId = null;
+    if (state.view === 'MY_PROJECTS') renderShell_();
+  }
+});
+
+function bootstrap() {
+  state.view = 'BOOT';
+  renderBoot_();
+  google.script.run
+    .withSuccessHandler(onContext_)
+    .withFailureHandler(onFail_('loading session'))
+    .consoleGetContext();
+}
+
+function onContext_(ctx) {
+  state.ctx = ctx;
+  if (!ctx || !ctx.staff) {
+    state.view = 'UNAUTHED';
+    renderUnauthed_();
+    return;
+  }
+  // Set up hash routing. parseHash_ → state mutation → render.
+  window.addEventListener('hashchange', onHashChange_);
+  applyHash_();   // initial route from whatever the URL is
+}
+
+function onHashChange_() {
+  applyHash_();
+}
+
+function applyHash_() {
+  const r = parseHash_(window.location.hash);
+  state.view = r.view;
+  state.projectId = r.projectId;
+  state.studentEmail = r.studentEmail;
+  renderShell_();
+}
+
+/**
+ * Parse the URL hash into a route descriptor.
+ *
+ *   ''  or '#/projects'                                 → MY_PROJECTS
+ *   '#/projects/<id>'                                   → DASHBOARD
+ *   '#/projects/<id>/students/<encodedEmail>'           → STUDENT
+ *   anything else                                       → MY_PROJECTS (default)
+ */
+function parseHash_(hash) {
+  const h = String(hash || '').replace(/^#\/?/, '');
+  if (!h || h === 'projects') return { view: 'MY_PROJECTS' };
+  const parts = h.split('/');
+  if (parts[0] !== 'projects') return { view: 'MY_PROJECTS' };
+  if (parts.length === 2)
+    return { view: 'DASHBOARD', projectId: decodeURIComponent(parts[1]) };
+  if (parts.length === 4 && parts[2] === 'students')
+    return {
+      view: 'STUDENT',
+      projectId: decodeURIComponent(parts[1]),
+      studentEmail: decodeURIComponent(parts[3]),
+    };
+  return { view: 'MY_PROJECTS' };
+}
+
+function navigate_(path) {
+  // path is a hash without the leading '#' (e.g., '/projects/<id>')
+  window.location.hash = path;
+}
+
+function renderBoot_() {
+  root.innerHTML = '';
+  const el = document.createElement('div');
+  el.className = 'console-boot';
+  const sp = document.createElement('div');
+  sp.className = 'console-spinner';
+  el.appendChild(sp);
+  const label = document.createElement('div');
+  label.textContent = 'Loading…';
+  el.appendChild(label);
+  root.appendChild(el);
+}
+
+function renderUnauthed_() {
+  root.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'console-unauthed';
+  const h1 = document.createElement('h1');
+  h1.textContent = 'Not authorized';
+  wrap.appendChild(h1);
+  const p1 = document.createElement('p');
+  p1.textContent = 'This tool is staff-only. Sign in with your district account, or contact your district admin if you believe this is a mistake.';
+  wrap.appendChild(p1);
+  if (state.ctx && state.ctx.actor) {
+    const p2 = document.createElement('p');
+    p2.innerHTML = 'Signed in as <code></code>.';
+    p2.querySelector('code').textContent = state.ctx.actor;
+    wrap.appendChild(p2);
+  }
+  root.appendChild(wrap);
+}
+
+function renderShell_() {
+  root.innerHTML = '';
+  root.appendChild(buildHeader_());
+  const main = document.createElement('main');
+  main.className = 'console-main';
+  main.id = 'console-main';
+  root.appendChild(main);
+  renderView_(main);
+}
+
+function renderView_(main) {
+  switch (state.view) {
+    case 'MY_PROJECTS': return renderMyProjects_(main);
+    case 'DASHBOARD':   return renderDashboard_(main);
+    case 'STUDENT':     return renderStudentDetail_(main);
+    default:
+      main.innerHTML = '<div class="console-empty">Unknown view.</div>';
+  }
+}
+
+// MY_PROJECTS view-local state. Reset each time we enter the view.
+const myProjects = {
+  filter: 'active',   // 'active' | 'archived'
+  projects: null,     // loaded by fetchMyProjects_
+  openMenuId: null,   // sourceId whose kebab menu is open (null = none)
+};
+
+function renderMyProjects_(main) {
+  // Toolbar
+  const toolbar = document.createElement('div');
+  toolbar.className = 'mp-toolbar';
+  const title = document.createElement('h1');
+  title.className = 'mp-title';
+  title.textContent = 'My Projects';
+  toolbar.appendChild(title);
+
+  const right = document.createElement('div');
+  right.style.display = 'flex';
+  right.style.gap = '12px';
+  right.style.alignItems = 'center';
+
+  const toggle = document.createElement('div');
+  toggle.className = 'mp-toggle';
+  ['active', 'archived'].forEach((f) => {
+    const b = document.createElement('button');
+    b.textContent = f.charAt(0).toUpperCase() + f.slice(1);
+    if (myProjects.filter === f) b.classList.add('mp-toggle--active');
+    b.addEventListener('click', () => {
+      if (myProjects.filter === f) return;
+      myProjects.filter = f;
+      myProjects.projects = null;
+      renderShell_();
+      fetchMyProjects_();
+    });
+    toggle.appendChild(b);
+  });
+  right.appendChild(toggle);
+
+  const newBtn = document.createElement('button');
+  newBtn.className = 'mp-new-btn';
+  newBtn.textContent = '+ New project';
+  newBtn.addEventListener('click', openCreateProjectModal_);   // implemented in Task 11
+  right.appendChild(newBtn);
+
+  toolbar.appendChild(right);
+  main.appendChild(toolbar);
+
+  // Body — either skeletons (while loading) or the project list.
+  const body = document.createElement('div');
+  body.className = 'mp-list';
+  body.id = 'mp-body';
+  main.appendChild(body);
+
+  if (myProjects.projects === null) {
+    renderMpSkeletons_(body);
+    fetchMyProjects_();
+  } else {
+    renderMpCards_(body);
+  }
+}
+
+function renderMpSkeletons_(body) {
+  body.innerHTML = '';
+  for (let i = 0; i < 3; i++) {
+    const sk = document.createElement('div');
+    sk.className = 'mp-skeleton';
+    const l1 = document.createElement('div');
+    l1.className = 'mp-skeleton__line mp-skeleton__line--mid';
+    sk.appendChild(l1);
+    const l2 = document.createElement('div');
+    l2.className = 'mp-skeleton__line mp-skeleton__line--long';
+    sk.appendChild(l2);
+    body.appendChild(sk);
+  }
+}
+
+function fetchMyProjects_() {
+  google.script.run
+    .withSuccessHandler((resp) => {
+      if (!resp || !resp.ok) {
+        setStatus('Could not load projects.', 'bad', 4000);
+        return;
+      }
+      myProjects.projects = resp.projects || [];
+      renderShell_();
+    })
+    .withFailureHandler(onFail_('loading projects'))
+    .consoleGetMyProjects(myProjects.filter);
+}
+
+function renderMpCards_(body) {
+  body.innerHTML = '';
+  if (myProjects.projects.length === 0) {
+    const e = document.createElement('div');
+    e.className = 'console-empty';
+    e.textContent = myProjects.filter === 'archived'
+      ? 'No archived projects.'
+      : 'You\'re not on any active projects. Click + New project to create one.';
+    body.appendChild(e);
+    return;
+  }
+  myProjects.projects.forEach((p) => body.appendChild(buildProjectCard_(p)));
+}
+
+function buildProjectCard_(p) {
+  const card = document.createElement('div');
+  card.className = 'mp-card';
+
+  const name = document.createElement('div');
+  name.className = 'mp-card__name';
+  name.textContent = p.name;
+  card.appendChild(name);
+
+  const meta = document.createElement('div');
+  meta.className = 'mp-card__meta';
+  const parts = [
+    p.schoolYear,
+    p.bundleName,
+    p.memberClasses.join(', '),
+    p.studentCount + ' student' + (p.studentCount === 1 ? '' : 's'),
+  ].filter(Boolean);
+  meta.textContent = parts.join(' · ');
+  card.appendChild(meta);
+
+  const actions = document.createElement('div');
+  actions.className = 'mp-card__actions';
+  const open = document.createElement('button');
+  open.className = 'mp-card__open';
+  open.textContent = 'Open';
+  open.addEventListener('click', () => navigate_('/projects/' + encodeURIComponent(p.projectId)));
+  actions.appendChild(open);
+
+  const kebab = document.createElement('button');
+  kebab.className = 'mp-card__kebab';
+  kebab.textContent = '⋯';
+  kebab.title = 'More actions';
+  kebab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    myProjects.openMenuId = myProjects.openMenuId === p.projectId ? null : p.projectId;
+    renderShell_();
+  });
+  actions.appendChild(kebab);
+  card.appendChild(actions);
+
+  if (myProjects.openMenuId === p.projectId) {
+    card.appendChild(buildKebabMenu_(p));
+  }
+
+  return card;
+}
+
+function buildKebabMenu_(p) {
+  const menu = document.createElement('div');
+  menu.className = 'mp-kebab-menu';
+  // Position below the kebab button visually.
+  menu.style.position = 'absolute';
+  menu.style.top = '52px';
+  menu.style.right = '20px';
+
+  if (p.status === 'active') {
+    const archBtn = document.createElement('button');
+    archBtn.className = 'mp-kebab-menu__danger';
+    archBtn.textContent = 'Archive…';
+    archBtn.addEventListener('click', (e) => { e.stopPropagation(); confirmArchive_(p); });
+    menu.appendChild(archBtn);
+  } else {
+    const unArchBtn = document.createElement('button');
+    unArchBtn.textContent = 'Unarchive';
+    unArchBtn.addEventListener('click', (e) => { e.stopPropagation(); doUnarchive_(p); });
+    menu.appendChild(unArchBtn);
+  }
+  return menu;
+}
+
+// Create modal implemented in Task 11. Archive/unarchive in Task 12.
+function openCreateProjectModal_() {
+  const fields = {
+    name: '',
+    schoolYear: defaultSchoolYear_(),
+    bundleId: '',
+    memberClasses: [],
+  };
+
+  // Need the bundle list + the class list. Bundle list comes from a separate
+  // fetch; class list we infer from the current ctx.teacherClasses (or
+  // from a Roster fetch for admins).
+  setStatus('Loading bundles…', null, 1000);
+  google.script.run
+    .withSuccessHandler((bundlesResp) => {
+      const bundles = bundlesResp && bundlesResp.bundles ? bundlesResp.bundles : [];
+      if (bundles.length === 0) {
+        setStatus('No bundles available.', 'bad', 3000);
+        return;
+      }
+      fields.bundleId = bundles[0].bundleId;
+
+      // Class list: teachers see their teacherClasses; admins see all classes
+      // we can find in the Roster. For admins, derive from the currently-loaded
+      // project list if available; otherwise fall back to a free-text option.
+      const adminAllClasses = collectKnownClasses_();
+      const classOptions = state.ctx.role === 'admin'
+        ? adminAllClasses
+        : (state.ctx.teacherClasses || []);
+
+      renderCreateModal_(fields, bundles, classOptions);
+    })
+    .withFailureHandler(onFail_('loading bundles'))
+    .listBundlesForConsole_();
+}
+
+/** Derive distinct classes from currently-loaded project memberClasses lists.
+ *  Best-effort: if myProjects.projects isn't loaded, returns []. */
+function collectKnownClasses_() {
+  const set = {};
+  (myProjects.projects || []).forEach((p) => {
+    (p.memberClasses || []).forEach((c) => { if (c) set[c] = true; });
+  });
+  return Object.keys(set).sort();
+}
+
+function defaultSchoolYear_() {
+  const now = new Date();
+  const y = now.getFullYear();
+  // School year typically starts in August. If we're before August, current
+  // school year is (prev)-(curr); else current-(next).
+  return now.getMonth() >= 7 ? (y + '-' + String(y + 1).slice(2)) : ((y - 1) + '-' + String(y).slice(2));
+}
+
+function renderCreateModal_(fields, bundles, classOptions) {
+  closeModal_();   // in case one is open
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.id = 'modal-backdrop';
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal_(); });
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+
+  const header = document.createElement('div');
+  header.className = 'modal__header';
+  header.textContent = 'New project';
+  modal.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'modal__body';
+
+  // Name
+  body.appendChild(makeField_('Name', (() => {
+    const i = document.createElement('input');
+    i.type = 'text'; i.maxLength = 80; i.placeholder = 'e.g., NHD 2026';
+    i.addEventListener('input', () => { fields.name = i.value; updateCreateBtn_(); });
+    return i;
+  })()));
+
+  // School year
+  body.appendChild(makeField_('School year', (() => {
+    const s = document.createElement('select');
+    const opts = generateSchoolYearOptions_();
+    opts.forEach((y) => {
+      const o = document.createElement('option');
+      o.value = y; o.textContent = y;
+      if (y === fields.schoolYear) o.selected = true;
+      s.appendChild(o);
+    });
+    s.addEventListener('change', () => { fields.schoolYear = s.value; });
+    return s;
+  })()));
+
+  // Bundle
+  body.appendChild(makeField_('Bundle', (() => {
+    const s = document.createElement('select');
+    bundles.forEach((b) => {
+      const o = document.createElement('option');
+      o.value = b.bundleId; o.textContent = b.name;
+      if (b.bundleId === fields.bundleId) o.selected = true;
+      s.appendChild(o);
+    });
+    s.addEventListener('change', () => { fields.bundleId = s.value; });
+    return s;
+  })()));
+
+  // Classes
+  body.appendChild((() => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal__field';
+    const lab = document.createElement('label');
+    lab.textContent = 'Member classes';
+    wrap.appendChild(lab);
+    const box = document.createElement('div');
+    box.className = 'modal__classes';
+    if (classOptions.length === 0) {
+      const note = document.createElement('div');
+      note.className = 'modal__error';
+      note.textContent = state.ctx.role === 'admin'
+        ? 'No classes detected in your projects yet. Load existing projects first, or seed the Roster.'
+        : 'You are not listed as the Teacher for any classes.';
+      box.appendChild(note);
+    } else {
+      classOptions.forEach((c) => {
+        const lbl = document.createElement('label');
+        lbl.className = 'modal__class-checkbox';
+        const inp = document.createElement('input');
+        inp.type = 'checkbox'; inp.value = c;
+        inp.addEventListener('change', () => {
+          fields.memberClasses = fields.memberClasses.filter((x) => x !== c);
+          if (inp.checked) fields.memberClasses.push(c);
+          updateCreateBtn_();
+        });
+        lbl.appendChild(inp);
+        lbl.appendChild(document.createTextNode(' ' + c));
+        box.appendChild(lbl);
+      });
+    }
+    wrap.appendChild(box);
+    return wrap;
+  })());
+
+  const errMsg = document.createElement('div');
+  errMsg.className = 'modal__error';
+  errMsg.id = 'create-error';
+  body.appendChild(errMsg);
+
+  modal.appendChild(body);
+
+  const footer = document.createElement('div');
+  footer.className = 'modal__footer';
+  const cancel = document.createElement('button');
+  cancel.className = 'modal__btn';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', closeModal_);
+  footer.appendChild(cancel);
+
+  const create = document.createElement('button');
+  create.className = 'modal__btn modal__btn--primary';
+  create.id = 'create-btn';
+  create.textContent = 'Create project';
+  create.disabled = true;
+  create.addEventListener('click', () => submitCreate_(fields, create));
+  footer.appendChild(create);
+
+  modal.appendChild(footer);
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+
+  function updateCreateBtn_() {
+    const ok = fields.name.trim().length > 0 && fields.memberClasses.length > 0 && fields.bundleId;
+    create.disabled = !ok;
+  }
+}
+
+function makeField_(labelText, control) {
+  const wrap = document.createElement('div');
+  wrap.className = 'modal__field';
+  const lab = document.createElement('label');
+  lab.textContent = labelText;
+  wrap.appendChild(lab);
+  wrap.appendChild(control);
+  return wrap;
+}
+
+function generateSchoolYearOptions_() {
+  const cur = defaultSchoolYear_();
+  const startYear = parseInt(cur.split('-')[0], 10);
+  return [
+    (startYear - 1) + '-' + String(startYear).slice(2),
+    cur,
+    (startYear + 1) + '-' + String(startYear + 2).slice(2),
+  ];
+}
+
+function closeModal_() {
+  const back = document.getElementById('modal-backdrop');
+  if (back) back.remove();
+}
+
+function submitCreate_(fields, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+  const errEl = document.getElementById('create-error');
+  if (errEl) errEl.textContent = '';
+  google.script.run
+    .withSuccessHandler((resp) => {
+      if (resp && resp.ok) {
+        closeModal_();
+        setStatus('Project created.', 'good', 2500);
+        myProjects.projects = null;
+        renderShell_();
+        fetchMyProjects_();
+      } else {
+        btn.disabled = false; btn.textContent = 'Create project';
+        if (errEl) errEl.textContent = 'Create failed.';
+      }
+    })
+    .withFailureHandler((e) => {
+      btn.disabled = false; btn.textContent = 'Create project';
+      if (errEl) errEl.textContent = String(e && e.message || e);
+    })
+    .consoleCreateProject(fields);
+}
+
+function confirmArchive_(p) {
+  // Close the kebab menu first so it doesn't sit under the modal.
+  myProjects.openMenuId = null;
+  closeModal_();
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.id = 'modal-backdrop';
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal_(); });
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+
+  const header = document.createElement('div');
+  header.className = 'modal__header';
+  header.textContent = 'Archive project?';
+  modal.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'modal__body';
+  const txt = document.createElement('p');
+  txt.style.margin = '0';
+  txt.style.lineHeight = '1.5';
+  txt.innerHTML = 'Archive <strong></strong>? Student data stays put; the project disappears from the extension\'s picker and stops accepting writes.';
+  txt.querySelector('strong').textContent = p.name;
+  body.appendChild(txt);
+  modal.appendChild(body);
+
+  const footer = document.createElement('div');
+  footer.className = 'modal__footer';
+  const cancel = document.createElement('button');
+  cancel.className = 'modal__btn';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', closeModal_);
+  footer.appendChild(cancel);
+
+  const confirm = document.createElement('button');
+  confirm.className = 'modal__btn modal__btn--primary';
+  confirm.style.background = 'var(--c-bad)';
+  confirm.style.borderColor = 'var(--c-bad)';
+  confirm.textContent = 'Archive';
+  confirm.addEventListener('click', () => {
+    confirm.disabled = true; confirm.textContent = 'Archiving…';
+    google.script.run
+      .withSuccessHandler(() => {
+        closeModal_();
+        setStatus('Archived.', 'good', 2500);
+        myProjects.projects = null;
+        renderShell_();
+        fetchMyProjects_();
+      })
+      .withFailureHandler((e) => {
+        confirm.disabled = false; confirm.textContent = 'Archive';
+        setStatus('Archive failed: ' + (e && e.message || e), 'bad', 4000);
+      })
+      .consoleArchiveProject(p.projectId);
+  });
+  footer.appendChild(confirm);
+
+  modal.appendChild(footer);
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+}
+
+function doUnarchive_(p) {
+  myProjects.openMenuId = null;
+  setStatus('Unarchiving "' + p.name + '"…', null, 1500);
+  google.script.run
+    .withSuccessHandler(() => {
+      setStatus('Unarchived.', 'good', 2500);
+      myProjects.projects = null;
+      renderShell_();
+      fetchMyProjects_();
+    })
+    .withFailureHandler((e) => setStatus('Unarchive failed: ' + (e && e.message || e), 'bad', 4000))
+    .consoleUnarchiveProject(p.projectId);
+}
+
+// DASHBOARD view-local state. Reset when projectId changes.
+const dashboard = {
+  loadedFor: null,         // projectId of currently-loaded data
+  data: null,              // { project, students, asOf }
+  sortKey: 'activity',     // 'name' | 'activity' | 'completion' | 'highlights' | 'sources'
+  sortDir: 'desc',         // 'asc' | 'desc'
+  asOfTickHandle: null,
+};
+
+function renderDashboard_(main) {
+  // Reset cache if we navigated to a different project.
+  if (dashboard.loadedFor !== state.projectId) {
+    dashboard.loadedFor = null;
+    dashboard.data = null;
+  }
+
+  // Toolbar
+  const toolbar = document.createElement('div');
+  toolbar.className = 'db-toolbar';
+  const back = document.createElement('button');
+  back.className = 'db-back';
+  back.textContent = '← My Projects';
+  back.addEventListener('click', () => navigate_('/projects'));
+  toolbar.appendChild(back);
+
+  const title = document.createElement('div');
+  title.className = 'db-title';
+  title.id = 'db-title';
+  title.textContent = 'Loading…';
+  toolbar.appendChild(title);
+
+  const refresh = document.createElement('button');
+  refresh.className = 'db-refresh';
+  refresh.id = 'db-refresh';
+  refresh.textContent = '↻ Refresh';
+  refresh.addEventListener('click', () => fetchDashboard_(state.projectId, true));
+  toolbar.appendChild(refresh);
+
+  const asof = document.createElement('div');
+  asof.className = 'db-asof';
+  asof.id = 'db-asof';
+  asof.textContent = '';
+  toolbar.appendChild(asof);
+
+  main.appendChild(toolbar);
+
+  const body = document.createElement('div');
+  body.className = 'db-body';
+  body.id = 'db-body';
+  main.appendChild(body);
+
+  if (dashboard.data) {
+    paintDashboard_();
+  } else {
+    body.innerHTML = '';
+    const loader = document.createElement('div');
+    loader.className = 'mp-loading';
+    const sp = document.createElement('div');
+    sp.className = 'console-spinner';
+    loader.appendChild(sp);
+    const txt = document.createElement('div');
+    txt.textContent = 'Loading dashboard…';
+    loader.appendChild(txt);
+    body.appendChild(loader);
+    fetchDashboard_(state.projectId, false);
+  }
+
+  // Refresh on tab focus, but only while we are on the dashboard view.
+  if (!window.__opsConsoleFocusBound) {
+    window.__opsConsoleFocusBound = true;
+    window.addEventListener('focus', () => {
+      if (state.view === 'DASHBOARD' && state.projectId) fetchDashboard_(state.projectId, true);
+      if (state.view === 'STUDENT' && state.projectId && state.studentEmail) {
+        // Student detail focus refresh is added in Task 16; safe to keep here as a hook.
+        if (typeof fetchStudentDetail_ === 'function') fetchStudentDetail_(state.projectId, state.studentEmail);
+      }
+    });
+  }
+
+  // Live "last refreshed" ticker
+  startAsOfTicker_();
+}
+
+function fetchDashboard_(projectId, isRefresh) {
+  if (isRefresh) {
+    const btn = document.getElementById('db-refresh');
+    if (btn) { btn.disabled = true; btn.textContent = '↻ Refreshing…'; }
+  }
+  google.script.run
+    .withSuccessHandler((resp) => {
+      if (!resp || !resp.ok) {
+        setStatus('Could not load dashboard.', 'bad', 4000);
+        return;
+      }
+      dashboard.loadedFor = projectId;
+      dashboard.data = resp;
+      paintDashboard_();
+      const btn = document.getElementById('db-refresh');
+      if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+    })
+    .withFailureHandler((e) => {
+      const btn = document.getElementById('db-refresh');
+      if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+      onFail_('loading dashboard')(e);
+    })
+    .consoleGetProjectDashboard(projectId);
+}
+
+function paintDashboard_() {
+  if (!dashboard.data) return;
+  const proj = dashboard.data.project;
+  const title = document.getElementById('db-title');
+  if (title) {
+    const classes = proj.scopedClasses.join(', ') || '(no classes)';
+    const count = dashboard.data.students.length;
+    title.textContent = proj.name + ' · ' + classes + ' · ' + count + ' student' + (count === 1 ? '' : 's');
+  }
+
+  const body = document.getElementById('db-body');
+  if (!body) return;
+  body.innerHTML = '';
+
+  if (dashboard.data.students.length === 0) {
+    const e = document.createElement('div');
+    e.className = 'db-empty';
+    e.textContent = 'No students enrolled in your classes for this project.';
+    body.appendChild(e);
+  } else {
+    body.appendChild(buildDashboardTable_());
+  }
+
+  updateAsOf_();
+}
+
+function startAsOfTicker_() {
+  if (dashboard.asOfTickHandle) clearInterval(dashboard.asOfTickHandle);
+  dashboard.asOfTickHandle = setInterval(updateAsOf_, 10000);
+}
+
+function updateAsOf_() {
+  if (!dashboard.data) return;
+  const el = document.getElementById('db-asof');
+  if (!el) return;
+  el.textContent = 'Refreshed ' + relativeTime_(dashboard.data.asOf);
+}
+
+function relativeTime_(iso) {
+  if (!iso) return 'never';
+  const d = new Date(iso);
+  const diff = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (diff < 60)    return Math.floor(diff) + 's ago';
+  if (diff < 3600)  return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+function buildDashboardTable_() {
+  const table = document.createElement('table');
+  table.className = 'db-table';
+
+  const headers = [
+    { key: 'name',         label: 'Student' },
+    { key: 'highlights',   label: 'Category mix' },
+    { key: 'completion',   label: 'Completion' },
+    { key: 'gaps',         label: 'Gaps' },
+    { key: 'activity',     label: 'Activity' },
+  ];
+
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  headers.forEach((h) => {
+    const th = document.createElement('th');
+    const sortable = (h.key !== 'gaps');   // gaps don't make sense as a sort key
+    th.textContent = h.label;
+    if (sortable) {
+      const arrow = document.createElement('span');
+      arrow.className = 'db-th-arrow';
+      arrow.textContent = dashboard.sortKey === h.key ? (dashboard.sortDir === 'asc' ? '▲' : '▼') : '';
+      th.appendChild(arrow);
+      th.addEventListener('click', () => {
+        if (dashboard.sortKey === h.key) {
+          dashboard.sortDir = dashboard.sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          dashboard.sortKey = h.key;
+          dashboard.sortDir = (h.key === 'name') ? 'asc' : 'desc';
+        }
+        paintDashboard_();
+      });
+    } else {
+      th.style.cursor = 'default';
+    }
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  sortedStudents_().forEach((s) => tbody.appendChild(buildStudentRow_(s)));
+  table.appendChild(tbody);
+
+  return table;
+}
+
+function sortedStudents_() {
+  const arr = dashboard.data.students.slice();
+  const dir = dashboard.sortDir === 'asc' ? 1 : -1;
+  switch (dashboard.sortKey) {
+    case 'name':
+      arr.sort((a, b) => dir * formatLastFirst_(a.name).localeCompare(formatLastFirst_(b.name)));
+      break;
+    case 'completion':
+      arr.sort((a, b) => dir * (a.completion.percent - b.completion.percent));
+      break;
+    case 'highlights':
+      arr.sort((a, b) => dir * (a.highlightCount - b.highlightCount));
+      break;
+    case 'sources':
+      arr.sort((a, b) => dir * (a.sourceCount - b.sourceCount));
+      break;
+    case 'activity':
+    default:
+      arr.sort((a, b) => dir * String(a.lastActivity || '').localeCompare(String(b.lastActivity || '')));
+  }
+  return arr;
+}
+
+function buildStudentRow_(s) {
+  const tr = document.createElement('tr');
+  tr.addEventListener('click', () => {
+    navigate_('/projects/' + encodeURIComponent(state.projectId) + '/students/' + encodeURIComponent(s.email));
+  });
+
+  // Name
+  const tdName = document.createElement('td');
+  const nameWrap = document.createElement('div');
+  nameWrap.className = 'db-row__name';
+  nameWrap.textContent = formatLastFirst_(s.name);
+  tdName.appendChild(nameWrap);
+  if (s.class) {
+    const cls = document.createElement('div');
+    cls.className = 'db-row__name-class';
+    cls.textContent = s.class;
+    tdName.appendChild(cls);
+  }
+  tr.appendChild(tdName);
+
+  // Category mix stack-bar
+  const tdMix = document.createElement('td');
+  tdMix.appendChild(buildMixBar_(s.categoryMix));
+  tr.appendChild(tdMix);
+
+  // Completion
+  const tdComp = document.createElement('td');
+  tdComp.appendChild(buildCompletionCell_(s.completion));
+  tr.appendChild(tdComp);
+
+  // Gaps
+  const tdGaps = document.createElement('td');
+  tdGaps.appendChild(buildGapsCell_(s.gaps));
+  tr.appendChild(tdGaps);
+
+  // Activity
+  const tdAct = document.createElement('td');
+  tdAct.className = 'db-activity' + (s.lastActivity ? '' : ' db-activity--never');
+  tdAct.textContent = s.lastActivity ? relativeTime_(s.lastActivity) : '—';
+  tr.appendChild(tdAct);
+
+  return tr;
+}
+
+function buildMixBar_(mix) {
+  const wrap = document.createElement('div');
+  wrap.className = 'db-mix';
+  const total = mix.reduce((acc, m) => acc + m.count, 0);
+  if (total === 0) return wrap;   // empty bar — hatched background only
+  mix.forEach((m) => {
+    if (m.count === 0) return;
+    const seg = document.createElement('div');
+    seg.className = 'db-mix__seg';
+    seg.style.backgroundColor = m.color;
+    seg.style.flex = m.count + ' 0 auto';
+    seg.title = m.label + ': ' + m.count;
+    wrap.appendChild(seg);
+  });
+  return wrap;
+}
+
+function buildCompletionCell_(comp) {
+  const wrap = document.createElement('div');
+  wrap.className = 'db-completion-wrap';
+  const bar = document.createElement('div');
+  bar.className = 'db-completion-bar';
+  const fill = document.createElement('div');
+  const klass = comp.percent >= 80 ? 'db-completion-fill--good'
+             : comp.percent >= 40 ? 'db-completion-fill--warn'
+             : 'db-completion-fill--bad';
+  fill.className = 'db-completion-fill ' + klass;
+  fill.style.width = comp.percent + '%';
+  bar.appendChild(fill);
+  wrap.appendChild(bar);
+  const pct = document.createElement('div');
+  pct.className = 'db-completion-pct';
+  pct.textContent = comp.percent + '%';
+  wrap.appendChild(pct);
+  return wrap;
+}
+
+function buildGapsCell_(gaps) {
+  const wrap = document.createElement('div');
+  wrap.className = 'db-gaps';
+  const labels = { citation: 'Cite', classification: 'Tag', annotation: 'Note' };
+  const fulls  = { citation: 'citation', classification: 'classification', annotation: 'annotation' };
+  ['citation', 'classification', 'annotation'].forEach((kind) => {
+    const n = gaps[kind] || 0;
+    const chip = document.createElement('span');
+    const klass = n === 0 ? '' : (n <= 3 ? 'db-gap--warn' : 'db-gap--bad');
+    chip.className = 'db-gap ' + klass;
+    chip.textContent = labels[kind] + ' ' + n;
+    chip.title = n + ' source' + (n === 1 ? '' : 's') + ' missing ' + fulls[kind];
+    wrap.appendChild(chip);
+  });
+  return wrap;
+}
+
+/** Format roster Name ("Alex Smith") as "Smith, Alex". Falls back to as-is. */
+function formatLastFirst_(name) {
+  const s = String(name || '').trim();
+  if (!s) return '';
+  const sp = s.lastIndexOf(' ');
+  if (sp < 0) return s;
+  return s.slice(sp + 1) + ', ' + s.slice(0, sp);
+}
+
+// View render functions — placeholders filled in Tasks 10+.
+// STUDENT view-local state.
+const studentDetail = {
+  loadedFor: null,    // 'projectId|email'
+  data: null,
+  chartInstances: { categoryBar: null, activityLine: null },
+};
+
+function renderStudentDetail_(main) {
+  const key = state.projectId + '|' + state.studentEmail;
+  if (studentDetail.loadedFor !== key) {
+    studentDetail.loadedFor = null;
+    studentDetail.data = null;
+    destroyDrillCharts_();
+  }
+
+  // Toolbar (back link + name + refresh + asOf)
+  const toolbar = document.createElement('div');
+  toolbar.className = 'db-toolbar';
+  const back = document.createElement('button');
+  back.className = 'db-back';
+  back.textContent = '← ' + (dashboard.data && dashboard.data.project ? dashboard.data.project.name : 'Dashboard');
+  back.addEventListener('click', () => navigate_('/projects/' + encodeURIComponent(state.projectId)));
+  toolbar.appendChild(back);
+
+  const title = document.createElement('div');
+  title.className = 'db-title';
+  title.id = 'dd-title';
+  title.textContent = 'Loading…';
+  toolbar.appendChild(title);
+
+  const refresh = document.createElement('button');
+  refresh.className = 'db-refresh';
+  refresh.id = 'dd-refresh';
+  refresh.textContent = '↻ Refresh';
+  refresh.addEventListener('click', () => fetchStudentDetail_(state.projectId, state.studentEmail));
+  toolbar.appendChild(refresh);
+
+  const asof = document.createElement('div');
+  asof.className = 'db-asof';
+  asof.id = 'dd-asof';
+  toolbar.appendChild(asof);
+
+  main.appendChild(toolbar);
+
+  const body = document.createElement('div');
+  body.id = 'dd-body';
+  main.appendChild(body);
+
+  if (studentDetail.data) {
+    paintStudentDetail_();
+  } else {
+    body.innerHTML = '';
+    const loader = document.createElement('div');
+    loader.className = 'mp-loading';
+    const sp = document.createElement('div');
+    sp.className = 'console-spinner';
+    loader.appendChild(sp);
+    const txt = document.createElement('div');
+    txt.textContent = 'Loading student detail…';
+    loader.appendChild(txt);
+    body.appendChild(loader);
+    fetchStudentDetail_(state.projectId, state.studentEmail);
+  }
+}
+
+function fetchStudentDetail_(projectId, email) {
+  const btn = document.getElementById('dd-refresh');
+  if (btn) { btn.disabled = true; btn.textContent = '↻ Refreshing…'; }
+  google.script.run
+    .withSuccessHandler((resp) => {
+      const btn2 = document.getElementById('dd-refresh');
+      if (btn2) { btn2.disabled = false; btn2.textContent = '↻ Refresh'; }
+      if (!resp || !resp.ok) {
+        setStatus('Could not load student.', 'bad', 4000);
+        return;
+      }
+      studentDetail.loadedFor = projectId + '|' + email;
+      studentDetail.data = resp;
+      paintStudentDetail_();
+    })
+    .withFailureHandler((e) => {
+      const btn2 = document.getElementById('dd-refresh');
+      if (btn2) { btn2.disabled = false; btn2.textContent = '↻ Refresh'; }
+      onFail_('loading student detail')(e);
+    })
+    .consoleGetStudentDetail(projectId, email);
+}
+
+function paintStudentDetail_() {
+  const d = studentDetail.data;
+  if (!d) return;
+  const title = document.getElementById('dd-title');
+  if (title) title.textContent = formatLastFirst_(d.student.name);
+
+  const asof = document.getElementById('dd-asof');
+  if (asof) asof.textContent = 'Refreshed ' + relativeTime_(d.asOf);
+
+  const body = document.getElementById('dd-body');
+  if (!body) return;
+  body.innerHTML = '';
+  body.appendChild(buildDrillGrid_());
+  body.appendChild(buildSourcesViewer_());
+
+  // Chart blocks need their canvas elements in the DOM first. Build the
+  // Chart.js instances after this microtask so the canvas refs resolve.
+  setTimeout(buildDrillCharts_, 0);
+}
+
+const SOURCES_DEFAULT_VISIBLE = 5;
+const SOURCES_DEFAULT_HL_COLLAPSE = 8;
+
+function buildSourcesViewer_() {
+  const d = studentDetail.data;
+  const wrap = document.createElement('div');
+  wrap.className = 'dd-sources';
+  const title = document.createElement('h3');
+  title.className = 'dd-sources__title';
+  title.textContent = 'Sources & highlights';
+  wrap.appendChild(title);
+
+  const showAll = !!studentDetail.showAllSources;
+  const visible = showAll ? d.sources : d.sources.slice(0, SOURCES_DEFAULT_VISIBLE);
+
+  if (visible.length === 0) {
+    const e = document.createElement('div');
+    e.className = 'console-empty';
+    e.textContent = 'No sources yet.';
+    e.style.padding = '20px';
+    wrap.appendChild(e);
+    return wrap;
+  }
+
+  visible.forEach((s) => wrap.appendChild(buildSourceCard_(s)));
+
+  if (!showAll && d.sources.length > SOURCES_DEFAULT_VISIBLE) {
+    const more = document.createElement('div');
+    more.className = 'dd-show-all';
+    const btn = document.createElement('button');
+    btn.textContent = 'Show all (' + d.sources.length + ')';
+    btn.addEventListener('click', () => {
+      studentDetail.showAllSources = true;
+      paintStudentDetail_();
+    });
+    more.appendChild(btn);
+    wrap.appendChild(more);
+  }
+  return wrap;
+}
+
+function buildSourceCard_(s) {
+  const card = document.createElement('div');
+  card.className = 'dd-source-card';
+
+  // Head: title + ps chip + count + completion flags
+  const head = document.createElement('div');
+  head.className = 'dd-source-card__head';
+  const t = document.createElement('div');
+  t.className = 'dd-source-card__title';
+  t.textContent = (s.citationFieldsParsed && s.citationFieldsParsed.title) || s.scrapedTitle || '(untitled)';
+  head.appendChild(t);
+
+  const chip = document.createElement('span');
+  chip.className = 'dd-source-card__chip dd-source-card__chip--' + s.primarySecondary;
+  chip.textContent = s.primarySecondary;
+  head.appendChild(chip);
+
+  const cnt = document.createElement('span');
+  cnt.className = 'dd-source-card__count';
+  cnt.textContent = s.highlights.length + ' highlight' + (s.highlights.length === 1 ? '' : 's');
+  head.appendChild(cnt);
+
+  const flags = document.createElement('div');
+  flags.className = 'dd-source-card__flags';
+  flags.appendChild(makeFlagChip_('Cite', s.completionFlags.citation));
+  flags.appendChild(makeFlagChip_('Tag', s.completionFlags.classification));
+  flags.appendChild(makeFlagChip_('Note', s.completionFlags.annotation));
+  head.appendChild(flags);
+
+  card.appendChild(head);
+
+  // Citation (with italics)
+  if (s.formattedCitation && s.formattedCitation.text) {
+    const cite = document.createElement('div');
+    cite.className = 'dd-source-card__citation';
+    cite.innerHTML = renderCitationHtml_(s.formattedCitation);
+    card.appendChild(cite);
+  }
+
+  // Annotation (if present)
+  if (s.annotation) {
+    const ann = document.createElement('div');
+    ann.className = 'dd-source-card__annotation';
+    ann.textContent = '"' + s.annotation + '"';
+    card.appendChild(ann);
+  }
+
+  // Highlights grouped by primary category. Collapsed if many.
+  if (s.highlights.length > 0) {
+    const collapseByDefault = s.highlights.length > SOURCES_DEFAULT_HL_COLLAPSE;
+    const key = 'expand:' + s.sourceId;
+    const expanded = studentDetail.expanded && studentDetail.expanded[key];
+    if (collapseByDefault && !expanded) {
+      const btn = document.createElement('button');
+      btn.className = 'dd-source-card__expand';
+      btn.textContent = 'Show ' + s.highlights.length + ' highlights';
+      btn.addEventListener('click', () => {
+        studentDetail.expanded = studentDetail.expanded || {};
+        studentDetail.expanded[key] = true;
+        paintStudentDetail_();
+      });
+      card.appendChild(btn);
+    } else {
+      card.appendChild(buildHighlightGroups_(s));
+    }
+  }
+
+  return card;
+}
+
+function makeFlagChip_(kind, complete) {
+  const chip = document.createElement('span');
+  chip.className = 'dd-source-card__flag ' + (complete ? 'dd-source-card__flag--complete' : 'dd-source-card__flag--gap');
+  chip.textContent = (complete ? '✓ ' : '✗ ') + kind;
+  return chip;
+}
+
+function buildHighlightGroups_(s) {
+  const wrap = document.createElement('div');
+  const groups = {};
+  s.highlights.forEach((h) => {
+    const k = h.primaryCategory || '(no category)';
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(h);
+  });
+  Object.keys(groups).forEach((cat) => {
+    const g = document.createElement('div');
+    g.className = 'dd-cat-group';
+    const gt = document.createElement('div');
+    gt.className = 'dd-cat-group__title';
+    gt.textContent = cat + ': ' + groups[cat].length + ' highlight' + (groups[cat].length === 1 ? '' : 's');
+    g.appendChild(gt);
+    groups[cat].forEach((h) => g.appendChild(buildHighlightItem_(h)));
+    wrap.appendChild(g);
+  });
+  return wrap;
+}
+
+function buildHighlightItem_(h) {
+  const row = document.createElement('div');
+  row.className = 'dd-hl';
+  const bar = document.createElement('div');
+  bar.className = 'dd-hl__bar';
+  bar.style.backgroundColor = colorForCategoryInDrill_(h.primaryCategory) || '#dadce0';
+  row.appendChild(bar);
+  const txt = document.createElement('div');
+  txt.textContent = h.highlightedText || '';
+  row.appendChild(txt);
+  if (h.note) {
+    const note = document.createElement('div');
+    note.className = 'dd-hl__note';
+    note.textContent = h.note;
+    row.appendChild(note);
+  }
+  return row;
+}
+
+function colorForCategoryInDrill_(label) {
+  if (!studentDetail.data || !studentDetail.data.aggregates) return null;
+  const found = studentDetail.data.aggregates.categoryMix.find((m) => m.label === label);
+  return found ? found.color : null;
+}
+
+function renderCitationHtml_(formatted) {
+  const text = formatted.text || '';
+  const italics = formatted.italics || [];
+  let html = '';
+  let cursor = 0;
+  italics.forEach(([s, e]) => {
+    if (s > cursor) html += esc_(text.slice(cursor, s));
+    html += '<em>' + esc_(text.slice(s, e)) + '</em>';
+    cursor = e;
+  });
+  if (cursor < text.length) html += esc_(text.slice(cursor));
+  return html;
+}
+
+function buildDrillGrid_() {
+  const d = studentDetail.data;
+  const grid = document.createElement('div');
+  grid.className = 'dd-grid';
+
+  // 1. Highlights by category — bar chart (the star)
+  const barBlock = document.createElement('div');
+  barBlock.className = 'dd-block dd-block--wide';
+  const barTitle = document.createElement('h3');
+  barTitle.className = 'dd-block__title';
+  barTitle.textContent = 'Highlights by category';
+  barBlock.appendChild(barTitle);
+  const barCanvas = document.createElement('canvas');
+  barCanvas.id = 'dd-chart-bar';
+  barCanvas.className = 'dd-chart-canvas';
+  barBlock.appendChild(barCanvas);
+  grid.appendChild(barBlock);
+
+  // 2. Source counts
+  const countsBlock = document.createElement('div');
+  countsBlock.className = 'dd-block';
+  const countsTitle = document.createElement('h3');
+  countsTitle.className = 'dd-block__title';
+  countsTitle.textContent = 'Sources';
+  countsBlock.appendChild(countsTitle);
+  countsBlock.appendChild(buildDrillCountsTiles_(d.aggregates.sourceCounts));
+  grid.appendChild(countsBlock);
+
+  // 3. Completion breakdown
+  const compBlock = document.createElement('div');
+  compBlock.className = 'dd-block';
+  const compTitle = document.createElement('h3');
+  compTitle.className = 'dd-block__title';
+  compTitle.textContent = 'Completion';
+  compBlock.appendChild(compTitle);
+  compBlock.appendChild(buildDrillCompletion_(d.aggregates.completion));
+  grid.appendChild(compBlock);
+
+  // 4. Activity over time
+  const actBlock = document.createElement('div');
+  actBlock.className = 'dd-block dd-block--wide';
+  const actTitle = document.createElement('h3');
+  actTitle.className = 'dd-block__title';
+  actTitle.textContent = 'Activity over time';
+  actBlock.appendChild(actTitle);
+  const actCanvas = document.createElement('canvas');
+  actCanvas.id = 'dd-chart-activity';
+  actCanvas.className = 'dd-chart-canvas';
+  actBlock.appendChild(actCanvas);
+  grid.appendChild(actBlock);
+
+  return grid;
+}
+
+function buildDrillCountsTiles_(c) {
+  const wrap = document.createElement('div');
+  wrap.className = 'dd-counts';
+  const tile = (n, label) => {
+    const t = document.createElement('div');
+    t.className = 'dd-count-tile';
+    const num = document.createElement('div');
+    num.className = 'dd-count-tile__n';
+    num.textContent = n;
+    t.appendChild(num);
+    const lab = document.createElement('div');
+    lab.className = 'dd-count-tile__label';
+    lab.textContent = label;
+    t.appendChild(lab);
+    return t;
+  };
+  wrap.appendChild(tile(c.primary, 'Primary'));
+  wrap.appendChild(tile(c.secondary, 'Secondary'));
+  const outer = document.createElement('div');
+  outer.appendChild(wrap);
+  if (c.unset > 0) {
+    const un = document.createElement('div');
+    un.className = 'dd-unclassified';
+    un.textContent = 'Untagged: ' + c.unset;
+    outer.appendChild(un);
+  }
+  return outer;
+}
+
+function buildDrillCompletion_(comp) {
+  const wrap = document.createElement('div');
+  const labels = { citation: 'Citation', classification: 'Tag', annotation: 'Annotation' };
+  ['citation', 'classification', 'annotation'].forEach((kind) => {
+    const c = comp[kind];
+    const pct = c.total === 0 ? 0 : Math.round((c.complete / c.total) * 100);
+    const row = document.createElement('div');
+    row.className = 'dd-comp-row';
+    const lab = document.createElement('div');
+    lab.className = 'dd-comp-label';
+    lab.textContent = labels[kind];
+    row.appendChild(lab);
+    const bar = document.createElement('div');
+    bar.className = 'dd-comp-bar';
+    const fill = document.createElement('div');
+    const klass = pct >= 80 ? 'db-completion-fill--good'
+               : pct >= 40 ? 'db-completion-fill--warn'
+               : 'db-completion-fill--bad';
+    fill.className = 'dd-comp-fill ' + klass;
+    fill.style.width = pct + '%';
+    bar.appendChild(fill);
+    row.appendChild(bar);
+    const pctTxt = document.createElement('div');
+    pctTxt.className = 'dd-comp-pct';
+    pctTxt.textContent = c.complete + ' / ' + c.total;
+    row.appendChild(pctTxt);
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+function buildDrillCharts_() {
+  destroyDrillCharts_();
+  if (typeof Chart === 'undefined') return;
+  const d = studentDetail.data;
+
+  // Bar chart — highlights by category
+  const barEl = document.getElementById('dd-chart-bar');
+  if (barEl) {
+    studentDetail.chartInstances.categoryBar = new Chart(barEl, {
+      type: 'bar',
+      data: {
+        labels: d.aggregates.categoryMix.map((m) => m.label),
+        datasets: [{
+          label: 'Highlights',
+          data: d.aggregates.categoryMix.map((m) => m.count),
+          backgroundColor: d.aggregates.categoryMix.map((m) => m.color),
+          borderWidth: 0,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } },
+          x: { ticks: { autoSkip: false } },
+        },
+      },
+    });
+  }
+
+  // Line chart — activity over time
+  const lineEl = document.getElementById('dd-chart-activity');
+  if (lineEl) {
+    studentDetail.chartInstances.activityLine = new Chart(lineEl, {
+      type: 'line',
+      data: {
+        labels: d.aggregates.activityByDay.map((a) => a.date),
+        datasets: [
+          {
+            label: 'Highlights',
+            data: d.aggregates.activityByDay.map((a) => a.highlights),
+            borderColor: '#2d3f89',
+            backgroundColor: 'rgba(45, 63, 137, 0.15)',
+            tension: 0.2,
+            fill: true,
+          },
+          {
+            label: 'Sources',
+            data: d.aggregates.activityByDay.map((a) => a.sources),
+            borderColor: '#ad2122',
+            backgroundColor: 'rgba(173, 33, 34, 0.15)',
+            tension: 0.2,
+            fill: true,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom' } },
+        scales: {
+          y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } },
+        },
+      },
+    });
+  }
+}
+
+function destroyDrillCharts_() {
+  if (studentDetail.chartInstances.categoryBar) {
+    studentDetail.chartInstances.categoryBar.destroy();
+    studentDetail.chartInstances.categoryBar = null;
+  }
+  if (studentDetail.chartInstances.activityLine) {
+    studentDetail.chartInstances.activityLine.destroy();
+    studentDetail.chartInstances.activityLine = null;
+  }
+}
+
+function buildHeader_() {
+  const h = document.createElement('header');
+  h.className = 'console-header';
+
+  // Title — clickable to return to My Projects.
+  const title = document.createElement('div');
+  title.className = 'console-header__title';
+  title.textContent = 'OPS Research Tool';
+  title.style.cursor = 'pointer';
+  title.addEventListener('click', () => navigate_('/projects'));
+  h.appendChild(title);
+
+  const actor = document.createElement('div');
+  actor.className = 'console-header__actor';
+  actor.innerHTML = '<strong></strong>';
+  actor.querySelector('strong').textContent = state.ctx.staff.Name || state.ctx.actor;
+  const tag = document.createElement('span');
+  tag.className = 'console-header__role-tag' + (state.ctx.role === 'admin' ? ' console-header__role-tag--admin' : '');
+  tag.textContent = state.ctx.role;
+  actor.appendChild(tag);
+  h.appendChild(actor);
+  return h;
+}
+
+// ---------- shared helpers ----------
+
+function setStatus(text, kind, autoClearMs) {
+  let pill = document.getElementById('console-status-pill');
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.id = 'console-status-pill';
+    pill.className = 'console-status';
+    document.body.appendChild(pill);
+  }
+  pill.textContent = text || '';
+  pill.className = 'console-status' + (kind ? ' console-status--' + kind : '') + (text ? '' : ' console-status--hide');
+  if (autoClearMs) {
+    setTimeout(() => {
+      if (pill.textContent === text) {
+        pill.className = 'console-status console-status--hide';
+      }
+    }, autoClearMs);
+  }
+}
+
+function onFail_(stage) {
+  return (e) => setStatus(stage + ': ' + (e && e.message || e), 'bad', 4000);
+}
+
+function esc_(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+</script>

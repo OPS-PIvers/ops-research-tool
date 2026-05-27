@@ -249,3 +249,325 @@ function devTestDeleteSource() {
 
   console.log(pass + '/' + (pass + fail) + ' passed');
 }
+
+/**
+ * Tests aggregator pure functions with hand-crafted source/highlight data.
+ * Asserts categoryMix preserves bundle order, gaps + completion counts are
+ * correct, and lastActivity is the latest createdAt across both arrays.
+ */
+function devTestAggregateStudent() {
+  const bundle = {
+    bundleId: 'b-test',
+    name: 'Test Bundle',
+    style: 'mla',
+    label1: 'Background',     color1: '#d62728',
+    label2: 'Build-Up',       color2: '#ff7f0e',
+    label3: 'Main Event',     color3: '#2ca02c',
+    label4: 'Short-Term Impact', color4: '#1f77b4',
+    label5: 'Long-Term Impact',  color5: '#9467bd',
+  };
+  const sources = [
+    {
+      sourceId: 's1', primarySecondary: 'primary', annotation: 'Good source.',
+      citationFields: JSON.stringify({ title: 'A', url: 'https://a' }),
+      createdAt: '2026-05-20T10:00:00Z',
+    },
+    {
+      sourceId: 's2', primarySecondary: 'secondary', annotation: '',
+      citationFields: JSON.stringify({ title: 'B', url: 'https://b' }),
+      createdAt: '2026-05-21T10:00:00Z',
+    },
+    {
+      sourceId: 's3', primarySecondary: 'unset', annotation: 'Notes.',
+      citationFields: JSON.stringify({ title: '', url: '' }),
+      createdAt: '2026-05-22T10:00:00Z',
+    },
+  ];
+  const highlights = [
+    { sourceId: 's1', primaryCategory: 'Background',   createdAt: '2026-05-20T11:00:00Z' },
+    { sourceId: 's1', primaryCategory: 'Background',   createdAt: '2026-05-20T11:05:00Z' },
+    { sourceId: 's2', primaryCategory: 'Main Event',   createdAt: '2026-05-21T11:00:00Z' },
+    { sourceId: 's3', primaryCategory: 'Background',   createdAt: '2026-05-23T08:00:00Z' },
+    { sourceId: 's3', primaryCategory: 'Long-Term Impact', createdAt: '2026-05-23T08:30:00Z' },
+  ];
+
+  const agg = aggregateStudent_(sources, highlights, bundle);
+
+  let pass = 0, fail = 0;
+  const check = (label, cond) => {
+    if (cond) { pass++; console.log('PASS ' + label); }
+    else      { fail++; console.log('FAIL ' + label); }
+  };
+
+  // categoryMix preserves bundle order
+  check('mix length 5',                     agg.categoryMix.length === 5);
+  check('mix[0] is Background',             agg.categoryMix[0].label === 'Background');
+  check('mix[0] count = 3',                 agg.categoryMix[0].count === 3);
+  check('mix[1] is Build-Up, count 0',      agg.categoryMix[1].label === 'Build-Up' && agg.categoryMix[1].count === 0);
+  check('mix[2] is Main Event, count 1',    agg.categoryMix[2].label === 'Main Event' && agg.categoryMix[2].count === 1);
+  check('mix[4] is Long-Term Impact, ct 1', agg.categoryMix[4].label === 'Long-Term Impact' && agg.categoryMix[4].count === 1);
+
+  // counts
+  check('sourceCount = 3',                  agg.sourceCount === 3);
+  check('highlightCount = 5',               agg.highlightCount === 5);
+
+  // completion: only s1 has all three (citation+class+annotation). s2 missing annotation. s3 missing citation+classification.
+  check('completion.complete = 1',          agg.completion.complete === 1);
+  check('completion.total = 3',             agg.completion.total === 3);
+  check('completion.percent = 33',          agg.completion.percent === 33);
+
+  // gaps: citation missing on s3 only (s1, s2 have title+url) → 1
+  //       classification missing on s3 only → 1
+  //       annotation missing on s2 only (empty string) → 1
+  check('gaps.citation = 1',                agg.gaps.citation === 1);
+  check('gaps.classification = 1',          agg.gaps.classification === 1);
+  check('gaps.annotation = 1',              agg.gaps.annotation === 1);
+
+  // lastActivity = latest of any createdAt across sources+highlights
+  check('lastActivity = 2026-05-23T08:30:00Z', agg.lastActivity === '2026-05-23T08:30:00Z');
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
+
+/**
+ * Tests consoleGetContext + assertStaff_ behavior.
+ * Note: this test uses the caller's real identity. The dev-seed harness
+ * adds the caller to the Staff sheet as admin, so the "is staff" branch
+ * is what we can directly assert. We assert the structural shape too.
+ */
+function devTestConsoleAuth() {
+  devSeedDevProject();   // ensures caller is staff + admin
+  const ctx = consoleGetContext();
+
+  let pass = 0, fail = 0;
+  const check = (label, cond) => {
+    if (cond) { pass++; console.log('PASS ' + label); }
+    else      { fail++; console.log('FAIL ' + label); }
+  };
+
+  check('ctx.ok',                       ctx && ctx.ok === true);
+  check('actor is the caller email',    ctx.actor === Session.getEffectiveUser().getEmail());
+  check('staff entry present',          !!ctx.staff);
+  check('role is admin',                ctx.role === 'admin');
+  check('teacherClasses is null (admin)', ctx.teacherClasses === null);
+
+  // assertStaff_ for the caller should NOT throw.
+  let throwsForStaff = false;
+  try { assertStaff_(ctx.actor); } catch (e) { throwsForStaff = true; }
+  check('assertStaff_ does not throw for staff', !throwsForStaff);
+
+  // assertStaff_ for a definitely-not-staff email SHOULD throw.
+  let throwsForRando = false;
+  try { assertStaff_('definitely-not-staff@example.com'); } catch (e) { throwsForRando = true; }
+  check('assertStaff_ throws for non-staff', throwsForRando);
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
+
+/**
+ * Tests role-based project filtering in consoleGetMyProjects.
+ *
+ * The caller is always admin (per devSeedDevProject), so we can directly
+ * exercise the admin branch and the teacher branch via a temporary
+ * roster manipulation: temporarily remove the caller from the Staff
+ * sheet and check that consoleGetMyProjects throws.
+ */
+function devTestConsoleProjectsFilter() {
+  devSeedDevProject();
+  const me = Session.getEffectiveUser().getEmail();
+
+  let pass = 0, fail = 0;
+  const check = (label, cond) => {
+    if (cond) { pass++; console.log('PASS ' + label); }
+    else      { fail++; console.log('FAIL ' + label); }
+  };
+
+  // Admin sees Dev Project in the active filter.
+  const adminResp = consoleGetMyProjects('active');
+  check('admin: resp.ok',          adminResp && adminResp.ok === true);
+  check('admin: ≥1 project',       adminResp.projects.length >= 1);
+  const dev = adminResp.projects.find((p) => p.name === 'Dev Project');
+  check('admin: Dev Project visible', !!dev);
+  if (dev) {
+    check('admin: scopedClasses includes DEV', dev.scopedClasses.indexOf('DEV') >= 0);
+    check('admin: studentCount ≥1',            dev.studentCount >= 1);
+    check('admin: bundleName non-empty',       !!dev.bundleName);
+  }
+
+  // Archived filter — Dev Project is active, so it should NOT appear.
+  const arch = consoleGetMyProjects('archived');
+  check('archived: resp.ok',                 arch && arch.ok === true);
+  const devInArchived = arch.projects.find((p) => p.name === 'Dev Project');
+  check('archived: Dev Project NOT visible', !devInArchived);
+
+  // Non-staff lockout — temporarily remove the caller from Staff and re-test.
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const staffTab = getTab_(ss, TABS.STAFF);
+  const rowIdx = findRowByKey_(staffTab, HEADERS.STAFF, 'Email', me);
+  let removedRow = null;
+  if (rowIdx >= 0) {
+    removedRow = staffTab.getRange(rowIdx, 1, 1, HEADERS.STAFF.length).getValues()[0];
+    staffTab.deleteRow(rowIdx);
+  }
+  let throws = false;
+  try { consoleGetMyProjects('active'); } catch (e) { throws = true; }
+  check('non-staff: endpoint throws', throws);
+
+  // Restore the staff row.
+  if (removedRow) {
+    appendRow_(staffTab, HEADERS.STAFF, rowToObj_(HEADERS.STAFF, removedRow));
+  }
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
+
+/**
+ * Tests consoleCreateProject end-to-end:
+ *   - validates required fields
+ *   - rejects unknown bundle
+ *   - creates a project that lands in listProjects_
+ *   - the project comes back from consoleGetMyProjects
+ *   - archive/unarchive flips status correctly
+ *
+ * Cleans up by archiving the created project at the end.
+ */
+function devTestConsoleCreateProject() {
+  devSeedDevProject();
+  const bundle = listBundles_()[0];
+  if (!bundle) throw new Error('No bundle seeded — run setup()');
+
+  let pass = 0, fail = 0;
+  const check = (label, cond) => {
+    if (cond) { pass++; console.log('PASS ' + label); }
+    else      { fail++; console.log('FAIL ' + label); }
+  };
+
+  // Validation: empty name
+  let threw = false;
+  try { consoleCreateProject({ name: '', schoolYear: '2026-27', bundleId: bundle.bundleId, memberClasses: ['DEV'] }); }
+  catch (e) { threw = true; }
+  check('empty name throws', threw);
+
+  // Validation: zero classes
+  threw = false;
+  try { consoleCreateProject({ name: 'X', schoolYear: '2026-27', bundleId: bundle.bundleId, memberClasses: [] }); }
+  catch (e) { threw = true; }
+  check('zero classes throws', threw);
+
+  // Validation: unknown bundle
+  threw = false;
+  try { consoleCreateProject({ name: 'X', schoolYear: '2026-27', bundleId: 'b-doesnt-exist', memberClasses: ['DEV'] }); }
+  catch (e) { threw = true; }
+  check('unknown bundle throws', threw);
+
+  // Happy path
+  const created = consoleCreateProject({
+    name: 'devTest Project ' + Date.now(),
+    schoolYear: '2026-27',
+    bundleId: bundle.bundleId,
+    memberClasses: ['DEV'],
+  });
+  check('create returned ok',         created && created.ok === true);
+  check('create returned a projectId', !!(created.project && created.project.projectId));
+  const newId = created.project.projectId;
+
+  // Verify it lands in the registry
+  const fromRegistry = getProject_(newId);
+  check('project found in registry',  !!fromRegistry);
+  check('status is active',           fromRegistry && fromRegistry.status === PROJECT_STATUS.ACTIVE);
+
+  // Verify it shows up in consoleGetMyProjects (admin)
+  const list = consoleGetMyProjects('active');
+  const found = list.projects.find((p) => p.projectId === newId);
+  check('list includes new project',  !!found);
+  check('list entry has bundleName',  found && !!found.bundleName);
+
+  // Archive
+  const archResp = consoleArchiveProject(newId);
+  check('archive returned ok',        archResp && archResp.ok === true);
+  const afterArch = getProject_(newId);
+  check('status now archived',        afterArch && afterArch.status === PROJECT_STATUS.ARCHIVED);
+
+  // Unarchive
+  const unArchResp = consoleUnarchiveProject(newId);
+  check('unarchive returned ok',      unArchResp && unArchResp.ok === true);
+  const afterUn = getProject_(newId);
+  check('status active again',        afterUn && afterUn.status === PROJECT_STATUS.ACTIVE);
+
+  // Final cleanup: archive again so the test project doesn't litter the registry
+  consoleArchiveProject(newId);
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
+
+/**
+ * Seeds 2 students with different activity patterns in the Dev Project,
+ * then calls consoleGetProjectDashboard and asserts the aggregates land
+ * with the expected per-student shapes.
+ *
+ * The "test students" use the caller's email + unique sourceIds so they
+ * land in the caller's own student sheet — devSeedDevProject already
+ * sets the caller up in class "DEV".
+ */
+function devTestConsoleDashboardEndToEnd() {
+  const project = devSeedDevProject();
+  const me = Session.getEffectiveUser().getEmail();
+  const ss = findOrCreateStudentSheet_(me, project);
+  const bundle = listBundles_().find((b) => b.bundleId === project.bundleId);
+  if (!bundle) throw new Error('Bundle missing — run setup()');
+
+  // Seed a fresh source + 3 highlights in different categories.
+  const sourceId = uuid_();
+  upsertSource_(ss, {
+    sourceId, projectId: project.projectId,
+    rawUrl: 'https://devtest.example.com/' + sourceId,
+    scrapedTitle: 'devTest Source',
+    primarySecondary: 'primary',
+    annotation: 'devTest annotation.',
+    citationFields: JSON.stringify({
+      title: 'devTest Source',
+      url: 'https://devtest.example.com/' + sourceId,
+    }),
+    createdByEmail: me,
+  });
+  const cats = [bundle.label1, bundle.label2, bundle.label1];   // 2 in cat1, 1 in cat2
+  cats.forEach((label) => upsertHighlight_(ss, {
+    highlightId: uuid_(), sourceId, projectId: project.projectId,
+    primaryCategory: label,
+    highlightedText: 'devTest highlight in ' + label,
+    createdByEmail: me,
+  }));
+
+  // Act.
+  const resp = consoleGetProjectDashboard(project.projectId);
+
+  let pass = 0, fail = 0;
+  const check = (label, cond) => {
+    if (cond) { pass++; console.log('PASS ' + label); }
+    else      { fail++; console.log('FAIL ' + label); }
+  };
+
+  check('resp.ok',                         resp && resp.ok === true);
+  check('project shape returned',          !!resp.project);
+  check('asOf present',                    !!resp.asOf);
+  check('students is an array',            Array.isArray(resp.students));
+  check('≥1 student returned',             resp.students.length >= 1);
+
+  const meRow = resp.students.find((s) => s.email === me);
+  check('caller appears as a student',     !!meRow);
+  if (meRow) {
+    check('meRow.categoryMix length 5',    meRow.categoryMix && meRow.categoryMix.length === 5);
+    // The devTest source contributes 2 highlights in cat1 + 1 in cat2.
+    // Earlier devTestRoundTrip / devTestSourceDedup may have seeded other
+    // highlights — assert that meRow.categoryMix[0].count ≥ 2.
+    check('cat1 count ≥ 2',                meRow.categoryMix[0].count >= 2);
+    check('cat2 count ≥ 1',                meRow.categoryMix[1].count >= 1);
+    check('sourceCount ≥ 1',               meRow.sourceCount >= 1);
+    check('highlightCount ≥ 3',            meRow.highlightCount >= 3);
+    check('completion shape correct',      meRow.completion && typeof meRow.completion.percent === 'number');
+    check('gaps shape correct',            meRow.gaps && typeof meRow.gaps.citation === 'number');
+    check('lastActivity present',          !!meRow.lastActivity);
+  }
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
