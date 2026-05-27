@@ -55,19 +55,9 @@ function createProject_({ name, schoolYear, bundleId, memberClasses, createdBy }
 }
 
 function archiveProject_(projectId) {
-  const ss = SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID);
-  const tab = getTab_(ss, TABS.PROJECTS);
-  const rowIdx = findRowByKey_(tab, HEADERS.PROJECTS, 'projectId', projectId);
-  if (rowIdx < 0) throw new Error(`Unknown projectId ${projectId}`);
-  const statusCol = HEADERS.PROJECTS.indexOf('status') + 1;
-  tab.getRange(rowIdx, statusCol).setValue(PROJECT_STATUS.ARCHIVED);
+  flipProjectStatus_(projectId, PROJECT_STATUS.ARCHIVED);
 }
 
 function unarchiveProject_(projectId) {
-  const ss = SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID);
-  const tab = getTab_(ss, TABS.PROJECTS);
-  const rowIdx = findRowByKey_(tab, HEADERS.PROJECTS, 'projectId', projectId);
-  if (rowIdx < 0) throw new Error(`Unknown projectId ${projectId}`);
-  const statusCol = HEADERS.PROJECTS.indexOf('status') + 1;
-  tab.getRange(rowIdx, statusCol).setValue(PROJECT_STATUS.ACTIVE);
+  flipProjectStatus_(projectId, PROJECT_STATUS.ACTIVE);
 }

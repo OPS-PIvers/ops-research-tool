@@ -198,25 +198,25 @@ function consoleCreateProject(args) {
 }
 
 /**
- * Flip a project's status to archived. Anyone on staff can archive any
- * project. (Authorization is by staff role, not project ownership, per the
- * Phase 4 spec — admins and teachers both can archive.)
+ * Flip a project's status to archived, move its Drive folder under
+ * Archived/, clear any stale activeProjectId prefs, and write an audit
+ * event. Anyone on staff can archive any project (authorization is by
+ * staff role, not project ownership — both admins and teachers).
  */
 function consoleArchiveProject(projectId) {
-  getActorEmail_();   // not used but ensures we throw if no session
-  assertStaff_(getActorEmail_());
+  const actorEmail = getActorEmail_();
+  assertStaff_(actorEmail);
   if (!projectId) throw new Error('projectId required');
-  if (!getProject_(projectId)) throw new Error('Unknown project ' + projectId);
-  archiveProject_(projectId);
-  return { ok: true, projectId };
+  const result = archiveProjectFully_(projectId, AUDIT_ACTIONS.ARCHIVE, actorEmail, '');
+  return { ok: true, projectId, errors: result.errors };
 }
 
 function consoleUnarchiveProject(projectId) {
-  assertStaff_(getActorEmail_());
+  const actorEmail = getActorEmail_();
+  assertStaff_(actorEmail);
   if (!projectId) throw new Error('projectId required');
-  if (!getProject_(projectId)) throw new Error('Unknown project ' + projectId);
-  unarchiveProject_(projectId);
-  return { ok: true, projectId };
+  const result = unarchiveProjectFully_(projectId, actorEmail, '');
+  return { ok: true, projectId, errors: result.errors };
 }
 
 /**
