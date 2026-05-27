@@ -100,8 +100,12 @@ function handlePost_(e) {
  *   action=myHighlights   → highlights for caller in ?projectId=...
  *
  * Phase 4 will add teacher dashboards / project-wide reads (admin-gated).
+ *
+ * No-action requests serve the Teacher Console HTML (60_console_routing.js).
  */
 function doGet(e) {
+  const params = (e && e.parameter) || {};
+  if (!params.action) return serveConsoleHtml_();
   return jsonResponse_(handleGet_(e));
 }
 
