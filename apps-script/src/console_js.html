@@ -538,8 +538,83 @@ function submitCreate_(fields, btn) {
     .consoleCreateProject(fields);
 }
 
-function confirmArchive_(p)        { setStatus('Archive flow — Task 12.', null, 2000); }
-function doUnarchive_(p)           { setStatus('Unarchive — Task 12.', null, 2000); }
+function confirmArchive_(p) {
+  // Close the kebab menu first so it doesn't sit under the modal.
+  myProjects.openMenuId = null;
+  closeModal_();
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.id = 'modal-backdrop';
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal_(); });
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+
+  const header = document.createElement('div');
+  header.className = 'modal__header';
+  header.textContent = 'Archive project?';
+  modal.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'modal__body';
+  const txt = document.createElement('p');
+  txt.style.margin = '0';
+  txt.style.lineHeight = '1.5';
+  txt.innerHTML = 'Archive <strong></strong>? Student data stays put; the project disappears from the extension\'s picker and stops accepting writes.';
+  txt.querySelector('strong').textContent = p.name;
+  body.appendChild(txt);
+  modal.appendChild(body);
+
+  const footer = document.createElement('div');
+  footer.className = 'modal__footer';
+  const cancel = document.createElement('button');
+  cancel.className = 'modal__btn';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', closeModal_);
+  footer.appendChild(cancel);
+
+  const confirm = document.createElement('button');
+  confirm.className = 'modal__btn modal__btn--primary';
+  confirm.style.background = 'var(--c-bad)';
+  confirm.style.borderColor = 'var(--c-bad)';
+  confirm.textContent = 'Archive';
+  confirm.addEventListener('click', () => {
+    confirm.disabled = true; confirm.textContent = 'Archiving…';
+    google.script.run
+      .withSuccessHandler(() => {
+        closeModal_();
+        setStatus('Archived.', 'good', 2500);
+        myProjects.projects = null;
+        renderShell_();
+        fetchMyProjects_();
+      })
+      .withFailureHandler((e) => {
+        confirm.disabled = false; confirm.textContent = 'Archive';
+        setStatus('Archive failed: ' + (e && e.message || e), 'bad', 4000);
+      })
+      .consoleArchiveProject(p.projectId);
+  });
+  footer.appendChild(confirm);
+
+  modal.appendChild(footer);
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+}
+
+function doUnarchive_(p) {
+  myProjects.openMenuId = null;
+  setStatus('Unarchiving "' + p.name + '"…', null, 1500);
+  google.script.run
+    .withSuccessHandler(() => {
+      setStatus('Unarchived.', 'good', 2500);
+      myProjects.projects = null;
+      renderShell_();
+      fetchMyProjects_();
+    })
+    .withFailureHandler((e) => setStatus('Unarchive failed: ' + (e && e.message || e), 'bad', 4000))
+    .consoleUnarchiveProject(p.projectId);
+}
 
 // View render functions — placeholders filled in Tasks 10+.
 function renderDashboard_(main)     { main.innerHTML = '<div class="console-empty">Dashboard (Tasks 13–15).</div>'; }
