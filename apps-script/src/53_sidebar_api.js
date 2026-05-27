@@ -231,3 +231,43 @@ function deleteAllRowsWhere_(tab, headers, keyCol, keyValue) {
   }
   return removed;
 }
+
+/**
+ * Open the per-source editor modal. The sidebar dispatches here when the
+ * student clicks "Open in editor" on a source or evidence card.
+ *
+ * Template bindings: projectId, sourceId, focusHighlightId, and the active
+ * bundle (serialized to JSON so the modal has color swatches without an
+ * extra round trip).
+ *
+ * The modal opens at 820x720 — matches the dimensions chosen for the
+ * deprecated sidebarOpenAsDialog and known-good in Docs at typical
+ * laptop resolutions.
+ */
+function sidebarOpenSourceEditor(projectId, sourceId, focusHighlightId) {
+  const actorEmail = getActorEmail_();
+  if (!projectId || !sourceId) throw new Error('projectId and sourceId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+
+  // Verify the source belongs to this caller.
+  const ss = getStudentSheetIfExists_(actorEmail, project);
+  if (!ss) throw new Error('No data for this project yet');
+  const sourcesTab = getTab_(ss, TABS.SOURCES);
+  if (findRowByKey_(sourcesTab, HEADERS.SOURCES, 'sourceId', sourceId) < 0) {
+    throw new Error('Source not found');
+  }
+
+  const bundle = listBundles_().find((b) => b.bundleId === project.bundleId) || null;
+
+  const t = HtmlService.createTemplateFromFile('source_editor');
+  t.projectId = projectId;
+  t.sourceId = sourceId;
+  t.focusHighlightId = focusHighlightId || '';
+  t.bundleJson = JSON.stringify(bundle);
+  const html = t.evaluate()
+    .setWidth(820)
+    .setHeight(720);
+  DocumentApp.getUi().showModalDialog(html, 'Edit source');
+  return { ok: true };
+}
