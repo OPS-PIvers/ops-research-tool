@@ -74,7 +74,27 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     shadow-DOM-heavy pages); force-install setup with the district Admin
     console; possible polish on roster-not-found UX.
 - **Phase 3 — Google Docs sidebar — not started.**
-- **Phase 4 — Teacher Console + pilot — not started.**
+- **Phase 4 — Teacher Console — sub-projects A/B/C/D COMPLETE.**
+  - A+B: Console shell, My Projects, Project Dashboard, student drill-down.
+  - C: Admin Area (Roster CRUD, Staff CRUD, Archive School Year) + audit log
+    + 7-day recently-unarchived banner.
+  - D: Groups — teacher-driven merge of 2–4 in-class students into a single
+    group Sheet (existing work migrated), Manage Groups mode on the dashboard
+    (merge / move / disband; un-merge endpoint exists, kebab UI deferred),
+    group-aggregate drill-down with author attribution. Routing changes go
+    through `findGroupSheetForStudent_` so the extension + sidebar work
+    transparently for group members. Source dedup on merge is intentionally
+    NOT done (build plan §Groups lock).
+  - **Known follow-ups (deferred, documented in spec §13):**
+    - Per-row "Remove from group" kebab on grouped student rows
+      (`consoleGroupRemoveStudent` endpoint is implemented + editor-callable;
+      only the dashboard UI surfacing is missing).
+    - `consoleGroupCheckIntegrity` is admin-only and editor-callable; no
+      client UI yet — surface if pilot reveals it's needed.
+    - Group renaming — trivial follow-up; no schema change required.
+    - Sidebar currently allows any group member to delete highlights they
+      didn't author. Document only; gate later if pilot reveals abuse.
+  - **Pilot — still TODO** (force-install + run one section).
 
 ## 4. Decisions made beyond the build plan
 
