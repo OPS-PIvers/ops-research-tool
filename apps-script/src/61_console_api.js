@@ -233,6 +233,7 @@ function consoleGetProjectDashboard(projectId) {
   const project = getProject_(projectId);
   if (!project) throw new Error('Unknown project ' + projectId);
   const bundle = getBundle_(project.bundleId);
+  resetGroupSheetCache_();
 
   const projectClasses = projectClassList_(project);
   const teacherClasses = isAdmin_(staff) ? null : listClassesTaughtBy_(actorEmail);
@@ -248,22 +249,72 @@ function consoleGetProjectDashboard(projectId) {
     (r) => r.Class && scopedClasses.indexOf(String(r.Class).trim()) >= 0
   );
 
+  // Sheet-id keyed cache: open each group Sheet once per request even if
+  // 3 students all resolve to the same group.
+  const sheetCache = {};  // sheetId → { sources, highlights }
+  function readForActor_(email) {
+    const ss = getStudentSheetIfExists_(email, project);
+    if (!ss) return { sources: [], highlights: [], sheetId: null, isGroup: false };
+    const sheetId = ss.getId();
+    if (!sheetCache[sheetId]) {
+      sheetCache[sheetId] = {
+        sources:    readAllAsObjects_(getTab_(ss, TABS.SOURCES),    HEADERS.SOURCES),
+        highlights: readAllAsObjects_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS),
+      };
+    }
+    const meta = readGroupMeta_(ss);
+    const isGroup = !!(meta && String(meta.groupId || '').trim());
+    return { sources: sheetCache[sheetId].sources, highlights: sheetCache[sheetId].highlights, sheetId, isGroup, meta };
+  }
+
+  // Per-student rows — for group members, filter the group's rows by createdByEmail.
   const students = enrolled.map((r) => {
-    const sources = readSourcesForActor_(r.Email, projectId);
-    const highlights = readHighlightsForActor_(r.Email, projectId);
-    const agg = aggregateStudent_(sources, highlights, bundle);
+    const fetched = readForActor_(r.Email);
+    const personalSources    = fetched.isGroup ? fetched.sources.filter((s)    => String(s.createdByEmail).toLowerCase()    === String(r.Email).toLowerCase()) : fetched.sources;
+    const personalHighlights = fetched.isGroup ? fetched.highlights.filter((h) => String(h.createdByEmail).toLowerCase() === String(r.Email).toLowerCase()) : fetched.highlights;
+    const agg = aggregateStudent_(personalSources, personalHighlights, bundle);
     return {
       email: r.Email,
-      name: composeStudentName_(r),
+      name:  composeStudentName_(r),
       class: String(r.Class || ''),
-      categoryMix: agg.categoryMix,
-      sourceCount: agg.sourceCount,
+      groupId: fetched.isGroup ? fetched.meta.groupId : null,
+      categoryMix:    agg.categoryMix,
+      sourceCount:    agg.sourceCount,
       highlightCount: agg.highlightCount,
-      completion: agg.completion,
-      gaps: agg.gaps,
-      lastActivity: agg.lastActivity,
+      completion:     agg.completion,
+      gaps:           agg.gaps,
+      lastActivity:   agg.lastActivity,
     };
   });
+
+  // Groups array — one entry per active group in scope.
+  const groupsInProject = listGroupsForProject_(project);
+  const groups = groupsInProject
+    .filter((g) => scopedClasses.indexOf(g.className) >= 0)
+    .map((g) => {
+      const ss = SpreadsheetApp.openById(g.sheetId);
+      const sheetId = ss.getId();
+      if (!sheetCache[sheetId]) {
+        sheetCache[sheetId] = {
+          sources:    readAllAsObjects_(getTab_(ss, TABS.SOURCES),    HEADERS.SOURCES),
+          highlights: readAllAsObjects_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS),
+        };
+      }
+      const agg = aggregateStudent_(sheetCache[sheetId].sources, sheetCache[sheetId].highlights, bundle);
+      return {
+        groupId: g.groupId,
+        name: g.name,
+        className: g.className,
+        memberEmails: g.memberEmails,
+        memberCount: g.memberCount,
+        categoryMix:    agg.categoryMix,
+        sourceCount:    agg.sourceCount,
+        highlightCount: agg.highlightCount,
+        completion:     agg.completion,
+        gaps:           agg.gaps,
+        lastActivity:   agg.lastActivity,
+      };
+    });
 
   const unarchive = latestUnarchiveFor_(project.projectId);
   const banner = (function () {
@@ -284,6 +335,7 @@ function consoleGetProjectDashboard(projectId) {
       scopedClasses,
     },
     students,
+    groups,
     asOf: nowIso_(),
   };
   if (banner) resp.recentUnarchive = banner;
@@ -771,4 +823,99 @@ function consoleGroupCheckIntegrity(projectId) {
   }
 
   return { ok: true, issues };
+}
+
+/**
+ * Group-aggregate drill-down. Same response shape as
+ * consoleGetStudentDetail but the inputs are the group's FULL
+ * unfiltered Sources + Highlights, and the response carries member
+ * attribution on each highlight so the teacher can see who wrote what.
+ */
+function consoleGetGroupDashboard(projectId, groupId) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  if (!groupId)   throw new Error('groupId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  const bundle = getBundle_(project.bundleId);
+  resetGroupSheetCache_();
+
+  const located = findGroupFileByGroupId_(project, groupId);
+  if (!located) throw new Error('Group not found: ' + groupId);
+
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    if (taught.indexOf(located.classFolder.getName()) < 0) {
+      throw new Error('Class not in your scope');
+    }
+  }
+
+  const ss = located.spreadsheet;
+  const sources    = readAllAsObjects_(getTab_(ss, TABS.SOURCES),    HEADERS.SOURCES);
+  const highlights = readAllAsObjects_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
+  const members    = currentMembers_(ss);
+  const meta       = readGroupMeta_(ss);
+
+  // Reuse the student-detail enrichment so the viewer renders identically.
+  const enriched = sources.map((s) => {
+    const parsed = parseCitationFields_(s);
+    const formatted = formatCitation(
+      Object.assign({}, parsed, {
+        sourceType: parsed.sourceType || s.sourceType || 'website',
+        title:      parsed.title      || s.scrapedTitle  || '',
+        siteName:   parsed.siteName   || s.scrapedSite   || '',
+        author:     parsed.author     || s.scrapedAuthor || '',
+        publishedDate: parsed.publishedDate || s.scrapedDate || '',
+        url:        parsed.url        || s.rawUrl || '',
+        accessDate: s.accessDate || parsed.accessDate || '',
+      }),
+      bundle ? bundle.style : 'mla'
+    );
+    return {
+      sourceId: s.sourceId,
+      scrapedTitle: s.scrapedTitle,
+      citationFieldsParsed: parsed,
+      primarySecondary: s.primarySecondary || 'unset',
+      annotation: s.annotation || '',
+      formattedCitation: formatted,
+      completionFlags: {
+        citation:       !!(parsed.title && parsed.url),
+        classification: s.primarySecondary && s.primarySecondary !== 'unset',
+        annotation:     !!(s.annotation && String(s.annotation).trim().length > 0),
+      },
+      // attributedAuthor: created on the source, useful for the viewer header.
+      createdByEmail: s.createdByEmail || '',
+      highlights: highlights
+        .filter((h) => h.sourceId === s.sourceId)
+        .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
+        .map((h) => ({
+          highlightId: h.highlightId,
+          primaryCategory: h.primaryCategory,
+          secondaryCategory: h.secondaryCategory,
+          highlightedText: h.highlightedText,
+          note: h.note || '',
+          createdByEmail: h.createdByEmail || '',
+          createdAt: h.createdAt,
+        })),
+      createdAt: s.createdAt,
+    };
+  });
+  enriched.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+  const aggregates = aggregateStudentDetail_(sources, highlights, bundle, project.createdAt);
+
+  return {
+    ok: true,
+    group: {
+      groupId,
+      name: meta ? meta.studentName : '',
+      className: located.classFolder.getName(),
+      memberEmails: members.map((m) => m.email),
+      memberCount: members.length,
+    },
+    aggregates,
+    sources: enriched,
+    asOf: nowIso_(),
+  };
 }
