@@ -1320,3 +1320,41 @@ function devTestGroupAuthorizationGate() {
   console.log(state.pass + '/' + (state.pass + state.fail) + ' passed');
   return state;
 }
+
+/**
+ * Run every sub-project-D group test in sequence and print ONE summary, so
+ * you don't have to Run each from the editor dropdown. Each test seeds its own
+ * fixture and cleans up in a finally block, so back-to-back runs are safe.
+ * Returns { ok, pass, fail, threw }.
+ */
+function devTestGroupsAll() {
+  const tests = [
+    ['devTestGroupRoutingProvisioning',    devTestGroupRoutingProvisioning],
+    ['devTestGroupMergeMigrationFidelity', devTestGroupMergeMigrationFidelity],
+    ['devTestGroupDisbandRoundTrip',       devTestGroupDisbandRoundTrip],
+    ['devTestGroupMoveSemantics',          devTestGroupMoveSemantics],
+    ['devTestGroupAddToGroup',             devTestGroupAddToGroup],
+    ['devTestGroupAuthorizationGate',      devTestGroupAuthorizationGate],
+  ];
+  let pass = 0, fail = 0, threw = 0;
+  const lines = [];
+  tests.forEach((entry) => {
+    const name = entry[0];
+    try {
+      const s = entry[1]() || {};
+      const p = s.pass || 0, f = s.fail || 0;
+      pass += p; fail += f;
+      lines.push((f === 0 ? 'PASS  ' : 'FAIL  ') + name + '  (' + p + '/' + (p + f) + ')');
+    } catch (e) {
+      threw++;
+      lines.push('THREW ' + name + '  — ' + (e && e.message || e));
+    }
+  });
+  const ok = (fail === 0 && threw === 0);
+  console.log(
+    '===== devTestGroupsAll =====\n' + lines.join('\n') +
+    '\n----------------------------\nTOTAL ' + pass + ' checks passed, ' + fail +
+    ' failed, ' + threw + ' threw  →  ' + (ok ? 'ALL GREEN' : 'NOT GREEN')
+  );
+  return { ok: ok, pass: pass, fail: fail, threw: threw };
+}

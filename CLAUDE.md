@@ -211,7 +211,8 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   cleans up after itself: `devTestGroupRoutingProvisioning`,
   `devTestGroupMergeMigrationFidelity`, `devTestGroupDisbandRoundTrip`,
   `devTestGroupMoveSemantics`, `devTestGroupAddToGroup`,
-  `devTestGroupAuthorizationGate`. Run all six green after any group change.
+  `devTestGroupAuthorizationGate`. **Run `devTestGroupsAll` to run all six in
+  one shot** — it prints a single `ALL GREEN` / `NOT GREEN` summary.
 
 ## 9. How to start a Phase 2 session
 
