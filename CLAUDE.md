@@ -80,8 +80,8 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     + 7-day recently-unarchived banner.
   - D: Groups — teacher-driven merge of 2–4 in-class students into a single
     group Sheet (existing work migrated), Manage Groups mode on the dashboard
-    (merge / move / disband), group-aggregate drill-down with author
-    attribution. Routing goes through `findGroupSheetForStudent_` so the
+    (merge / move / add / remove / disband), group-aggregate drill-down with
+    author attribution. Routing goes through `findGroupSheetForStudent_` so the
     extension + sidebar work transparently for group members. Source dedup on
     merge is intentionally NOT done (build plan §Groups lock).
     - **Un-merge reconstructs from the group, not an archive.** Disband /
@@ -95,12 +95,12 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     - **Move** carries the student's work into the target group; **remove**
       auto-disbands a group that would drop to ≤1 member.
     - **`consoleAddToGroup`** adds an ungrouped same-class student to an
-      existing group (copies their solo rows in, trashes the solo).
+      existing group (copies their solo rows in, trashes the solo). In the
+      dashboard's Manage Groups bar, the "Move to ▾" button doubles as "Add
+      to group ▾" when the selected student is solo; "Remove from group"
+      removes a selected grouped student.
     - All group mutations are serialized with `LockService` (`withGroupLock_`).
   - **Known follow-ups:**
-    - Dashboard UI for `consoleAddToGroup` and the per-row "Remove from
-      group" kebab — both endpoints exist + are editor-callable; only the
-      dashboard surfacing is missing.
     - `consoleGroupCheckIntegrity` is admin-only and editor-callable; no
       client UI yet — surface if pilot reveals it's needed.
     - Group renaming — trivial follow-up; no schema change required.
