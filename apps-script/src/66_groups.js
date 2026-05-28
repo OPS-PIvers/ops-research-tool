@@ -310,21 +310,9 @@ function copyMemberRowsIntoGroup_(groupSpreadsheet, studentSpreadsheet) {
 }
 
 /**
- * Stamp Meta.groupId on a per-student Sheet. Used to mark a solo Sheet as
- * "belongs to group <id>" before archiving it. Idempotent.
- */
-function setSoloMetaGroupId_(studentSpreadsheet, groupId) {
-  const metaTab = getTab_(studentSpreadsheet, TABS.META);
-  const col = HEADERS.META.indexOf('groupId') + 1;
-  if (col < 1) throw new Error('META header missing groupId column');
-  // Meta has exactly one row per the per-student-Sheet invariant; row 2.
-  if (metaTab.getLastRow() < 2) return;
-  metaTab.getRange(2, col).setValue(groupId || '');
-}
-
-/**
  * Move a per-student Sheet from its class folder into the class's
  * Archived-students/ subfolder. Idempotent: no-op if already archived.
+ * Still used to stash the GROUP Sheet itself on disband (archiveGroupSheet_).
  *
  * Returns the Drive File object after move.
  */
@@ -338,31 +326,6 @@ function archiveStudentSheetForGroup_(studentFile, classFolder) {
   }
   studentFile.moveTo(archived);
   return studentFile;
-}
-
-/**
- * Inverse of archiveStudentSheetForGroup_. Move a per-student Sheet
- * out of <class>/Archived-students/ and back to <class>/. Idempotent.
- * Returns null if the archived file doesn't exist.
- */
-function restoreStudentSheetFromArchive_(email, project) {
-  const roster = getStudentRosterEntry_(email);
-  if (!roster) return null;
-  const projectFolder = DriveApp.getFolderById(project.rootFolderId);
-  const classFolder = findChildFolder_(projectFolder, roster.Class);
-  if (!classFolder) return null;
-  const archived = findChildFolder_(classFolder, NAMES.ARCHIVED_STUDENTS_FOLDER);
-  if (!archived) return null;
-  const file = findChildFile_(archived, String(email).toLowerCase());
-  if (!file) return null;
-  // Move to class folder root.
-  file.moveTo(classFolder);
-  // Clear Meta.groupId on the restored Sheet.
-  try {
-    const ss = SpreadsheetApp.openById(file.getId());
-    setSoloMetaGroupId_(ss, '');
-  } catch (e) { /* tolerate — caller can audit if needed */ }
-  return file;
 }
 
 /**
@@ -424,4 +387,143 @@ function nextGroupPlaceholderName_(project, className) {
     if (files.next().getName().indexOf(NAMES.GROUP_SHEET_PREFIX) === 0) count++;
   }
   return 'Group ' + (count + 1);
+}
+
+// ============================================================
+// Reconstruct-based un-merge, locking, add-to-group
+// ------------------------------------------------------------
+// The group Sheet is the single source of truth for a member's work while
+// grouped: it holds their pre-merge rows (copied in at merge) plus anything
+// they authored in the group, all stamped with their createdByEmail. So
+// un-merge rebuilds a member's solo Sheet by filtering the group's rows on
+// createdByEmail (+ the referential closure of sources their highlights cite)
+// rather than restoring a stale pre-merge snapshot. Their group-period work
+// follows them out.
+// ============================================================
+
+/**
+ * Serialize a group mutation against concurrent student writes / other
+ * teacher actions. 30s is generous for a deliberate, low-frequency action.
+ */
+function withGroupLock_(fn) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try { return fn(); } finally { lock.releaseLock(); }
+}
+
+/**
+ * Rebuild a member's SOLO Sheet from a group's rows: their highlights, plus
+ * every Source those highlights reference (even if authored by a teammate
+ * after a manual dedup) plus any Source they authored. Rows are written
+ * verbatim by key — NOT through upsertSource_, which would re-stringify the
+ * already-serialized citationFields. Returns { sources, highlights, soloId }.
+ */
+function reconstructSoloFromGroup_(project, groupSpreadsheet, email) {
+  const e = String(email).toLowerCase();
+  const allHl = readAllAsObjects_(getTab_(groupSpreadsheet, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
+  const myHl = allHl.filter((h) => String(h.createdByEmail).toLowerCase() === e);
+  const needSrc = {};
+  myHl.forEach((h) => { if (h.sourceId) needSrc[h.sourceId] = true; });
+  const allSrc = readAllAsObjects_(getTab_(groupSpreadsheet, TABS.SOURCES), HEADERS.SOURCES);
+  const mySrc = allSrc.filter((s) => String(s.createdByEmail).toLowerCase() === e || needSrc[s.sourceId]);
+
+  const solo = findOrCreateSoloSheet_(e, project);  // SOLO core — bypasses group routing
+  const srcTab = getTab_(solo, TABS.SOURCES);
+  const hlTab  = getTab_(solo, TABS.HIGHLIGHTS);
+  mySrc.forEach((s) => upsertByKey_(srcTab, HEADERS.SOURCES, 'sourceId', s));
+  myHl.forEach((h) => upsertByKey_(hlTab, HEADERS.HIGHLIGHTS, 'highlightId', h));
+  return { sources: mySrc.length, highlights: myHl.length, soloId: solo.getId() };
+}
+
+/**
+ * Reconstruct each current member's solo Sheet from the group, mark them
+ * left, archive the (now-redundant) group Sheet, audit. Caller holds the
+ * lock. Returns { ok, groupId, restoredCount }.
+ */
+function disbandGroupCore_(project, group, actorEmail) {
+  const groupSs = group.spreadsheet;
+  const members = currentMembers_(groupSs);
+  members.forEach((m) => {
+    reconstructSoloFromGroup_(project, groupSs, m.email);
+    markMemberLeftAt_(groupSs, m.email);
+    appendAuditEvent_({
+      projectId: project.projectId, action: AUDIT_ACTIONS.GROUP_DISBAND,
+      actor: actorEmail, detail: 'groupId=' + group.groupId + ';email=' + m.email,
+    });
+  });
+  try { archiveGroupSheet_(group.file, group.classFolder); } catch (e) { /* best-effort */ }
+  appendAuditEvent_({
+    projectId: project.projectId, action: AUDIT_ACTIONS.GROUP_DISBAND_GROUP,
+    actor: actorEmail, detail: 'groupId=' + group.groupId,
+  });
+  return { ok: true, groupId: group.groupId, restoredCount: members.length };
+}
+
+/**
+ * Remove one member: reconstruct their solo from the group, strip their rows
+ * from the group (deleting a Source only once no highlight references it, so
+ * a teammate's highlight is never orphaned), mark them left. If ≤1 member
+ * would remain, auto-disband (a one-person group is just a solo student).
+ * Caller holds the lock.
+ */
+function removeMemberFromGroupCore_(project, group, email, actorEmail) {
+  const e = String(email).toLowerCase();
+  const groupSs = group.spreadsheet;
+  const rebuilt = reconstructSoloFromGroup_(project, groupSs, e);
+
+  const touched = {};
+  readAllAsObjects_(getTab_(groupSs, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS)
+    .filter((h) => String(h.createdByEmail).toLowerCase() === e)
+    .forEach((h) => { const sid = deleteHighlightById_(groupSs, h.highlightId); if (sid) touched[sid] = true; });
+  readAllAsObjects_(getTab_(groupSs, TABS.SOURCES), HEADERS.SOURCES)
+    .filter((s) => String(s.createdByEmail).toLowerCase() === e)
+    .forEach((s) => { touched[s.sourceId] = true; });
+  Object.keys(touched).forEach((sid) => deleteSourceIfOrphaned_(groupSs, sid));
+
+  markMemberLeftAt_(groupSs, e);
+  appendAuditEvent_({
+    projectId: project.projectId, action: AUDIT_ACTIONS.GROUP_UNMERGE,
+    actor: actorEmail, detail: 'groupId=' + group.groupId + ';email=' + e,
+  });
+
+  const remaining = currentMembers_(groupSs);
+  if (remaining.length <= 1) {
+    remaining.forEach((m) => {
+      reconstructSoloFromGroup_(project, groupSs, m.email);
+      markMemberLeftAt_(groupSs, m.email);
+    });
+    try { archiveGroupSheet_(group.file, group.classFolder); } catch (err) { /* best-effort */ }
+    appendAuditEvent_({
+      projectId: project.projectId, action: AUDIT_ACTIONS.GROUP_DISBAND_GROUP,
+      actor: actorEmail, detail: 'groupId=' + group.groupId + ';autoDisbanded=true',
+    });
+    return { ok: true, removed: e, rebuilt, autoDisbanded: true };
+  }
+  return { ok: true, removed: e, rebuilt, remaining: remaining.map((m) => m.email) };
+}
+
+/**
+ * Add an ungrouped member to an existing group: copy their solo rows in
+ * verbatim, trash the solo Sheet, append the Members row. Caller holds the
+ * lock and has validated class / capacity / not-already-grouped. Returns
+ * { ok, added, copiedSources, copiedHighlights }.
+ */
+function addMemberToGroupCore_(project, group, rosterEntry, actorEmail) {
+  const e = String(rosterEntry.Email || '').toLowerCase();
+  const groupSs = group.spreadsheet;
+  const soloFile = findChildFile_(group.classFolder, e);
+  let copiedSources = 0, copiedHighlights = 0;
+  if (soloFile) {
+    const soloSs = SpreadsheetApp.openById(soloFile.getId());
+    const copied = copyMemberRowsIntoGroup_(groupSs, soloSs);
+    copiedSources = copied.sourcesCopied;
+    copiedHighlights = copied.highlightsCopied;
+    DriveApp.getFileById(soloFile.getId()).setTrashed(true);
+  }
+  appendMemberToGroup_(groupSs, rosterEntry);
+  appendAuditEvent_({
+    projectId: project.projectId, action: AUDIT_ACTIONS.GROUP_MERGE,
+    actor: actorEmail, detail: 'add;groupId=' + group.groupId + ';email=' + e,
+  });
+  return { ok: true, added: e, copiedSources, copiedHighlights };
 }

@@ -498,82 +498,82 @@ function consoleGroupCreate(projectId, name, memberEmails) {
     }
   }
 
-  // Step 1: stage. Mint groupId + create group Sheet.
-  const groupId = uuid_();
-  const projectFolder = DriveApp.getFolderById(project.rootFolderId);
-  const classFolder = findChildFolder_(projectFolder, v.sharedClass) ||
-                      projectFolder.createFolder(v.sharedClass);
-  const created = createGroupSheet_(project, classFolder, v.trimmedName, groupId, v.rosters);
+  return withGroupLock_(() => {
+    // Stage: mint groupId + create the group Sheet.
+    const groupId = uuid_();
+    const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+    const classFolder = findChildFolder_(projectFolder, v.sharedClass) ||
+                        projectFolder.createFolder(v.sharedClass);
+    const created = createGroupSheet_(project, classFolder, v.trimmedName, groupId, v.rosters);
 
-  // Step 2 + 3: per-member copy + flip + move. ATOMIC: if any member
-  // fails, trash the freshly-created group Sheet and throw. Otherwise
-  // the failed member would have writes routed to a group Sheet that
-  // never received their existing work — a data-loss surface.
-  let sourcesCopied = 0, highlightsCopied = 0;
-  try {
-    v.lowered.forEach((email, idx) => {
-      // Locate the solo Sheet directly via Drive (don't go through the
-      // group routing hook — that would create an infinite recursion now
-      // that the group Sheet exists).
-      const soloFile = findChildFile_(classFolder, email);
-      if (!soloFile) {
-        // Student never highlighted — no rows to migrate. The member
-        // entry is already in the group's Members tab from
-        // createGroupSheet_, so future writes route correctly.
-        return;
-      }
-      const soloSpreadsheet = SpreadsheetApp.openById(soloFile.getId());
-      const copied = copyMemberRowsIntoGroup_(created.spreadsheet, soloSpreadsheet);
-      sourcesCopied   += copied.sourcesCopied;
-      highlightsCopied += copied.highlightsCopied;
-      setSoloMetaGroupId_(soloSpreadsheet, groupId);
-      archiveStudentSheetForGroup_(soloFile, classFolder);
-    });
-  } catch (e) {
-    // Roll back the group Sheet so future writes don't route here.
-    try { DriveApp.getFileById(created.spreadsheet.getId()).setTrashed(true); }
-    catch (cleanupErr) { /* best-effort; surface original error below */ }
-    resetGroupSheetCache_();
-    throw new Error('Failed to create group and migrate members: ' + (e && e.message || e));
-  }
-
-  // Step 4: audit. Errors here are non-fatal — the migration succeeded;
-  // a missing audit row is a recoverable nuisance, not data loss.
-  const auditErrors = [];
-  v.lowered.forEach((email) => {
+    // Copy each member's rows into the group, then trash their solo Sheet.
+    // ATOMIC: if any member fails, trash the new group Sheet and throw —
+    // otherwise the failed member would have writes routed to a group Sheet
+    // that never received their existing work (a data-loss surface). The
+    // group Sheet is the sole store from here; un-merge reconstructs solos
+    // from it by createdByEmail, so there's no archived snapshot to keep.
+    let sourcesCopied = 0, highlightsCopied = 0;
     try {
-      appendAuditEvent_({
-        projectId,
-        action: AUDIT_ACTIONS.GROUP_MERGE,
-        actor:  actorEmail,
-        detail: 'groupId=' + groupId + ';memberEmail=' + email,
+      v.lowered.forEach((email) => {
+        // Locate the solo Sheet directly via Drive (don't go through the
+        // group routing hook — that would recurse now the group exists).
+        const soloFile = findChildFile_(classFolder, email);
+        if (!soloFile) {
+          // Never highlighted — no rows to migrate. The Members row from
+          // createGroupSheet_ already routes their future writes here.
+          return;
+        }
+        const soloSpreadsheet = SpreadsheetApp.openById(soloFile.getId());
+        const copied = copyMemberRowsIntoGroup_(created.spreadsheet, soloSpreadsheet);
+        sourcesCopied    += copied.sourcesCopied;
+        highlightsCopied += copied.highlightsCopied;
+        DriveApp.getFileById(soloFile.getId()).setTrashed(true);
       });
     } catch (e) {
-      auditErrors.push({ email, error: 'audit: ' + String(e && e.message || e) });
+      // Roll back the group Sheet so future writes don't route here.
+      try { DriveApp.getFileById(created.spreadsheet.getId()).setTrashed(true); }
+      catch (cleanupErr) { /* best-effort; surface original error below */ }
+      resetGroupSheetCache_();
+      throw new Error('Failed to create group and migrate members: ' + (e && e.message || e));
     }
+
+    // Audit. Non-fatal — the migration succeeded; a missing audit row is a
+    // recoverable nuisance, not data loss.
+    const auditErrors = [];
+    v.lowered.forEach((email) => {
+      try {
+        appendAuditEvent_({
+          projectId,
+          action: AUDIT_ACTIONS.GROUP_MERGE,
+          actor:  actorEmail,
+          detail: 'groupId=' + groupId + ';memberEmail=' + email,
+        });
+      } catch (e) {
+        auditErrors.push({ email, error: 'audit: ' + String(e && e.message || e) });
+      }
+    });
+
+    // Bust the cache — subsequent reads must see the new routing.
+    resetGroupSheetCache_();
+
+    return {
+      ok: true,
+      groupId,
+      groupSheetId: created.spreadsheet.getId(),
+      name: v.trimmedName,
+      className: v.sharedClass,
+      sourcesCopied,
+      highlightsCopied,
+      errors: auditErrors,
+    };
   });
-
-  // Bust the cache — subsequent reads must see the new routing.
-  resetGroupSheetCache_();
-
-  return {
-    ok: true,
-    groupId,
-    groupSheetId: created.spreadsheet.getId(),
-    name: v.trimmedName,
-    className: v.sharedClass,
-    sourcesCopied,
-    highlightsCopied,
-    errors: auditErrors,
-  };
 }
 
 /**
- * Move a student from one group to another (same project, same class).
- * Per spec §7.2: the student's prior work stays in `from`. Only the
- * membership rows change. The Meta.groupId pointer on the archived solo
- * Sheet (if any) is updated to point at the new group so a future
- * un-merge restores correctly.
+ * Move a student from one group to another (same project, same class). The
+ * student's work follows them: it is pulled out of `from` (reconstructed,
+ * orphan-safe) and copied into `to`. If `from` drops to ≤1 member it
+ * auto-disbands. Use consoleAddToGroup to add an ungrouped student.
  *
  * Returns { ok, fromGroupId, toGroupId, email, errors }.
  */
@@ -593,6 +593,8 @@ function consoleGroupMoveStudent(projectId, email, fromGroupId, toGroupId) {
   const toGroup   = findGroupFileByGroupId_(project, toGroupId);
   if (!fromGroup) throw new Error('From group not found: ' + fromGroupId);
   if (!toGroup)   throw new Error('To group not found: '   + toGroupId);
+  fromGroup.groupId = fromGroupId;
+  toGroup.groupId   = toGroupId;
 
   // Same-class invariant.
   if (fromGroup.classFolder.getId() !== toGroup.classFolder.getId()) {
@@ -608,55 +610,41 @@ function consoleGroupMoveStudent(projectId, email, fromGroupId, toGroupId) {
   }
 
   const target = String(email).toLowerCase();
-  // Member must currently be in `from`.
-  const fromMembers = currentMembers_(fromGroup.spreadsheet);
-  if (!fromMembers.find((m) => String(m.email).toLowerCase() === target)) {
+  if (!currentMembers_(fromGroup.spreadsheet).find((m) => String(m.email).toLowerCase() === target)) {
     throw new Error(email + ' is not a current member of the source group');
   }
-  // Must not already be in `to`.
-  const toMembers = currentMembers_(toGroup.spreadsheet);
-  if (toMembers.find((m) => String(m.email).toLowerCase() === target)) {
+  if (currentMembers_(toGroup.spreadsheet).find((m) => String(m.email).toLowerCase() === target)) {
     throw new Error(email + ' is already in the target group');
+  }
+  if (currentMembers_(toGroup.spreadsheet).length >= 4) {
+    throw new Error('Target group already has 4 members');
   }
 
   const roster = getStudentRosterEntry_(email);
   if (!roster) throw new Error('Not on roster: ' + email);
 
-  // Apply: stamp leftAt on `from`, append member on `to`.
-  markMemberLeftAt_(fromGroup.spreadsheet, target);
-  appendMemberToGroup_(toGroup.spreadsheet, roster);
-
-  // If the student's archived solo Sheet still exists (from the merge
-  // into `from`), update its Meta.groupId to the new group's id so a
-  // future un-merge restores cleanly.
-  try {
-    const archived = findChildFolder_(fromGroup.classFolder, NAMES.ARCHIVED_STUDENTS_FOLDER);
-    if (archived) {
-      const soloFile = findChildFile_(archived, target);
-      if (soloFile) {
-        setSoloMetaGroupId_(SpreadsheetApp.openById(soloFile.getId()), toGroupId);
-      }
-    }
-  } catch (e) { /* tolerate; un-merge will inspect Members tab as fallback */ }
-
-  // Audit.
-  appendAuditEvent_({
-    projectId,
-    action: AUDIT_ACTIONS.GROUP_MOVE,
-    actor:  actorEmail,
-    detail: 'from=' + fromGroupId + ';to=' + toGroupId + ';email=' + target,
+  return withGroupLock_(() => {
+    // Pull the student (and their work) out of `from`, then add them (and
+    // that work) to `to`. Removing may auto-disband `from` if it drops to
+    // ≤1 member.
+    removeMemberFromGroupCore_(project, fromGroup, target, actorEmail);
+    addMemberToGroupCore_(project, toGroup, roster, actorEmail);
+    appendAuditEvent_({
+      projectId,
+      action: AUDIT_ACTIONS.GROUP_MOVE,
+      actor:  actorEmail,
+      detail: 'from=' + fromGroupId + ';to=' + toGroupId + ';email=' + target,
+    });
+    resetGroupSheetCache_();
+    return { ok: true, fromGroupId, toGroupId, email: target, errors: [] };
   });
-
-  resetGroupSheetCache_();
-  return { ok: true, fromGroupId, toGroupId, email: target, errors: [] };
 }
 
 /**
- * Disband a group: every current member's solo Sheet is restored from
- * Archived-students/ (Meta.groupId cleared), and the group Sheet is
- * itself moved into Archived-students/ for posterity.
- *
- * Group-period work stays in the (now-archived) group Sheet — spec §7.3.
+ * Disband a group: every current member's solo Sheet is reconstructed from
+ * the group's rows (their createdByEmail rows + referential closure), so
+ * their group-period work follows them out. The group Sheet is then moved
+ * into Archived-students/ for posterity.
  *
  * Returns { ok, groupId, restoredCount, errors }.
  */
@@ -671,6 +659,7 @@ function consoleGroupDisband(projectId, groupId) {
 
   const group = findGroupFileByGroupId_(project, groupId);
   if (!group) throw new Error('Group not found: ' + groupId);
+  group.groupId = groupId;
 
   if (!isAdmin_(staff)) {
     const taught = listClassesTaughtBy_(actorEmail);
@@ -679,62 +668,20 @@ function consoleGroupDisband(projectId, groupId) {
     }
   }
 
-  const members = currentMembers_(group.spreadsheet);
-  const memberErrors = [];
-  let restoredCount = 0;
-  members.forEach((m) => {
-    try {
-      const file = restoreStudentSheetFromArchive_(m.email, project);
-      if (file) restoredCount++;
-      markMemberLeftAt_(group.spreadsheet, m.email);
-      appendAuditEvent_({
-        projectId,
-        action: AUDIT_ACTIONS.GROUP_DISBAND,
-        actor:  actorEmail,
-        detail: 'groupId=' + groupId + ';email=' + m.email,
-      });
-    } catch (e) {
-      memberErrors.push({ email: m.email, error: String(e && e.message || e) });
-    }
-  });
-
-  // If any member failed to restore, do NOT archive the group Sheet —
-  // those members would be left with no active Sheet at all (their next
-  // write would lazily create an empty solo, orphaning their pre-merge
-  // work in the group Sheet). Throw so the teacher can retry; successful
-  // members are already restored and marked left so retry is idempotent.
-  if (memberErrors.length > 0) {
+  return withGroupLock_(() => {
+    const result = disbandGroupCore_(project, group, actorEmail);
     resetGroupSheetCache_();
-    throw new Error('Failed to disband group completely: ' + JSON.stringify(memberErrors));
-  }
-
-  // Move the group Sheet itself into Archived-students/.
-  const errors = [];
-  try {
-    archiveGroupSheet_(group.file, group.classFolder);
-  } catch (e) {
-    errors.push({ step: 'archiveGroupSheet', error: String(e && e.message || e) });
-  }
-  try {
-    appendAuditEvent_({
-      projectId,
-      action: AUDIT_ACTIONS.GROUP_DISBAND_GROUP,
-      actor:  actorEmail,
-      detail: 'groupId=' + groupId,
-    });
-  } catch (e) {
-    errors.push({ step: 'audit', error: String(e && e.message || e) });
-  }
-
-  resetGroupSheetCache_();
-  return { ok: true, groupId, restoredCount, errors };
+    return { ok: true, groupId, restoredCount: result.restoredCount, errors: [] };
+  });
 }
 
 /**
- * Un-merge a single student from a group of ≥3 members (cannot drop a
- * 2-member group below 2 — use disband instead). Per spec §7.4.
+ * Un-merge a single student: reconstruct their solo Sheet from the group
+ * (their createdByEmail rows + referential closure) and strip their rows
+ * from the group, orphan-safe. If the group would drop to ≤1 member it
+ * auto-disbands (a one-person group is just a solo student).
  *
- * Returns { ok, groupId, email, errors }.
+ * Returns { ok, groupId, email, autoDisbanded, errors }.
  */
 function consoleGroupRemoveStudent(projectId, groupId, email) {
   const actorEmail = getActorEmail_();
@@ -748,6 +695,7 @@ function consoleGroupRemoveStudent(projectId, groupId, email) {
 
   const group = findGroupFileByGroupId_(project, groupId);
   if (!group) throw new Error('Group not found: ' + groupId);
+  group.groupId = groupId;
 
   if (!isAdmin_(staff)) {
     const taught = listClassesTaughtBy_(actorEmail);
@@ -757,26 +705,66 @@ function consoleGroupRemoveStudent(projectId, groupId, email) {
   }
 
   const target = String(email).toLowerCase();
-  const members = currentMembers_(group.spreadsheet);
-  if (!members.find((m) => String(m.email).toLowerCase() === target)) {
+  if (!currentMembers_(group.spreadsheet).find((m) => String(m.email).toLowerCase() === target)) {
     throw new Error(email + ' is not a current member of this group');
   }
-  if (members.length <= 2) {
-    throw new Error('Group must have ≥ 2 members. Use disband instead.');
+
+  return withGroupLock_(() => {
+    const result = removeMemberFromGroupCore_(project, group, target, actorEmail);
+    resetGroupSheetCache_();
+    return { ok: true, groupId, email: target, autoDisbanded: !!result.autoDisbanded, errors: [] };
+  });
+}
+
+/**
+ * Add an ungrouped, same-class student to an existing active group: their
+ * solo work is copied in and the solo Sheet trashed. Use
+ * consoleGroupMoveStudent to relocate an already-grouped student.
+ *
+ * Returns { ok, groupId, email, copiedSources, copiedHighlights, errors }.
+ */
+function consoleAddToGroup(projectId, groupId, email) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  if (!groupId)   throw new Error('groupId required');
+  if (!email)     throw new Error('email required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  resetGroupSheetCache_();
+
+  const group = findGroupFileByGroupId_(project, groupId);
+  if (!group) throw new Error('Group not found: ' + groupId);
+  group.groupId = groupId;
+
+  const roster = getStudentRosterEntry_(email);
+  if (!roster) throw new Error('Not on roster: ' + email);
+  if (String(roster.Class || '').trim() !== group.classFolder.getName()) {
+    throw new Error('Member must be in class ' + group.classFolder.getName());
+  }
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    if (taught.indexOf(group.classFolder.getName()) < 0) {
+      throw new Error('Class not in your scope');
+    }
+  }
+  const target = String(email).toLowerCase();
+  if (findGroupSheetForStudent_(target, project)) {
+    throw new Error(email + ' is already in a group — move them instead');
+  }
+  if (currentMembers_(group.spreadsheet).length >= 4) {
+    throw new Error('Group already has 4 members');
   }
 
-  // Restore the solo Sheet (or no-op if absent), mark leftAt, audit.
-  restoreStudentSheetFromArchive_(target, project);
-  markMemberLeftAt_(group.spreadsheet, target);
-  appendAuditEvent_({
-    projectId,
-    action: AUDIT_ACTIONS.GROUP_UNMERGE,
-    actor:  actorEmail,
-    detail: 'groupId=' + groupId + ';email=' + target,
+  return withGroupLock_(() => {
+    const result = addMemberToGroupCore_(project, group, roster, actorEmail);
+    resetGroupSheetCache_();
+    return {
+      ok: true, groupId, email: target,
+      copiedSources: result.copiedSources, copiedHighlights: result.copiedHighlights,
+      errors: [],
+    };
   });
-
-  resetGroupSheetCache_();
-  return { ok: true, groupId, email: target, errors: [] };
 }
 
 /**

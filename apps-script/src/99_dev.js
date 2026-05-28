@@ -943,13 +943,13 @@ function devTestGroupRoutingProvisioning() {
     const merge = consoleGroupCreate(project.projectId, 'RoutingProbe', emails);
     check('merge ok', merge && merge.ok === true);
     check('groupId present', !!merge.groupId);
+    check('group Sheet ID returned', !!merge.groupSheetId);
+
+    // Solo Sheets are trashed on merge — the group Sheet is the sole store.
     const projectFolder = DriveApp.getFolderById(project.rootFolderId);
     const classFolder = findChildFolder_(projectFolder, 'DEV');
-    const grpFile = findChildFile_(classFolder, NAMES.ARCHIVED_STUDENTS_FOLDER) === null
-      ? null  // placeholder; the group Sheet's name is friendly, not '[grp]' raw
-      : null;
-    // Easier check: the group Sheet's file ID is in the merge response.
-    check('group Sheet ID returned', !!merge.groupSheetId);
+    check('no solo Sheets remain at class root',
+      emails.every((e) => findChildFile_(classFolder, e) === null));
 
     resetGroupSheetCache_();
     emails.forEach((e) => {
@@ -1028,6 +1028,10 @@ function devTestGroupMergeMigrationFidelity() {
 
     const allEmailsPreserved = highlights.every((h) => emails.indexOf(String(h.createdByEmail).toLowerCase()) >= 0);
     check('every highlight createdByEmail preserved', allEmailsPreserved);
+
+    const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+    const classFolder = findChildFolder_(projectFolder, 'DEV');
+    check('solo Sheets trashed post-merge', emails.every((e) => findChildFile_(classFolder, e) === null));
   } finally {
     try {
       resetGroupSheetCache_();
@@ -1041,16 +1045,35 @@ function devTestGroupMergeMigrationFidelity() {
 }
 
 /**
- * Merge 3, disband, assert each archived Sheet is restored and Meta.groupId
- * is cleared, the group Sheet moved into Archived-students/.
+ * Merge 3 (each with 1 source + 1 highlight), disband, assert each member's
+ * solo Sheet is RECONSTRUCTED from the group with their own rows (their
+ * group-period work follows them), the group Sheet is archived, and routing
+ * falls back to the solo Sheet.
  */
 function devTestGroupDisbandRoundTrip() {
   const project = devSeedDevProject();
   const emails = devGroupsSeedRoster_(3);
   const { check, state } = devGroupsChecker_();
   try {
-    // Seed solo Sheets (no rows needed).
-    emails.forEach((e) => findOrCreateStudentSheet_(e, project));
+    const bundle = listBundles_().find((b) => b.bundleId === project.bundleId);
+    // Seed each solo with 1 source + 1 highlight so reconstruct has rows to pull.
+    const srcByEmail = {};
+    emails.forEach((email) => {
+      const ss = findOrCreateStudentSheet_(email, project);
+      const sourceId = 'disband-src-' + email;
+      srcByEmail[email] = sourceId;
+      upsertSource_(ss, {
+        sourceId, projectId: project.projectId,
+        rawUrl: 'https://devg.example.com/disband/' + email,
+        scrapedTitle: 'disband ' + email, primarySecondary: 'primary', annotation: 'a',
+        citationFields: JSON.stringify({ title: 't', url: 'https://devg.example.com/disband/' + email }),
+        createdByEmail: email,
+      });
+      upsertHighlight_(ss, {
+        highlightId: 'disband-hl-' + email, sourceId, projectId: project.projectId,
+        primaryCategory: bundle.label1, highlightedText: 'hl ' + email, createdByEmail: email,
+      });
+    });
 
     resetGroupSheetCache_();
     const merge = consoleGroupCreate(project.projectId, 'DisbandProbe', emails);
@@ -1058,15 +1081,23 @@ function devTestGroupDisbandRoundTrip() {
     check('disband ok', disband && disband.ok === true);
     check('restoredCount = 3', disband.restoredCount === 3);
 
-    // Each solo Sheet should now exist at class folder root, with empty Meta.groupId.
+    // Each solo Sheet exists again at class root, reconstructed with ONLY that
+    // member's own source + highlight.
     const projectFolder = DriveApp.getFolderById(project.rootFolderId);
     const classFolder = findChildFolder_(projectFolder, 'DEV');
     emails.forEach((e) => {
       const f = findChildFile_(classFolder, e);
-      check('solo Sheet restored for ' + e, !!f);
+      check('solo Sheet reconstructed for ' + e, !!f);
       if (f) {
-        const meta = readGroupMeta_(SpreadsheetApp.openById(f.getId()));
+        const ss = SpreadsheetApp.openById(f.getId());
+        const meta = readGroupMeta_(ss);
         check('Meta.groupId cleared for ' + e, !meta.groupId);
+        const srcs = readAllAsObjects_(getTab_(ss, TABS.SOURCES), HEADERS.SOURCES);
+        const hls  = readAllAsObjects_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
+        check('reconstructed solo has only own source for ' + e,
+          srcs.length === 1 && srcs[0].sourceId === srcByEmail[e]);
+        check('reconstructed solo has only own highlight for ' + e,
+          hls.length === 1 && String(hls[0].createdByEmail).toLowerCase() === e);
       }
     });
 
@@ -1082,8 +1113,9 @@ function devTestGroupDisbandRoundTrip() {
 }
 
 /**
- * Merge A+B into G1, merge C+D into G2, move D → G1, assert membership.
- * Remove-when-2-left is rejected. Disband G2.
+ * Merge A+B into G1 and C+D into G2; give C and D a source+highlight each in
+ * G2. Move D → G1: D's work FOLLOWS to G1, and G2 drops to 1 (C) so it
+ * auto-disbands, returning C to a reconstructed solo with their own work.
  */
 function devTestGroupMoveSemantics() {
   const project = devSeedDevProject();
@@ -1094,47 +1126,107 @@ function devTestGroupMoveSemantics() {
     const g1 = consoleGroupCreate(project.projectId, 'MoveG1', [emails[0], emails[1]]);
     const g2 = consoleGroupCreate(project.projectId, 'MoveG2', [emails[2], emails[3]]);
 
-    // Seed: give D a highlight in g2 so the "stays attributed" invariant has something to check.
+    // Seed C and D a source+highlight each in G2.
     const g2Ss = SpreadsheetApp.openById(g2.groupSheetId);
     const bundle = listBundles_().find((b) => b.bundleId === project.bundleId);
-    const dSourceId = uuid_();
-    upsertSource_(g2Ss, {
-      sourceId: dSourceId, projectId: project.projectId,
-      rawUrl: 'https://devg.example.com/D-in-G2', scrapedTitle: 'D in G2',
-      primarySecondary: 'primary', annotation: 'a',
-      citationFields: JSON.stringify({title:'t',url:'https://devg.example.com/D-in-G2'}),
-      createdByEmail: emails[3],
-    });
-    upsertHighlight_(g2Ss, {
-      highlightId: uuid_(), sourceId: dSourceId, projectId: project.projectId,
-      primaryCategory: bundle.label1, highlightedText: 'D hl in G2', createdByEmail: emails[3],
+    [emails[2], emails[3]].forEach((email) => {
+      const sid = 'move-src-' + email;
+      upsertSource_(g2Ss, {
+        sourceId: sid, projectId: project.projectId,
+        rawUrl: 'https://devg.example.com/move/' + email, scrapedTitle: 'move ' + email,
+        primarySecondary: 'primary', annotation: 'a',
+        citationFields: JSON.stringify({ title: 't', url: 'https://devg.example.com/move/' + email }),
+        createdByEmail: email,
+      });
+      upsertHighlight_(g2Ss, {
+        highlightId: 'move-hl-' + email, sourceId: sid, projectId: project.projectId,
+        primaryCategory: bundle.label1, highlightedText: 'hl ' + email, createdByEmail: email,
+      });
     });
 
     // Move D → G1.
     const move = consoleGroupMoveStudent(project.projectId, emails[3], g2.groupId, g1.groupId);
     check('move ok', move && move.ok === true);
 
-    // G1 has 3 current members; G2 has 1.
+    // G1 now has 3 current members incl D; D's highlight followed into G1.
+    resetGroupSheetCache_();
     const g1Members = currentMembers_(SpreadsheetApp.openById(g1.groupSheetId));
-    const g2MembersAfter = currentMembers_(SpreadsheetApp.openById(g2.groupSheetId));
-    check('G1 has 3 current',   g1Members.length === 3);
-    check('G2 has 1 current',   g2MembersAfter.length === 1);
-
-    // D's prior work is in G2, NOT in G1.
+    check('G1 has 3 current', g1Members.length === 3);
+    check('D is a current member of G1', g1Members.some((m) => String(m.email).toLowerCase() === emails[3]));
     const g1Highlights = readAllAsObjects_(getTab_(SpreadsheetApp.openById(g1.groupSheetId), TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
-    const g2Highlights = readAllAsObjects_(getTab_(g2Ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
-    check("D's old highlight stays in G2", g2Highlights.some((h) => String(h.createdByEmail).toLowerCase() === emails[3]));
-    check("D's old highlight not copied to G1", g1Highlights.every((h) => String(h.createdByEmail).toLowerCase() !== emails[3]));
+    check("D's highlight followed into G1", g1Highlights.some((h) => String(h.createdByEmail).toLowerCase() === emails[3]));
 
-    // Remove from G2 (which now has 1) must throw.
-    let removeThrew = false;
-    try { consoleGroupRemoveStudent(project.projectId, g2.groupId, emails[2]); }
-    catch (e) { removeThrew = true; check('remove on 1-member group throws', /must have/i.test(e.message)); }
-    if (!removeThrew) check('remove on 1-member group throws', false);
+    // G2 dropped to 1 (C) → auto-disbanded; C reconstructed to a solo with their own work.
+    check('G2 auto-disbanded', getGroupById_(project, g2.groupId) === null);
+    const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+    const classFolder = findChildFolder_(projectFolder, 'DEV');
+    const cFile = findChildFile_(classFolder, emails[2]);
+    check('C reconstructed to solo', !!cFile);
+    if (cFile) {
+      const cHls = readAllAsObjects_(getTab_(SpreadsheetApp.openById(cFile.getId()), TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
+      check('C solo has their own highlight', cHls.some((h) => String(h.createdByEmail).toLowerCase() === emails[2]));
+    }
+    resetGroupSheetCache_();
+    check('C no longer grouped', findGroupSheetForStudent_(emails[2], project) === null);
+  } finally {
+    try {
+      resetGroupSheetCache_();
+      const groups = listGroupsForProject_(project, 'DEV');
+      groups.forEach((g) => { try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {} });
+    } catch (e) {}
+    devGroupsTestCleanup_(emails);
+  }
+  console.log(state.pass + '/' + (state.pass + state.fail) + ' passed');
+  return state;
+}
 
-    // Disband G2.
-    const dis = consoleGroupDisband(project.projectId, g2.groupId);
-    check('disband G2 ok', dis && dis.ok === true);
+/**
+ * Add an ungrouped, same-class student (with their own work) to an existing
+ * group: their rows are copied in, their solo Sheet is trashed, and reads
+ * route them to the group.
+ */
+function devTestGroupAddToGroup() {
+  const project = devSeedDevProject();
+  const emails = devGroupsSeedRoster_(3);   // A=0, B=1, C=2
+  const { check, state } = devGroupsChecker_();
+  try {
+    const bundle = listBundles_().find((b) => b.bundleId === project.bundleId);
+    // C gets a solo source + highlight before being added.
+    const cSheet = findOrCreateStudentSheet_(emails[2], project);
+    const cSourceId = 'add-src-' + emails[2];
+    upsertSource_(cSheet, {
+      sourceId: cSourceId, projectId: project.projectId,
+      rawUrl: 'https://devg.example.com/add/' + emails[2], scrapedTitle: 'add C',
+      primarySecondary: 'primary', annotation: 'a',
+      citationFields: JSON.stringify({ title: 't', url: 'https://devg.example.com/add/' + emails[2] }),
+      createdByEmail: emails[2],
+    });
+    upsertHighlight_(cSheet, {
+      highlightId: 'add-hl-' + emails[2], sourceId: cSourceId, projectId: project.projectId,
+      primaryCategory: bundle.label1, highlightedText: 'hl C', createdByEmail: emails[2],
+    });
+
+    resetGroupSheetCache_();
+    const g = consoleGroupCreate(project.projectId, 'AddProbe', [emails[0], emails[1]]);
+    const added = consoleAddToGroup(project.projectId, g.groupId, emails[2]);
+    check('add ok', added && added.ok === true);
+    check('C source copied in', added.copiedSources === 1);
+    check('C highlight copied in', added.copiedHighlights === 1);
+
+    resetGroupSheetCache_();
+    const grpSs = SpreadsheetApp.openById(g.groupSheetId);
+    check('group now has 3 members', currentMembers_(grpSs).length === 3);
+    const grpHls = readAllAsObjects_(getTab_(grpSs, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
+    check("C's highlight is in the group", grpHls.some((h) => String(h.createdByEmail).toLowerCase() === emails[2]));
+    check('C routes to the group', (function () {
+      const ss = findOrCreateStudentSheet_(emails[2], project);
+      return ss && ss.getId() === g.groupSheetId;
+    })());
+
+    // C's solo Sheet was trashed.
+    const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+    const classFolder = findChildFolder_(projectFolder, 'DEV');
+    check('C solo Sheet trashed', findChildFile_(classFolder, emails[2]) === null);
   } finally {
     try {
       resetGroupSheetCache_();
