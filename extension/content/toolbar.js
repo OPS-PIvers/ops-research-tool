@@ -69,6 +69,9 @@ document.addEventListener('mousedown', (e) => {
 }, true);
 
 async function onSelectionMaybeChanged() {
+  // Global off-switch (popup toggle). Cached + synchronous so we don't await
+  // before snapshotting the selection. Absent in the PDF panel = never gated.
+  if (self.OpsEnabled && !self.OpsEnabled.get()) { hideToolbar(); return; }
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed) {
     // Selection went away — if we have a draft, leave it open (user might
@@ -272,6 +275,10 @@ function renderToolbar_() {
     : 'Pick a color or add a note';
   toolbarEl.appendChild(hint);
 }
+
+// Toggled off mid-page: tear down any in-flight toolbar so a stale draft
+// doesn't linger after the student silences the extension.
+if (self.OpsEnabled) self.OpsEnabled.onChange((on) => { if (!on) hideToolbar(); });
 
 async function syncHighlight_(highlightId, primaryCategory, text, note) {
   try {

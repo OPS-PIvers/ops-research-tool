@@ -331,7 +331,26 @@ const OpsSidebar = (function () {
     state.initialized = true;
     await loadContext_();
     await buildHost_();
+    if (self.OpsEnabled) {
+      applyEnabled_(self.OpsEnabled.get());
+      // Live toggle: hide/show the whole host. Re-enabling re-runs
+      // loadForCurrentPage so a page enabled mid-session still fetches its
+      // saved highlights (the initial run bailed before the network call).
+      self.OpsEnabled.onChange((on) => {
+        applyEnabled_(on);
+        if (on) loadForCurrentPage();
+      });
+    }
     render_();
+  }
+
+  // Hide every on-page surface when the extension is switched off. The host
+  // holds both the launcher and the panel, so toggling its display silences
+  // everything at once; the inner launcher/panel display state is preserved
+  // for when it comes back. Absent in the PDF panel = never gated.
+  function applyEnabled_(on) {
+    if (!state.hostEl) return;
+    state.hostEl.style.display = on ? '' : 'none';
   }
 
   /**
@@ -343,6 +362,10 @@ const OpsSidebar = (function () {
    */
   async function loadForCurrentPage() {
     await ensureInit_();
+    // Dormant when the student has switched the extension off. ensureInit_
+    // already hid the host; skip the launcher + network fetch entirely. The
+    // onChange handler re-invokes this when they switch it back on.
+    if (self.OpsEnabled && !self.OpsEnabled.get()) return;
     state.launcherEl.style.display = 'flex';
     state.launcherEl.title = 'OPS Research Tool — click to open the research panel';
     render_();

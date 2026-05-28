@@ -29,6 +29,7 @@
         "config.js",
         "shared/ids.js",
         "shared/url.js",
+        "content/enabled.js",
         "content/scrape.js",
         "content/sidebar.js",
         "content/marks.js",

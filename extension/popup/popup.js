@@ -20,10 +20,31 @@ const els = {
   lastSync: document.getElementById('last-sync'),
   pdfCta: document.getElementById('pdf-cta'),
   openPdfPanel: document.getElementById('open-pdf-panel'),
+  enabledToggle: document.getElementById('enabled-toggle'),
+  enabledLabel: document.getElementById('enabled-label'),
 };
 
+initEnabledToggle_();
 maybeShowPdfCta_();
 bootstrapFromCache_().then(() => bootstrapFromNetwork_());
+
+// Master on/off switch. Single global flag in chrome.storage.local; the
+// content scripts (content/enabled.js) read it and gate the toolbar + sidebar.
+// Undefined = never set = ON by default.
+async function initEnabledToggle_() {
+  const { extensionEnabled } = await chrome.storage.local.get('extensionEnabled');
+  reflectEnabled_(extensionEnabled !== false);
+  els.enabledToggle.addEventListener('change', async () => {
+    const on = els.enabledToggle.checked;
+    await chrome.storage.local.set({ extensionEnabled: on });
+    reflectEnabled_(on);
+  });
+}
+
+function reflectEnabled_(on) {
+  els.enabledToggle.checked = on;
+  els.enabledLabel.textContent = on ? 'Extension on' : 'Extension off';
+}
 
 async function maybeShowPdfCta_() {
   try {
