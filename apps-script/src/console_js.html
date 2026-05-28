@@ -8,9 +8,14 @@
 
 const state = {
   ctx: null,
-  view: null,            // 'MY_PROJECTS' | 'DASHBOARD' | 'STUDENT' | 'UNAUTHED' | 'BOOT'
+  view: null,
   projectId: null,
   studentEmail: null,
+  groupId: null,
+  // Dashboard mode flags
+  manageGroups: false,
+  collapsedGroups: {},    // {groupId: true} — collapsed in this session
+  dashboardSelection: {}, // {emailOrGroupId: 'student' | 'group'} — Manage Mode selection
 };
 
 const root = document.getElementById('console-root');
@@ -54,6 +59,7 @@ function applyHash_() {
   state.view = r.view;
   state.projectId = r.projectId;
   state.studentEmail = r.studentEmail;
+  state.groupId = r.groupId || null;
   renderShell_();
 }
 
@@ -87,6 +93,12 @@ function parseHash_(hash) {
       view: 'STUDENT',
       projectId: decodeURIComponent(parts[1]),
       studentEmail: decodeURIComponent(parts[3]),
+    };
+  if (parts.length === 4 && parts[2] === 'groups')
+    return {
+      view: 'GROUP',
+      projectId: decodeURIComponent(parts[1]),
+      groupId: decodeURIComponent(parts[3]),
     };
   return { view: 'MY_PROJECTS' };
 }
@@ -143,6 +155,7 @@ function renderView_(main) {
     case 'MY_PROJECTS':    return renderMyProjects_(main);
     case 'DASHBOARD':      return renderDashboard_(main);
     case 'STUDENT':        return renderStudentDetail_(main);
+    case 'GROUP':          return renderGroupDetail_(main);
     case 'ADMIN_ROSTER':   return renderAdminRoster_(main);
     case 'ADMIN_STAFF':    return renderAdminStaff_(main);
     case 'ADMIN_LIFECYCLE':return renderAdminLifecycle_(main);
@@ -643,6 +656,9 @@ function renderDashboard_(main) {
   if (dashboard.loadedFor !== state.projectId) {
     dashboard.loadedFor = null;
     dashboard.data = null;
+    state.manageGroups = false;
+    state.collapsedGroups = {};
+    state.dashboardSelection = {};
   }
 
   // Toolbar
@@ -780,8 +796,11 @@ function paintDashboard_() {
   const title = document.getElementById('db-title');
   if (title) {
     const classes = proj.scopedClasses.join(', ') || '(no classes)';
-    const count = dashboard.data.students.length;
-    title.textContent = proj.name + ' · ' + classes + ' · ' + count + ' student' + (count === 1 ? '' : 's');
+    const totalStudents = dashboard.data.students.length;
+    const groupCount = (dashboard.data.groups || []).length;
+    let label = proj.name + ' · ' + classes + ' · ' + totalStudents + ' student' + (totalStudents === 1 ? '' : 's');
+    if (groupCount > 0) label += ' · ' + groupCount + ' group' + (groupCount === 1 ? '' : 's');
+    title.textContent = label;
   }
 
   const body = document.getElementById('db-body');
@@ -790,7 +809,7 @@ function paintDashboard_() {
 
   maybeRenderUnarchiveBanner_(body, dashboard.data);
 
-  if (dashboard.data.students.length === 0) {
+  if (dashboard.data.students.length === 0 && (dashboard.data.groups || []).length === 0) {
     const e = document.createElement('div');
     e.className = 'db-empty';
     e.textContent = 'No students enrolled in your classes for this project.';
@@ -838,9 +857,14 @@ function buildDashboardTable_() {
 
   const thead = document.createElement('thead');
   const trh = document.createElement('tr');
+  if (state.manageGroups) {
+    const thChk = document.createElement('th');
+    thChk.className = 'db-th-checkbox';
+    trh.appendChild(thChk);
+  }
   headers.forEach((h) => {
     const th = document.createElement('th');
-    const sortable = (h.key !== 'gaps');   // gaps don't make sense as a sort key
+    const sortable = (h.key !== 'gaps');
     th.textContent = h.label;
     if (sortable) {
       const arrow = document.createElement('span');
@@ -865,71 +889,220 @@ function buildDashboardTable_() {
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
-  sortedStudents_().forEach((s) => tbody.appendChild(buildStudentRow_(s)));
+  const rows = sortedDashboardRows_();
+  rows.forEach((entry) => {
+    if (entry.kind === 'group') {
+      tbody.appendChild(buildGroupHeaderRow_(entry.group, entry.members));
+      if (!state.collapsedGroups[entry.group.groupId]) {
+        entry.members.forEach((m) => tbody.appendChild(buildStudentRow_(m, entry.group)));
+      }
+    } else {
+      tbody.appendChild(buildStudentRow_(entry.student, null));
+    }
+  });
   table.appendChild(tbody);
 
   return table;
 }
 
-function sortedStudents_() {
-  const arr = dashboard.data.students.slice();
-  const dir = dashboard.sortDir === 'asc' ? 1 : -1;
-  switch (dashboard.sortKey) {
-    case 'name':
-      arr.sort((a, b) => dir * formatLastFirst_(a.name).localeCompare(formatLastFirst_(b.name)));
-      break;
-    case 'completion':
-      arr.sort((a, b) => dir * (a.completion.percent - b.completion.percent));
-      break;
-    case 'highlights':
-      arr.sort((a, b) => dir * (a.highlightCount - b.highlightCount));
-      break;
-    case 'sources':
-      arr.sort((a, b) => dir * (a.sourceCount - b.sourceCount));
-      break;
-    case 'activity':
-    default:
-      arr.sort((a, b) => dir * String(a.lastActivity || '').localeCompare(String(b.lastActivity || '')));
-  }
-  return arr;
-}
-
-function buildStudentRow_(s) {
-  const tr = document.createElement('tr');
-  tr.addEventListener('click', () => {
-    navigate_('/projects/' + encodeURIComponent(state.projectId) + '/students/' + encodeURIComponent(s.email));
+/**
+ * Partition the dashboard data into solo students + group blocks, then sort:
+ *   - group blocks are sorted by group name (asc) under the current sort key
+ *     for their header row's value; members inside are sorted by the same key.
+ *   - solo students are sorted normally.
+ *   - The combined list interleaves group blocks and solos by the header row's
+ *     sort value, so they share a single sorted axis.
+ *
+ * Returns [{kind: 'group', group, members[]} | {kind: 'student', student}, ...]
+ */
+function sortedDashboardRows_() {
+  const students = dashboard.data.students || [];
+  const groups = dashboard.data.groups || [];
+  // Build (groupId → group obj) and (groupId → members[]).
+  const memberByGroup = {};
+  const solo = [];
+  students.forEach((s) => {
+    if (s.groupId) {
+      if (!memberByGroup[s.groupId]) memberByGroup[s.groupId] = [];
+      memberByGroup[s.groupId].push(s);
+    } else {
+      solo.push(s);
+    }
   });
 
-  // Name
+  const cmpDir = dashboard.sortDir === 'asc' ? 1 : -1;
+  const cmp = (a, b) => {
+    switch (dashboard.sortKey) {
+      case 'name': {
+        const an = (a.name || a.groupName || '').toString();
+        const bn = (b.name || b.groupName || '').toString();
+        return cmpDir * an.localeCompare(bn);
+      }
+      case 'completion':  return cmpDir * (a._sortCompletion - b._sortCompletion);
+      case 'highlights':  return cmpDir * (a._sortHl - b._sortHl);
+      case 'sources':     return cmpDir * (a._sortSrc - b._sortSrc);
+      case 'activity':
+      default:            return cmpDir * String(a._sortAct || '').localeCompare(String(b._sortAct || ''));
+    }
+  };
+
+  // Annotate each entry with cmp keys.
+  const annotateStudent = (s) => ({
+    _sortKind: 'student',
+    name: formatLastFirst_(s.name),
+    _sortCompletion: s.completion ? s.completion.percent : 0,
+    _sortHl: s.highlightCount || 0,
+    _sortSrc: s.sourceCount || 0,
+    _sortAct: s.lastActivity || '',
+    student: s,
+  });
+  const annotateGroup = (g, members) => ({
+    _sortKind: 'group',
+    groupName: g.name,
+    name: g.name,
+    _sortCompletion: g.completion ? g.completion.percent : 0,
+    _sortHl: g.highlightCount || 0,
+    _sortSrc: g.sourceCount || 0,
+    _sortAct: g.lastActivity || '',
+    group: g,
+    members,
+  });
+
+  const annotated = [].concat(
+    solo.map(annotateStudent),
+    groups.map((g) => {
+      const m = (memberByGroup[g.groupId] || []).slice().map(annotateStudent);
+      m.sort(cmp);
+      return annotateGroup(g, m.map((x) => x.student));
+    })
+  );
+  annotated.sort(cmp);
+
+  return annotated.map((e) =>
+    e._sortKind === 'group'
+      ? { kind: 'group', group: e.group, members: e.members }
+      : { kind: 'student', student: e.student }
+  );
+}
+
+function buildGroupHeaderRow_(group, members) {
+  const tr = document.createElement('tr');
+  tr.className = 'db-group-header';
+  const collapsed = !!state.collapsedGroups[group.groupId];
+
+  if (state.manageGroups) {
+    const tdChk = document.createElement('td');
+    tdChk.className = 'db-td-checkbox';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = state.dashboardSelection[group.groupId] === 'group';
+    chk.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (chk.checked) state.dashboardSelection[group.groupId] = 'group';
+      else delete state.dashboardSelection[group.groupId];
+      if (typeof updateManageBar_ === 'function') updateManageBar_();
+    });
+    tdChk.appendChild(chk);
+    tr.appendChild(tdChk);
+  }
+
+  // Name cell: chevron + [grp] + name + member count
+  const tdName = document.createElement('td');
+  const wrap = document.createElement('div');
+  wrap.className = 'db-row__name db-row__name--group';
+  const chev = document.createElement('span');
+  chev.className = 'db-group-chev';
+  chev.textContent = collapsed ? '▶' : '▼';
+  chev.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (collapsed) delete state.collapsedGroups[group.groupId];
+    else state.collapsedGroups[group.groupId] = true;
+    paintDashboard_();
+  });
+  wrap.appendChild(chev);
+  const label = document.createElement('span');
+  label.className = 'db-group-label';
+  label.textContent = '[grp] ' + group.name + '  · ' + group.memberCount + ' member' + (group.memberCount === 1 ? '' : 's');
+  wrap.appendChild(label);
+  tdName.appendChild(wrap);
+  const cls = document.createElement('div');
+  cls.className = 'db-row__name-class';
+  cls.textContent = group.className;
+  tdName.appendChild(cls);
+  tr.appendChild(tdName);
+
+  // Aggregate columns mirror the student row's
+  const tdMix = document.createElement('td');
+  tdMix.appendChild(buildMixBar_(group.categoryMix));
+  tr.appendChild(tdMix);
+  const tdComp = document.createElement('td');
+  tdComp.appendChild(buildCompletionCell_(group.completion));
+  tr.appendChild(tdComp);
+  const tdGaps = document.createElement('td');
+  tdGaps.appendChild(buildGapsCell_(group.gaps));
+  tr.appendChild(tdGaps);
+  const tdAct = document.createElement('td');
+  tdAct.className = 'db-activity' + (group.lastActivity ? '' : ' db-activity--never');
+  tdAct.textContent = group.lastActivity ? relativeTime_(group.lastActivity) : '—';
+  tr.appendChild(tdAct);
+
+  // Body click → group drill-down (only when not in Manage mode).
+  tr.addEventListener('click', (e) => {
+    // Click on the chevron is handled by chev's listener (stopPropagation above).
+    if (state.manageGroups) return;
+    navigate_('/projects/' + encodeURIComponent(state.projectId) + '/groups/' + encodeURIComponent(group.groupId));
+  });
+
+  return tr;
+}
+
+function buildStudentRow_(s, parentGroup) {
+  const tr = document.createElement('tr');
+  if (parentGroup) tr.className = 'db-row--in-group';
+
+  if (state.manageGroups) {
+    const tdChk = document.createElement('td');
+    tdChk.className = 'db-td-checkbox';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = state.dashboardSelection[s.email] === 'student';
+    chk.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (chk.checked) state.dashboardSelection[s.email] = 'student';
+      else delete state.dashboardSelection[s.email];
+      if (typeof updateManageBar_ === 'function') updateManageBar_();
+    });
+    tdChk.appendChild(chk);
+    tr.appendChild(tdChk);
+  } else {
+    tr.addEventListener('click', () => {
+      navigate_('/projects/' + encodeURIComponent(state.projectId) + '/students/' + encodeURIComponent(s.email));
+    });
+  }
+
   const tdName = document.createElement('td');
   const nameWrap = document.createElement('div');
   nameWrap.className = 'db-row__name';
-  nameWrap.textContent = formatLastFirst_(s.name);
+  if (parentGroup) nameWrap.textContent = '└ ' + formatLastFirst_(s.name);
+  else             nameWrap.textContent = formatLastFirst_(s.name);
   tdName.appendChild(nameWrap);
   if (s.class) {
     const cls = document.createElement('div');
     cls.className = 'db-row__name-class';
-    cls.textContent = s.class;
+    cls.textContent = s.class + (parentGroup ? '' : ' · solo');
     tdName.appendChild(cls);
   }
   tr.appendChild(tdName);
 
-  // Category mix stack-bar
   const tdMix = document.createElement('td');
   tdMix.appendChild(buildMixBar_(s.categoryMix));
   tr.appendChild(tdMix);
-
-  // Completion
   const tdComp = document.createElement('td');
   tdComp.appendChild(buildCompletionCell_(s.completion));
   tr.appendChild(tdComp);
-
-  // Gaps
   const tdGaps = document.createElement('td');
   tdGaps.appendChild(buildGapsCell_(s.gaps));
   tr.appendChild(tdGaps);
-
-  // Activity
   const tdAct = document.createElement('td');
   tdAct.className = 'db-activity' + (s.lastActivity ? '' : ' db-activity--never');
   tdAct.textContent = s.lastActivity ? relativeTime_(s.lastActivity) : '—';
@@ -1065,6 +1238,10 @@ function renderStudentDetail_(main) {
     body.appendChild(loader);
     fetchStudentDetail_(state.projectId, state.studentEmail);
   }
+}
+
+function renderGroupDetail_(main) {
+  main.innerHTML = '<div class="console-empty">Group drill-down — wiring next.</div>';
 }
 
 function fetchStudentDetail_(projectId, email) {
