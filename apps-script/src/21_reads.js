@@ -4,6 +4,12 @@
  */
 
 function getStudentSheetIfExists_(actorEmail, project) {
+  // Group routing — see findOrCreateStudentSheet_ for the equivalent
+  // write-side hook. Reads must route identically or the sidebar will
+  // show stale solo-Sheet data after a merge.
+  const groupSheet = findGroupSheetForStudent_(actorEmail, project);
+  if (groupSheet) return groupSheet;
+
   const roster = getStudentRosterEntry_(actorEmail);
   if (!roster) return null;
   const projectFolder = DriveApp.getFolderById(project.rootFolderId);

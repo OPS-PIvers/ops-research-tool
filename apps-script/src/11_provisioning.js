@@ -26,6 +26,12 @@ function findOrCreateClassFolder_(projectFolder, className) {
  * Returns the Spreadsheet object. Idempotent.
  */
 function findOrCreateStudentSheet_(actorEmail, project) {
+  // Group routing (Phase 4 sub-project D): if the actor is a current
+  // member of an active group in this project, writes route to the
+  // group Sheet instead of (or in lieu of creating) a solo Sheet.
+  const groupSheet = findGroupSheetForStudent_(actorEmail, project);
+  if (groupSheet) return groupSheet;
+
   const rosterEntry = getStudentRosterEntry_(actorEmail);
   if (!rosterEntry) {
     throw new Error(`Email ${actorEmail} is not on the roster — refusing to provision.`);
