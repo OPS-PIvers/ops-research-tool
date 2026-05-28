@@ -385,3 +385,126 @@ function consoleGetStudentDetail(projectId, studentEmail) {
     asOf: nowIso_(),
   };
 }
+
+// ============================================================
+// Groups (Phase 4 sub-project D)
+// ============================================================
+
+/**
+ * List active groups in a project, scoped to the caller's classes.
+ * Teachers see groups in classes they teach; admins see all.
+ *
+ * Used by:
+ *   - The dashboard to build the "Move to ▾" dropdown.
+ *   - Manage Groups mode to map (studentEmail) → membership.
+ */
+function consoleListGroupsForProject(projectId) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  resetGroupSheetCache_();
+
+  let groups = listGroupsForProject_(project);
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    groups = groups.filter((g) => taught.indexOf(g.className) >= 0);
+  }
+  return { ok: true, groups };
+}
+
+/**
+ * Create a group containing the listed members and migrate their existing
+ * sources + highlights into the new group Sheet.
+ *
+ * Atomic order (spec §7.1):
+ *   1. Validate inputs + preconditions (validateGroupCreate_).
+ *   2. Mint groupId; create group Sheet + tabs + Meta + Members.
+ *   3. For each member: copy rows from solo Sheet → group Sheet, stamp
+ *      Meta.groupId on the solo Sheet, move it to Archived-students/.
+ *   4. Audit one row per member.
+ *
+ * Returns { ok, groupId, groupSheetId, name, classFolder,
+ *           sourcesCopied, highlightsCopied, errors }.
+ */
+function consoleGroupCreate(projectId, name, memberEmails) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  resetGroupSheetCache_();
+
+  const v = validateGroupCreate_(project, name, memberEmails);
+
+  // Teacher scope: must teach the shared class.
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    if (taught.indexOf(v.sharedClass) < 0) {
+      throw new Error('Class not in your scope');
+    }
+  }
+
+  // Step 1: stage. Mint groupId + create group Sheet.
+  const groupId = uuid_();
+  const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+  const classFolder = findChildFolder_(projectFolder, v.sharedClass) ||
+                      projectFolder.createFolder(v.sharedClass);
+  const created = createGroupSheet_(project, classFolder, v.trimmedName, groupId, v.rosters);
+
+  // Step 2 + 3: per-member copy + flip + move.
+  const errors = [];
+  let sourcesCopied = 0, highlightsCopied = 0;
+  v.lowered.forEach((email, idx) => {
+    try {
+      const roster = v.rosters[idx];
+      // Locate the solo Sheet directly via Drive (don't go through the
+      // group routing hook — that would create an infinite recursion now
+      // that the group Sheet exists).
+      const soloFile = findChildFile_(classFolder, email);
+      if (!soloFile) {
+        // Student never highlighted — no rows to migrate. The member
+        // entry is already in the group's Members tab from
+        // createGroupSheet_, so future writes route correctly.
+        return;
+      }
+      const soloSpreadsheet = SpreadsheetApp.openById(soloFile.getId());
+      const copied = copyMemberRowsIntoGroup_(created.spreadsheet, soloSpreadsheet);
+      sourcesCopied   += copied.sourcesCopied;
+      highlightsCopied += copied.highlightsCopied;
+      setSoloMetaGroupId_(soloSpreadsheet, groupId);
+      archiveStudentSheetForGroup_(soloFile, classFolder);
+    } catch (e) {
+      errors.push({ email, error: String(e && e.message || e) });
+    }
+  });
+
+  // Step 4: audit.
+  v.lowered.forEach((email) => {
+    try {
+      appendAuditEvent_({
+        projectId,
+        action: AUDIT_ACTIONS.GROUP_MERGE,
+        actor:  actorEmail,
+        detail: 'groupId=' + groupId + ';memberEmail=' + email,
+      });
+    } catch (e) {
+      errors.push({ email, error: 'audit: ' + String(e && e.message || e) });
+    }
+  });
+
+  // Bust the cache — subsequent reads must see the new routing.
+  resetGroupSheetCache_();
+
+  return {
+    ok: true,
+    groupId,
+    groupSheetId: created.spreadsheet.getId(),
+    name: v.trimmedName,
+    className: v.sharedClass,
+    sourcesCopied,
+    highlightsCopied,
+    errors,
+  };
+}
