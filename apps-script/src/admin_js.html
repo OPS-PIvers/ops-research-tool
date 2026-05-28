@@ -1420,10 +1420,19 @@ function plainConfirmModal_(args) {
 function buildAdminBreadcrumb_(label, rightContent) {
   const wrap = document.createElement('div');
   wrap.className = 'admin-breadcrumb';
+  // Use href + JS click handler. The href is for keyboard / right-click /
+  // copy-link behaviour. GAS HtmlService sandboxes the SPA inside an iframe,
+  // and the default browser navigation on a hash href would try to apply the
+  // fragment to the top window URL (a googleusercontent.com iframe URL), not
+  // ours — so we preventDefault and route through navigate_ instead.
   const back = document.createElement('a');
   back.className = 'admin-breadcrumb__back';
   back.textContent = '← Admin';
   back.href = '#/admin/roster';
+  back.addEventListener('click', (e) => {
+    e.preventDefault();
+    navigate_('/admin/roster');
+  });
   wrap.appendChild(back);
   const sep = document.createElement('span');
   sep.className = 'admin-breadcrumb__sep';
