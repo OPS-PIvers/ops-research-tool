@@ -1463,7 +1463,7 @@ function buildGroupSourcesViewer_(data) {
   try {
     viewer = buildSourcesViewer_();
     // Walk highlight items in the viewer and inject an attribution badge.
-    viewer.querySelectorAll('.drill-hl').forEach((node) => {
+    viewer.querySelectorAll('.dd-hl').forEach((node) => {
       const hid = node.getAttribute('data-hid');
       if (!hid) return;
       // Find the highlight + its author across all enriched sources.
@@ -1477,7 +1477,7 @@ function buildGroupSourcesViewer_(data) {
       const badge = document.createElement('span');
       badge.className = 'drill-hl__byline';
       badge.textContent = '— ' + author;
-      const meta = node.querySelector('.drill-hl__meta') || node;
+      const meta = node.querySelector('.dd-hl__meta') || node;
       meta.appendChild(badge);
     });
   } finally {
