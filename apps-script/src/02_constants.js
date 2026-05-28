@@ -6,6 +6,8 @@ const NAMES = {
   PROJECTS_WORKBOOK: 'OPS Research Tool - Projects',
   BUNDLES_WORKBOOK: 'OPS Research Tool - Bundles',
   ARCHIVED_FOLDER: 'Archived',
+  ARCHIVED_STUDENTS_FOLDER: 'Archived-students',
+  GROUP_SHEET_PREFIX: '[grp] ',
 };
 
 const TABS = {
@@ -17,6 +19,7 @@ const TABS = {
   SOURCES: 'Sources',
   HIGHLIGHTS: 'Highlights',
   AUDIT: 'Audit',
+  GROUP_MEMBERS: 'Members',
 };
 
 const HEADERS = {
@@ -53,6 +56,8 @@ const HEADERS = {
   ],
 
   AUDIT: ['eventId', 'projectId', 'action', 'actor', 'at', 'detail'],
+
+  GROUP_MEMBERS: ['email', 'firstName', 'lastName', 'joinedAt', 'leftAt'],
 };
 
 const ROLES = {
@@ -73,4 +78,9 @@ const AUDIT_ACTIONS = {
   ARCHIVE: 'archive',
   UNARCHIVE: 'unarchive',
   ARCHIVE_YEAR: 'archive_year',
+  GROUP_MERGE: 'group_merge',
+  GROUP_MOVE: 'group_move',
+  GROUP_DISBAND: 'group_disband',
+  GROUP_DISBAND_GROUP: 'group_disband_group',
+  GROUP_UNMERGE: 'group_unmerge',
 };
