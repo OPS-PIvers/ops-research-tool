@@ -1346,8 +1346,144 @@ function renderStudentDetail_(main) {
   }
 }
 
+const groupDetail = {
+  loadedFor: null,        // 'projectId|groupId'
+  data: null,
+};
+
 function renderGroupDetail_(main) {
-  main.innerHTML = '<div class="console-empty">Group drill-down — wiring next.</div>';
+  const key = state.projectId + '|' + state.groupId;
+  if (groupDetail.loadedFor !== key) {
+    groupDetail.loadedFor = null;
+    groupDetail.data = null;
+  }
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 'db-toolbar';
+  const back = document.createElement('button');
+  back.className = 'db-back';
+  back.textContent = '← Dashboard';
+  back.addEventListener('click', () => navigate_('/projects/' + encodeURIComponent(state.projectId)));
+  toolbar.appendChild(back);
+  const title = document.createElement('div');
+  title.className = 'db-title';
+  title.id = 'gd-title';
+  title.textContent = 'Loading group…';
+  toolbar.appendChild(title);
+  const refresh = document.createElement('button');
+  refresh.className = 'db-refresh';
+  refresh.textContent = '↻ Refresh';
+  refresh.addEventListener('click', () => fetchGroupDetail_(state.projectId, state.groupId));
+  toolbar.appendChild(refresh);
+  main.appendChild(toolbar);
+
+  const body = document.createElement('div');
+  body.className = 'db-body';
+  body.id = 'gd-body';
+  main.appendChild(body);
+
+  if (groupDetail.data) {
+    paintGroupDetail_();
+  } else {
+    body.innerHTML = '';
+    const loader = document.createElement('div');
+    loader.className = 'mp-loading';
+    const sp = document.createElement('div');
+    sp.className = 'console-spinner';
+    loader.appendChild(sp);
+    const txt = document.createElement('div');
+    txt.textContent = 'Loading group…';
+    loader.appendChild(txt);
+    body.appendChild(loader);
+    fetchGroupDetail_(state.projectId, state.groupId);
+  }
+}
+
+function fetchGroupDetail_(projectId, groupId) {
+  google.script.run
+    .withSuccessHandler((resp) => {
+      if (!resp || !resp.ok) {
+        setStatus('Could not load group.', 'bad', 4000);
+        return;
+      }
+      groupDetail.loadedFor = projectId + '|' + groupId;
+      groupDetail.data = resp;
+      paintGroupDetail_();
+    })
+    .withFailureHandler(onFail_('loading group'))
+    .consoleGetGroupDashboard(projectId, groupId);
+}
+
+function paintGroupDetail_() {
+  if (!groupDetail.data) return;
+  const data = groupDetail.data;
+  const title = document.getElementById('gd-title');
+  if (title) {
+    title.textContent = '[grp] ' + data.group.name + ' · ' + data.group.className + ' · ' +
+      data.group.memberCount + ' member' + (data.group.memberCount === 1 ? '' : 's');
+  }
+  const body = document.getElementById('gd-body');
+  if (!body) return;
+  body.innerHTML = '';
+
+  // Reuse the student drill-down grid by stashing data into the shape
+  // those builders expect.
+  body.appendChild(buildGroupDrillGrid_(data));
+  body.appendChild(buildGroupSourcesViewer_(data));
+}
+
+/** Group equivalent of buildDrillGrid_, adapted to read from groupDetail.data. */
+function buildGroupDrillGrid_(data) {
+  // Stash into a shape compatible with the per-student drill builders.
+  const stashed = studentDetail.data;
+  studentDetail.data = {
+    student: { email: '', name: data.group.name, class: data.group.className },
+    aggregates: data.aggregates,
+    sources: data.sources,
+    asOf: data.asOf,
+  };
+  let grid;
+  try {
+    grid = buildDrillGrid_();
+  } finally {
+    studentDetail.data = stashed;
+  }
+  return grid;
+}
+
+function buildGroupSourcesViewer_(data) {
+  const stashed = studentDetail.data;
+  studentDetail.data = {
+    student: { email: '', name: data.group.name, class: data.group.className },
+    aggregates: data.aggregates,
+    sources: data.sources,
+    asOf: data.asOf,
+  };
+  let viewer;
+  try {
+    viewer = buildSourcesViewer_();
+    // Walk highlight items in the viewer and inject an attribution badge.
+    viewer.querySelectorAll('.drill-hl').forEach((node) => {
+      const hid = node.getAttribute('data-hid');
+      if (!hid) return;
+      // Find the highlight + its author across all enriched sources.
+      let author = '';
+      for (let i = 0; i < data.sources.length; i++) {
+        const s = data.sources[i];
+        const match = (s.highlights || []).find((h) => h.highlightId === hid);
+        if (match) { author = match.createdByEmail || ''; break; }
+      }
+      if (!author) return;
+      const badge = document.createElement('span');
+      badge.className = 'drill-hl__byline';
+      badge.textContent = '— ' + author;
+      const meta = node.querySelector('.drill-hl__meta') || node;
+      meta.appendChild(badge);
+    });
+  } finally {
+    studentDetail.data = stashed;
+  }
+  return viewer;
 }
 
 function fetchStudentDetail_(projectId, email) {
@@ -1535,6 +1671,7 @@ function buildHighlightGroups_(s) {
 function buildHighlightItem_(h) {
   const row = document.createElement('div');
   row.className = 'dd-hl';
+  row.setAttribute('data-hid', h.highlightId);
   const bar = document.createElement('div');
   bar.className = 'dd-hl__bar';
   bar.style.backgroundColor = colorForCategoryInDrill_(h.primaryCategory) || '#dadce0';
