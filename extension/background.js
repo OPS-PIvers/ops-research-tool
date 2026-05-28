@@ -282,8 +282,20 @@ async function getOrCreateSourceId(rawUrl, scrape) {
     scrapedSite: scrape.site || '',
     scrapedDate: scrape.date || '',
     scrapedAuthor: scrape.author || '',
+    scrapedExtra: pickScrapedExtra_(scrape),
   });
   return { ok: true, sourceId, normalizedUrl: normalized, source: 'new' };
+}
+
+// The richer scrape fields beyond the four discrete scraped* columns. Only
+// non-empty values are kept; returns null when nothing extra was found so the
+// scrapedExtra column stays blank rather than holding an empty {}.
+function pickScrapedExtra_(scrape) {
+  const extra = {};
+  ['publication', 'publisher', 'volume', 'issue', 'pages', 'sourceType'].forEach((k) => {
+    if (scrape[k]) extra[k] = scrape[k];
+  });
+  return Object.keys(extra).length ? extra : null;
 }
 
 /**

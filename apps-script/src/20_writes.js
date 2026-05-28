@@ -26,6 +26,7 @@ function upsertSource_(studentSheet, source) {
     annotationLastEdited: source.annotationLastEdited || '',
     createdByEmail: source.createdByEmail,
     createdAt: source.createdAt || nowIso_(),
+    scrapedExtra: source.scrapedExtra ? JSON.stringify(source.scrapedExtra) : '',
   };
   upsertByKey_(tab, HEADERS.SOURCES, 'sourceId', row);
 }

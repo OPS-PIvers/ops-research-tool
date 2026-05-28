@@ -46,6 +46,11 @@ const HEADERS = {
     'sourceType', 'citationFields', 'primarySecondary',
     'annotation', 'annotationLastEdited',
     'createdByEmail', 'createdAt',
+    // Appended (not inserted) so existing Sheets only mismatch on this one
+    // trailing column — ensureHeaders_ is strict and never migrates. Holds a
+    // JSON blob of the richer scrape (publication/publisher/volume/issue/
+    // pages/inferred sourceType). See migrateAddScrapedExtra_.
+    'scrapedExtra',
   ],
 
   HIGHLIGHTS: [

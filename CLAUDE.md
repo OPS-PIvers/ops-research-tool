@@ -165,6 +165,26 @@ These supersede or refine the spec — apply them before defaulting to plan text
 - **Identity stamping happens server-side.** `doPost` overrides the client's
   `createdByEmail` with `Session.getActiveUser().getEmail()`. Never trust the
   client's claim of who they are.
+- **Citation scrape is richer than build-plan §122-126.** The plan specified
+  only `document.title` + a few OG/legacy meta tags, which auto-filled almost
+  nothing. [`scrape.js`](extension/content/scrape.js) now ALSO reads **JSON-LD**
+  (`Article`/`NewsArticle`/`ScholarlyArticle`/`Book`) and **Highwire/Dublin
+  Core** (`citation_*`, `DC.*`) tags — the channels news sites and academic
+  databases actually emit author/date/publication/volume/issue/pages on — plus
+  infers `sourceType` and strips the site suffix from the title. Still within
+  the plan's intent: standard structured metadata only, **no readability
+  library**, student still verifies. The four original fields stay in the
+  discrete `scraped*` columns; the richer fields ride in a new **`scrapedExtra`
+  JSON column** (mirrors `citationFields`) and pre-fill the sidebar citation
+  form ([`source_editor_js.html`](apps-script/src/source_editor_js.html)).
+- **`ensureHeaders_` auto-heals a pure trailing append.** It used to throw on
+  ANY header diff, so adding `scrapedExtra` would have broken writes to every
+  already-provisioned Sheet. It now writes labels for new trailing columns in
+  place (never reorders/relabels existing data) and still throws on a real
+  reorder/rename. `scrapedExtra` therefore self-migrates on the next write — no
+  migration script to run. Column mapping is positional via the `HEADERS`
+  constant, so even write paths that skip `ensureHeaders_` stay correct; the
+  header row is cosmetic.
 
 ## 5. GAS V8 quirks discovered
 
@@ -252,6 +272,11 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
 - Admin (Phase 4 C): `devTestAdminAuthGate`, `devTestAdminRosterCrud`,
   `devTestAdminRosterReplace`, `devTestAdminEmailChange`,
   `devTestArchiveSchoolYear`.
+- Citation scrape: `devTestScrapedExtraRoundTrip` (scrapedExtra JSON column
+  stores → reads → surfaces as `scrapedExtraParsed`) and
+  `devTestEnsureHeadersAppend` (additive header heal + reorder still throws).
+  The DOM-side scraper itself can't run under GAS — exercise
+  [`scrape.js`](extension/content/scrape.js) by real-page QA (see §9).
 - No editor test covers citation/bibliography *formatting* — that's manual
   QA in a real Doc (italics ranges, hanging indent, cursor insertion).
 - Groups (sub-project D) — each builds a DEV-class fixture, asserts, and

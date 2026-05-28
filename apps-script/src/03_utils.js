@@ -67,21 +67,34 @@ function findChildFile_(parent, name) {
   return null;
 }
 
-/** Set headers on row 1 if missing, idempotent. */
+/**
+ * Set headers on row 1 if missing, idempotent. Auto-heals a PURE TRAILING
+ * APPEND: if every already-present column still matches, new columns added to
+ * the end of `headers` (beyond the sheet's current width) are written as
+ * labels for empty trailing columns. This never reorders or relabels existing
+ * data — it only names new blank columns — so it's a safe in-place migration
+ * for additive schema changes. Any mismatch WITHIN the existing columns is a
+ * real reorder/rename and still throws (those need a deliberate migration).
+ */
 function ensureHeaders_(tab, headers) {
   if (tab.getLastRow() === 0) {
     tab.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
     tab.setFrozenRows(1);
     return;
   }
-  const existing = tab.getRange(1, 1, 1, Math.max(tab.getLastColumn(), headers.length)).getValues()[0];
-  for (let i = 0; i < headers.length; i++) {
+  const width = tab.getLastColumn();
+  const existing = tab.getRange(1, 1, 1, Math.max(width, headers.length)).getValues()[0];
+  for (let i = 0; i < headers.length && i < width; i++) {
     if (existing[i] !== headers[i]) {
       throw new Error(
         `Header mismatch in "${tab.getName()}" col ${i + 1}: expected "${headers[i]}", got "${existing[i]}". ` +
         `Schema change requires a migration — do not silently rewrite headers.`
       );
     }
+  }
+  if (headers.length > width) {
+    const appended = headers.slice(width);
+    tab.getRange(1, width + 1, 1, appended.length).setValues([appended]).setFontWeight('bold');
   }
 }
 
@@ -96,6 +109,21 @@ function rowToObj_(headers, row) {
   const out = {};
   for (let i = 0; i < headers.length; i++) out[headers[i]] = row[i];
   return out;
+}
+
+/**
+ * Parse a JSON-string column to an object. Safe on null, empty, malformed
+ * JSON, and non-string/native types (Sheets may hand back a Date or number).
+ * Always returns a plain object — never null/array.
+ */
+function parseJsonColumn_(value) {
+  if (!value || typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (e) {
+    return {};
+  }
 }
 
 /** Read all data rows as {col: value} objects. */

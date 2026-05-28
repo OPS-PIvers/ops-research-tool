@@ -63,14 +63,11 @@ function sidebarGetProjectData(projectId) {
   if (!getProject_(projectId)) throw new Error('Unknown project ' + projectId);
   const sources = readSourcesForActor_(actorEmail, projectId);
   const highlights = readHighlightsForActor_(actorEmail, projectId);
-  // Pre-parse citationFields JSON so the client doesn't re-parse per render.
+  // Pre-parse citationFields + scrapedExtra JSON so the client doesn't
+  // re-parse per render.
   sources.forEach((s) => {
-    let parsed = {};
-    if (s.citationFields) {
-      try { parsed = JSON.parse(s.citationFields) || {}; }
-      catch (e) { parsed = {}; }
-    }
-    s.citationFieldsParsed = parsed;
+    s.citationFieldsParsed = parseJsonColumn_(s.citationFields);
+    s.scrapedExtraParsed = parseJsonColumn_(s.scrapedExtra);
   });
   return { ok: true, sources, highlights };
 }

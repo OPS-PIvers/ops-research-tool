@@ -152,12 +152,20 @@ function esc_(s) {
 
 function renderCitationForm() {
   const source = editor.source;
+  const extra = source.scrapedExtraParsed || {};
   const fields = Object.assign({}, source.citationFieldsParsed || {});
-  fields.sourceType    = fields.sourceType    || source.sourceType || 'website';
+  // Student-entered citationFields win; then the rich scrape (scrapedExtra +
+  // the four discrete scraped* columns); 'website' is the final fallback type.
+  fields.sourceType    = fields.sourceType    || source.sourceType || extra.sourceType || 'website';
   fields.title         = fields.title         || source.scrapedTitle || '';
   fields.siteName      = fields.siteName      || source.scrapedSite || '';
   fields.publishedDate = fields.publishedDate || source.scrapedDate || '';
   fields.author        = fields.author        || source.scrapedAuthor || '';
+  fields.publication   = fields.publication   || extra.publication || '';
+  fields.publisher     = fields.publisher     || extra.publisher || '';
+  fields.volume        = fields.volume        || extra.volume || '';
+  fields.issue         = fields.issue         || extra.issue || '';
+  fields.pages         = fields.pages         || extra.pages || '';
   fields.url           = fields.url           || source.rawUrl || '';
   fields.accessDate    = source.accessDate    || fields.accessDate || '';
 

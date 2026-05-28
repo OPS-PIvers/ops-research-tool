@@ -54,6 +54,8 @@
     var host;
     try { host = new URL(realUrl).hostname.replace(/^www\./, ''); }
     catch (e) { host = ''; }
-    return { title: name, site: host, date: base.date || '', author: base.author || '' };
+    // Keep any richer fields the base scrape found; only the title + site need
+    // to reflect the real PDF (not the panel.html wrapper URL).
+    return Object.assign({}, base, { title: name, site: host });
   };
 })();

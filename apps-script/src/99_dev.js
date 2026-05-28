@@ -1358,3 +1358,105 @@ function devTestGroupsAll() {
   );
   return { ok: ok, pass: pass, fail: fail, threw: threw };
 }
+
+// ============================================================
+// Richer citation scrape: scrapedExtra storage + additive header heal
+// ============================================================
+
+/**
+ * Round-trips the scrapedExtra JSON column: upsertSource_ stores it, the read
+ * side surfaces it as a parsed object, and sidebarGetProjectData exposes
+ * scrapedExtraParsed for the citation-form pre-fill. (The DOM-side scraper in
+ * extension/content/scrape.js can't run under GAS — that's manual page QA.)
+ */
+function devTestScrapedExtraRoundTrip() {
+  const project = devSeedDevProject();
+  const me = Session.getEffectiveUser().getEmail();
+  const ss = findOrCreateStudentSheet_(me, project);
+  const sourceId = 'devtest-scrapedextra';
+  const extra = {
+    publication: 'Journal of Dev Testing', publisher: 'Dev Press',
+    volume: '12', issue: '3', pages: '45-60', sourceType: 'article',
+  };
+  upsertSource_(ss, {
+    sourceId, projectId: project.projectId,
+    rawUrl: 'https://devtest.example.com/scrapedextra',
+    scrapedTitle: 'Scraped Extra Source', scrapedAuthor: 'Doe, Jane',
+    scrapedExtra: extra, createdByEmail: me,
+  });
+
+  let pass = 0, fail = 0;
+  const check = (label, cond) => {
+    if (cond) { pass++; console.log('PASS ' + label); }
+    else      { fail++; console.log('FAIL ' + label); }
+  };
+
+  const rows = readAllAsObjects_(getTab_(ss, TABS.SOURCES), HEADERS.SOURCES);
+  const row = rows.find((r) => r.sourceId === sourceId);
+  check('source row found', !!row);
+  if (row) {
+    check('scrapedExtra stored as string', typeof row.scrapedExtra === 'string' && row.scrapedExtra.length > 0);
+    const parsed = parseJsonColumn_(row.scrapedExtra);
+    check('publication round-trips', parsed.publication === extra.publication);
+    check('volume round-trips',      parsed.volume === extra.volume);
+    check('pages round-trips',       parsed.pages === extra.pages);
+    check('inferred sourceType round-trips', parsed.sourceType === 'article');
+  }
+
+  const data = sidebarGetProjectData(project.projectId);
+  check('sidebarGetProjectData ok', data && data.ok === true);
+  const src = data.sources.find((s) => s.sourceId === sourceId);
+  check('source surfaced to sidebar', !!src);
+  if (src) {
+    check('scrapedExtraParsed present', src.scrapedExtraParsed && src.scrapedExtraParsed.publication === extra.publication);
+    check('citationFieldsParsed still present', !!src.citationFieldsParsed);
+  }
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+  return { pass, fail };
+}
+
+/**
+ * Verifies ensureHeaders_ heals a pure trailing append in place (the migration
+ * path for the new scrapedExtra column on already-provisioned Sheets) while
+ * still throwing on a real reorder/rename. Uses a throwaway spreadsheet that
+ * is trashed in a finally block.
+ */
+function devTestEnsureHeadersAppend() {
+  let pass = 0, fail = 0;
+  const check = (label, cond) => {
+    if (cond) { pass++; console.log('PASS ' + label); }
+    else      { fail++; console.log('FAIL ' + label); }
+  };
+
+  const scratch = SpreadsheetApp.create('OPS devtest ensureHeaders ' + uuid_());
+  try {
+    const tab = scratch.getSheets()[0];
+    // Old, shorter schema with one data row.
+    tab.getRange(1, 1, 1, 3).setValues([['a', 'b', 'c']]);
+    tab.getRange(2, 1, 1, 3).setValues([['1', '2', '3']]);
+
+    // Additive heal: append a trailing 'd' column.
+    ensureHeaders_(tab, ['a', 'b', 'c', 'd']);
+    const hdr = tab.getRange(1, 1, 1, 4).getValues()[0];
+    check('trailing header appended', hdr[3] === 'd');
+    check('existing headers untouched', hdr[0] === 'a' && hdr[1] === 'b' && hdr[2] === 'c');
+    const dataRow = tab.getRange(2, 1, 1, 4).getValues()[0];
+    check('existing data preserved + new cell blank',
+      dataRow[0] === '1' && dataRow[2] === '3' && dataRow[3] === '');
+
+    // Idempotent re-run.
+    ensureHeaders_(tab, ['a', 'b', 'c', 'd']);
+    check('idempotent re-run', tab.getRange(1, 4, 1, 1).getValue() === 'd');
+
+    // A real reorder/rename within existing columns must still throw.
+    let threw = false;
+    try { ensureHeaders_(tab, ['a', 'X', 'c', 'd']); } catch (e) { threw = true; }
+    check('reorder/rename still throws', threw);
+  } finally {
+    DriveApp.getFileById(scratch.getId()).setTrashed(true);
+  }
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+  return { pass, fail };
+}
