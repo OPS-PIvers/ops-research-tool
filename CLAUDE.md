@@ -20,7 +20,7 @@ Education agreement — no Firebase, no non-core services.
 
 | What | Where |
 | --- | --- |
-| Repo (local) | `C:\dev\ops-research-tool` |
+| Repo (local) | `C:\Users\paul.ivers\Desktop\ops-research-tool` |
 | Repo (GitHub) | https://github.com/OPS-PIvers/ops-research-tool (private) |
 | Apps Script project | https://script.google.com/d/1IFhm0FJNiXSeDKGS8VnDfkhs8VY6ueWmHIvc6CIda1AcFXrh1skow2E3/edit |
 | Root Drive folder | `13bA8j83R-wZDaewWcOpYisWxH_Ojwhu4` (in Paul's district My Drive) |
@@ -45,7 +45,11 @@ Moving the project = edit that one file, `clasp push`, redeploy.
   - History Day bundle seeded.
   - Editor tests `devTestRoundTrip`, `devTestNormalizeUrl` (8/8),
     `devTestSourceDedup` all green.
-- **Phase 2 — Chrome extension — FOUNDATION COMPLETE; UI scaffolded; not yet loadable until config + OAuth client are filled in.**
+- **Phase 2 — Chrome extension — CODE COMPLETE; loadable and authenticating.**
+  - OAuth client ID + Web App `/exec` URL are wired into
+    [`extension/config.js`](extension/config.js) and
+    [`extension/manifest.json`](extension/manifest.json). The old §7 deploy /
+    OAuth / extension-ID blockers are resolved.
   - Vanilla JS MV3 scaffold under [`extension/`](extension/).
   - Offline buffer: `chrome.storage.local` queue (`q:<uuid>`), synchronous
     enqueue, service-worker drain with exponential backoff + idempotent
@@ -69,11 +73,46 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     Empty-state for scanned PDFs ("no extractable text — save manually");
     "Save as source" button = Tier 1 fallback (creates source row, no
     highlights). Popup detects PDF tabs and shows a CTA button.
-  - **Code-complete.** Still TODO in Phase 2 (not blocking handoff):
-    real-page QA (news sites, databases, PDFs, edge cases like
-    shadow-DOM-heavy pages); force-install setup with the district Admin
-    console; possible polish on roster-not-found UX.
-- **Phase 3 — Google Docs sidebar — not started.**
+  - **Code-complete.** Still TODO in Phase 2: real-page QA (news sites,
+    databases, PDFs, edge cases like shadow-DOM-heavy pages); force-install
+    setup with the district Admin console; possible polish on roster-not-found
+    UX.
+- **Phase 3 — Google Docs sidebar — CODE COMPLETE.**
+  - Editor add-on entry points in
+    [`50_docs_addon.js`](apps-script/src/50_docs_addon.js): `onInstall` /
+    `onOpen` add the "OPS Research Tool → Open research panel" menu;
+    `showSidebar` pops `sidebar.html` (360px).
+  - Sidebar UI: [`sidebar.html`](apps-script/src/sidebar.html) +
+    [`sidebar_css.html`](apps-script/src/sidebar_css.html) +
+    [`sidebar_js.html`](apps-script/src/sidebar_js.html). Project picker
+    (staff see all active projects, students see their class's), sources
+    grouped with their highlights, per-source citation form.
+  - Per-source editor modal:
+    [`source_editor.html`](apps-script/src/source_editor.html) +
+    [`source_editor_js.html`](apps-script/src/source_editor_js.html), launched
+    by `sidebarOpenSourceEditor` (820x720), bundle swatches embedded.
+  - Server API in [`53_sidebar_api.js`](apps-script/src/53_sidebar_api.js)
+    (all `sidebar*`, identity via `Session.getActiveUser()`): `sidebarGetContext`,
+    `sidebarGetProjectData`, `sidebarUpdateSource` (allow-listed fields only),
+    `sidebarUpdateHighlight`, `sidebarDeleteHighlight` (+ orphan cascade),
+    `sidebarDeleteSource` (batched filter-rewrite), `sidebarPreviewCitation`,
+    `sidebarInsertInlineCitation`, `sidebarInsertBibliography`.
+  - Citation formatter [`51_citation.js`](apps-script/src/51_citation.js):
+    `formatCitation(fields, style)` → `{ text, italics: [[start,end],...] }`.
+    **MLA 9 only** (v1); dispatcher switches on `style` so Chicago/APA are
+    drop-in later.
+  - Bibliography inserter
+    [`52_bibliography.js`](apps-script/src/52_bibliography.js):
+    `insertAnnotatedBibliography` splits Primary/Secondary, alphabetizes by
+    author-last/title, applies italics ranges + MLA hanging indent, inserts at
+    cursor. Sources with no primary/secondary classification are skipped (hard
+    validation per build plan §2). `insertInlineCitation` for in-text
+    parentheticals. **No "insert as quote" button** — intentional.
+  - **Still TODO in Phase 3:** install the editor add-on (dev: Deploy → Test
+    deployments → Editor Add-on; prod: Marketplace SDK, domain-restricted to
+    `orono.k12.mn.us`); real-Doc QA of bibliography formatting + cursor
+    insertion; wire the extension's `focusHighlight` message (see §9) to the
+    sidebar.
 - **Phase 4 — Teacher Console — sub-projects A/B/C/D COMPLETE.**
   - A+B: Console shell, My Projects, Project Dashboard, student drill-down.
   - C: Admin Area (Roster CRUD, Staff CRUD, Archive School Year) + audit log
@@ -136,7 +175,7 @@ These supersede or refine the spec — apply them before defaulting to plan text
   `devTest*` functions. Functions that "don't throw" can still be silently
   returning wrong values.
 
-## 6. Phase 2 setup decisions (answered, not yet implemented)
+## 6. Phase 2 setup decisions (answered + implemented)
 
 - Stack: **vanilla JS, no bundler**. Plain MV3. Edit-and-reload workflow.
 - Auth: **`chrome.identity.getAuthToken({interactive: true})` → `Authorization: Bearer <token>`**.
@@ -147,35 +186,34 @@ These supersede or refine the spec — apply them before defaulting to plan text
 - PDF.js: **self-hosted in `extension/vendor/`** (pdf.min.js + pdf.worker.min.js).
   ~1MB but works offline and no CSP escape hatches.
 
-## 7. Open items / blockers before Phase 2 can fully work
+## 7. Open items / blockers
 
-1. **Publish the first Web App deployment from the GAS editor** (one-time
-   manual step — the CI workflow can only *update* an existing deployment,
-   not create it). Editor → **Deploy → New deployment → Web app**, Execute
-   as: **Me**, Access: **Anyone within `orono.k12.mn.us`**. Save. Then:
-   - Copy the `/exec` URL → paste into [`extension/config.js`](extension/config.js)
-     as `WEB_APP_URL`.
-   - Copy the deployment ID (looks like `AKfycb...`, ~50 chars) → add it as
-     a repo *variable* named `GAS_DEPLOYMENT_ID` (see §11 for setup).
-2. **Grab the OAuth client ID** from the GCP project linked to the GAS:
-   editor → **Project Settings** → **Google Cloud Platform (GCP) Project**.
-   Click into the linked project, then **APIs & Services → Credentials** in
-   GCP. Use an existing OAuth 2.0 Client ID of type "Chrome Extension" OR
-   create one (key field: the extension's ID, which you get after first
-   loading it as unpacked at `chrome://extensions`). Paste into BOTH:
-   - [`extension/manifest.json`](extension/manifest.json) `oauth2.client_id`
-   - [`extension/config.js`](extension/config.js) `OAUTH_CLIENT_ID`
-   May require enabling the Apps Script API in the linked GCP project
-   (separate from the per-user toggle Paul already did during clasp setup).
-3. **Load the extension unpacked once** to get a stable extension ID, then
-   register that ID in the GCP OAuth client.
-4. **Configure CI secrets** so the deploy workflow can run — see §11.
-   (GitHub Actions was status `degraded_performance` on 2026-05-26 — the
-   workflow code is in place; retry once GitHub is green.)
-5. **Confirm Class strings** when Paul has a real roster sample —
-   `validateRoster()` only checks blank/duplicate emails today; consistency
-   of Class strings (no leading/trailing whitespace, casing) hasn't been
-   validated against real data yet.
+**Resolved** (kept here as the recipe in case the project ever moves):
+- Web App deployment is published; the `/exec` URL is in
+  [`extension/config.js`](extension/config.js). To re-publish: Editor →
+  **Deploy → New deployment → Web app**, Execute as **Me**, Access **Anyone
+  within `orono.k12.mn.us`**. (CI can only *update* an existing deployment,
+  not create one.)
+- OAuth client ID is set in both
+  [`extension/manifest.json`](extension/manifest.json) and
+  [`extension/config.js`](extension/config.js). Source: GCP project linked to
+  the GAS → **APIs & Services → Credentials** → Chrome-Extension-type OAuth
+  client keyed on the unpacked extension's ID.
+
+**Still open:**
+1. **Install the Docs editor add-on** (Phase 3). Dev: Editor → **Deploy →
+   Test deployments → install as Editor Add-on**. Prod: publish via the GCP
+   project's Marketplace SDK, domain-restricted to `orono.k12.mn.us`.
+2. **Force-install the extension** via the district Admin console for the
+   pilot section.
+3. **Verify CI secrets** are set so the deploy workflow runs — `CLASPRC_JSON`
+   secret + `GAS_DEPLOYMENT_ID` variable (see §11). Confirm a push to `main`
+   touching `apps-script/**` actually redeploys.
+4. **Confirm Class strings** against a real roster sample — `validateRoster()`
+   only checks blank/duplicate emails today; consistency of Class strings (no
+   leading/trailing whitespace, casing) is unvalidated against real data.
+5. **Pilot one section end-to-end** (extension → highlight → sidebar →
+   bibliography insert, including group-routed members).
 
 ## 8. How to push / test from this repo
 
@@ -185,14 +223,14 @@ These supersede or refine the spec — apply them before defaulting to plan text
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
 
 # Push Apps Script
-cd C:\dev\ops-research-tool\apps-script
+cd C:\Users\paul.ivers\Desktop\ops-research-tool\apps-script
 clasp push -f
 
 # Open the GAS editor
 clasp open
 
 # Git
-cd C:\dev\ops-research-tool
+cd C:\Users\paul.ivers\Desktop\ops-research-tool
 git add ...
 git commit -m "..."
 git push
@@ -207,6 +245,15 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   resolve to the same source
 - `devProbeUrlConstructor` — diagnostic for the GAS URL quirk
 - `devValidateRoster` — runs roster + staff validation
+- `devTestDeleteSource` — sidebar source/highlight cascade-delete
+- Console (Phase 4 A/B): `devTestConsoleAuth`, `devTestConsoleProjectsFilter`,
+  `devTestConsoleCreateProject`, `devTestConsoleDashboardEndToEnd`,
+  `devTestAggregateStudent`.
+- Admin (Phase 4 C): `devTestAdminAuthGate`, `devTestAdminRosterCrud`,
+  `devTestAdminRosterReplace`, `devTestAdminEmailChange`,
+  `devTestArchiveSchoolYear`.
+- No editor test covers citation/bibliography *formatting* — that's manual
+  QA in a real Doc (italics ranges, hanging indent, cursor insertion).
 - Groups (sub-project D) — each builds a DEV-class fixture, asserts, and
   cleans up after itself: `devTestGroupRoutingProvisioning`,
   `devTestGroupMergeMigrationFidelity`, `devTestGroupDisbandRoundTrip`,
@@ -214,34 +261,30 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   `devTestGroupAuthorizationGate`. **Run `devTestGroupsAll` to run all six in
   one shot** — it prints a single `ALL GREEN` / `NOT GREEN` summary.
 
-## 9. How to start a Phase 2 session
+## 9. How to start a session here
 
-1. Read this file.
-2. Read [`docs/build-plan.md`](docs/build-plan.md) §5 Phase 2 and the
-   highlighting / offline buffer / PDF sections of §2 for the requirements.
-3. Confirm Phase 1 hasn't regressed: run `devTestRoundTrip` and
-   `devTestNormalizeUrl` from the GAS editor.
-4. Address the §7 blockers (deploy web app, grab oauth client id) before
-   writing extension code that depends on them.
-5. Extension scaffold is already in place under [`extension/`](extension/) —
-   manifest, shared/, background.js, content/, popup/ are all written and
-   wire together. PDF.js Tier 2 (`extension/pdf/` + `extension/vendor/`)
-   is NOT yet implemented.
-6. Next implementation work in Phase 2:
-   - PDF.js Tier 2: detect PDF URLs in the background → fetch the file →
-     `pdfjsLib.getDocument().getTextContent()` per page → render extracted
-     text in a panel where the toolbar applies normally. Scanned PDFs (no
-     text layer) get a clear message + Tier 1 fallback (manual citation).
-   - Add a `web_accessible_resources` entry in the manifest for the PDF.js
-     worker (`vendor/pdf.worker.min.js`) so it can be loaded.
-   - The "click an in-session mark to focus its sidebar entry" handler
-     in [`extension/content/marks.js`](extension/content/marks.js) sends a
-     `focusHighlight` message that nothing currently listens for. Wire it
-     to the Docs sidebar in Phase 3.
-   - Real-page QA: try the toolbar on news sites (paywalled + free),
-     subscription databases (after authenticated), Wikipedia. Most likely
-     edge cases: shadow-DOM-heavy pages, ContentEditable surfaces, very
-     restrictive CSPs that block injected style.
+All four phases are code-complete (§3). The work left is install + QA + pilot
+(§7) plus product-quality follow-ups. To get oriented:
+
+1. Read this file, then [`docs/build-plan.md`](docs/build-plan.md) for the
+   requirements behind whatever surface you're touching.
+2. Confirm nothing regressed: run `devTestRoundTrip`, `devTestNormalizeUrl`,
+   and `devTestGroupsAll` from the GAS editor.
+3. For district-facing UI, use the `anthropic-skills:ops-brand-guidelines`
+   skill (§12).
+
+**Known loose threads, by surface:**
+- **Extension:** real-page QA on news sites (paywalled + free), subscription
+  databases (after auth), Wikipedia. Most likely edge cases: shadow-DOM-heavy
+  pages, ContentEditable surfaces, very restrictive CSPs that block injected
+  style.
+- **Cross-surface:** the "click an in-session mark to focus its sidebar entry"
+  handler in [`extension/content/marks.js`](extension/content/marks.js) sends
+  a `focusHighlight` message that nothing listens for yet — wiring the
+  extension mark to the live Docs sidebar entry is unbuilt.
+- **Sidebar (Phase 3):** any group member can delete highlights they didn't
+  author (§3 follow-up); citation correctness on scraped fields is unverified
+  against real databases.
 
 ## 10. Out-of-scope reminders (don't drift)
 
