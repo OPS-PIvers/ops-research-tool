@@ -105,23 +105,31 @@ function listGroupsForProject_(project, classFilter) {
     const files = cf.getFiles();
     while (files.hasNext()) {
       const f = files.next();
+      // getFiles() includes trashed files; a trashed [grp] sheet (e.g. a
+      // failed-merge rollback, or leftover dev-test cleanup) is NOT an active
+      // group and must not be opened — accessing a pending-purge doc throws
+      // "Service Spreadsheets failed".
+      if (f.isTrashed()) continue;
       const name = f.getName();
       if (name.indexOf(NAMES.GROUP_SHEET_PREFIX) !== 0) continue;
-      let ss;
-      try { ss = SpreadsheetApp.openById(f.getId()); }
-      catch (e) { continue; }
-      const meta = readGroupMeta_(ss);
-      if (!meta || !meta.groupId) continue;
-      if (meta.projectId !== project.projectId) continue;
-      const current = currentMembers_(ss);
-      out.push({
-        groupId: meta.groupId,
-        name: String(meta.studentName || '').replace(/^\[grp\] /, ''),
-        className: cf.getName(),
-        sheetId: f.getId(),
-        memberEmails: current.map((m) => m.email),
-        memberCount: current.length,
-      });
+      try {
+        const ss = SpreadsheetApp.openById(f.getId());
+        const meta = readGroupMeta_(ss);
+        if (!meta || !meta.groupId) continue;
+        if (meta.projectId !== project.projectId) continue;
+        const current = currentMembers_(ss);
+        out.push({
+          groupId: meta.groupId,
+          name: String(meta.studentName || '').replace(/^\[grp\] /, ''),
+          className: cf.getName(),
+          sheetId: f.getId(),
+          memberEmails: current.map((m) => m.email),
+          memberCount: current.length,
+        });
+      } catch (e) {
+        // A single unreadable group Sheet must not abort the whole walk.
+        continue;
+      }
     }
   }
   return out;
@@ -172,13 +180,16 @@ function findGroupFileByGroupId_(project, groupId) {
       const files = candidates[i].getFiles();
       while (files.hasNext()) {
         const f = files.next();
+        if (f.isTrashed()) continue;  // skip trashed [grp] sheets (see listGroupsForProject_)
         if (f.getName().indexOf(NAMES.GROUP_SHEET_PREFIX) !== 0) continue;
-        let ss;
-        try { ss = SpreadsheetApp.openById(f.getId()); }
-        catch (e) { continue; }
-        const meta = readGroupMeta_(ss);
-        if (meta && meta.groupId === groupId) {
-          return { file: f, spreadsheet: ss, classFolder: cf, parent: candidates[i] };
+        try {
+          const ss = SpreadsheetApp.openById(f.getId());
+          const meta = readGroupMeta_(ss);
+          if (meta && meta.groupId === groupId) {
+            return { file: f, spreadsheet: ss, classFolder: cf, parent: candidates[i] };
+          }
+        } catch (e) {
+          continue;
         }
       }
     }
@@ -384,7 +395,9 @@ function nextGroupPlaceholderName_(project, className) {
   let count = 0;
   const files = classFolder.getFiles();
   while (files.hasNext()) {
-    if (files.next().getName().indexOf(NAMES.GROUP_SHEET_PREFIX) === 0) count++;
+    const f = files.next();
+    if (f.isTrashed()) continue;  // don't count trashed [grp] sheets toward the next number
+    if (f.getName().indexOf(NAMES.GROUP_SHEET_PREFIX) === 0) count++;
   }
   return 'Group ' + (count + 1);
 }
