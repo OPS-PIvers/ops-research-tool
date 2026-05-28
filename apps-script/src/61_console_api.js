@@ -293,10 +293,83 @@ function consoleGetProjectDashboard(projectId) {
 /**
  * Surface for `google.script.run` to enumerate bundles when populating the
  * Create Project wizard. Staff-gated like the rest of the console.
+ *
+ * NOTE: name deliberately has NO trailing underscore. GAS treats functions
+ * whose names end with `_` as private and refuses to expose them via
+ * google.script.run — the client call site would silently get `undefined`.
  */
-function listBundlesForConsole_() {
+function listBundlesForConsole() {
   assertStaff_(getActorEmail_());
   return { ok: true, bundles: listBundles_() };
+}
+
+/**
+ * Update the memberClasses of an existing project. Lets a teacher add
+ * students to a project by adding their class to the project's list.
+ *
+ * Authorization (server-side, defense in depth — UI also gates):
+ *  - Staff-only (assertStaff_).
+ *  - Teachers: can ONLY add classes they teach AND can ONLY remove classes
+ *    they teach. Classes in the project that the teacher doesn't teach are
+ *    out of their reach (the other teacher's responsibility).
+ *  - Admins: no class restrictions.
+ *
+ * Accepts the FULL new memberClasses array — server diffs old vs. new to
+ * enforce add/remove scoping.
+ */
+function consoleUpdateProjectClasses(projectId, memberClasses) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  if (!Array.isArray(memberClasses)) throw new Error('memberClasses must be an array');
+
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+
+  const newClasses = memberClasses.map((c) => String(c).trim()).filter(Boolean);
+  if (newClasses.length === 0) throw new Error('At least one class required');
+  const oldClasses = projectClassList_(project);
+
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    const added = newClasses.filter((c) => oldClasses.indexOf(c) < 0);
+    const addedOutside = added.filter((c) => taught.indexOf(c) < 0);
+    if (addedOutside.length > 0) {
+      throw new Error('You cannot add classes you do not teach: ' + addedOutside.join(', '));
+    }
+    const removed = oldClasses.filter((c) => newClasses.indexOf(c) < 0);
+    const removedOutside = removed.filter((c) => taught.indexOf(c) < 0);
+    if (removedOutside.length > 0) {
+      throw new Error('You cannot remove classes you do not teach: ' + removedOutside.join(', '));
+    }
+  }
+
+  const ss = SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID);
+  const tab = getTab_(ss, TABS.PROJECTS);
+  const rowIdx = findRowByKey_(tab, HEADERS.PROJECTS, 'projectId', projectId);
+  if (rowIdx < 0) throw new Error('Unknown projectId ' + projectId);
+  const col = HEADERS.PROJECTS.indexOf('memberClasses') + 1;
+  tab.getRange(rowIdx, col).setValue(newClasses.join(','));
+
+  return { ok: true, projectId, memberClasses: newClasses };
+}
+
+/**
+ * All distinct Class values from the Roster. Used by the admin Edit-classes
+ * modal to populate the full set of options. Teachers' modals scope to their
+ * teacherClasses ∪ project's current classes (filtered client-side from the
+ * already-known context).
+ */
+function consoleListAllClasses() {
+  assertStaff_(getActorEmail_());
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const rows = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER);
+  const set = {};
+  rows.forEach((r) => {
+    const cls = String(r.Class || '').trim();
+    if (cls) set[cls] = true;
+  });
+  return { ok: true, classes: Object.keys(set).sort() };
 }
 
 /**

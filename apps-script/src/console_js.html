@@ -311,6 +311,11 @@ function buildKebabMenu_(p) {
   menu.style.right = '20px';
 
   if (p.status === 'active') {
+    const editClasses = document.createElement('button');
+    editClasses.textContent = 'Edit classes…';
+    editClasses.addEventListener('click', (e) => { e.stopPropagation(); openEditClassesModal_(p); });
+    menu.appendChild(editClasses);
+
     const archBtn = document.createElement('button');
     archBtn.className = 'mp-kebab-menu__danger';
     archBtn.textContent = 'Archive…';
@@ -334,9 +339,9 @@ function openCreateProjectModal_() {
     memberClasses: [],
   };
 
-  // Need the bundle list + the class list. Bundle list comes from a separate
-  // fetch; class list we infer from the current ctx.teacherClasses (or
-  // from a Roster fetch for admins).
+  // Need the bundle list + the class list. Bundles come from one fetch;
+  // for admins the class list comes from a Roster fetch (consoleListAllClasses);
+  // for teachers it's ctx.teacherClasses (already loaded with the session).
   setStatus('Loading bundles…', null, 1000);
   google.script.run
     .withSuccessHandler((bundlesResp) => {
@@ -347,18 +352,20 @@ function openCreateProjectModal_() {
       }
       fields.bundleId = bundles[0].bundleId;
 
-      // Class list: teachers see their teacherClasses; admins see all classes
-      // we can find in the Roster. For admins, derive from the currently-loaded
-      // project list if available; otherwise fall back to a free-text option.
-      const adminAllClasses = collectKnownClasses_();
-      const classOptions = state.ctx.role === 'admin'
-        ? adminAllClasses
-        : (state.ctx.teacherClasses || []);
-
-      renderCreateModal_(fields, bundles, classOptions);
+      if (state.ctx.role === 'admin') {
+        google.script.run
+          .withSuccessHandler((clsResp) => {
+            const classes = (clsResp && clsResp.classes) ? clsResp.classes : [];
+            renderCreateModal_(fields, bundles, classes);
+          })
+          .withFailureHandler(onFail_('loading classes'))
+          .consoleListAllClasses();
+      } else {
+        renderCreateModal_(fields, bundles, state.ctx.teacherClasses || []);
+      }
     })
     .withFailureHandler(onFail_('loading bundles'))
-    .listBundlesForConsole_();
+    .listBundlesForConsole();
 }
 
 /** Derive distinct classes from currently-loaded project memberClasses lists.
@@ -549,6 +556,154 @@ function submitCreate_(fields, btn) {
       if (errEl) errEl.textContent = String(e && e.message || e);
     })
     .consoleCreateProject(fields);
+}
+
+/**
+ * Edit the project's memberClasses (add/remove classes → adds/removes
+ * students whose Class is in the list). Teacher: can only check/uncheck
+ * classes they teach (per-row disabled state). Admin: all classes editable.
+ */
+function openEditClassesModal_(p) {
+  myProjects.openMenuId = null;
+  closeModal_();
+
+  const isAdmin = state.ctx.role === 'admin';
+  const teacherClasses = state.ctx.teacherClasses || [];
+  const current = (p.memberClasses || []).slice();
+
+  const renderWithClasses = (allClasses) => {
+    const sorted = allClasses.slice().sort();
+    const selected = {};
+    current.forEach((c) => { selected[c] = true; });
+
+    closeModal_();
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop';
+    backdrop.id = 'modal-backdrop';
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal_(); });
+
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+
+    const header = document.createElement('div');
+    header.className = 'modal__header';
+    header.textContent = 'Edit classes for ' + p.name;
+    modal.appendChild(header);
+
+    const body = document.createElement('div');
+    body.className = 'modal__body';
+
+    const note = document.createElement('div');
+    note.style.fontSize = '13px';
+    note.style.color = '#5f6368';
+    note.style.paddingBottom = '12px';
+    note.textContent = isAdmin
+      ? 'Adding a class adds every student in that class to the project. Removing a class drops them.'
+      : 'You can add or remove classes you teach. Other teachers’ classes are locked.';
+    body.appendChild(note);
+
+    const box = document.createElement('div');
+    box.className = 'modal__classes';
+    if (sorted.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'modal__error';
+      empty.textContent = 'No classes available.';
+      box.appendChild(empty);
+    } else {
+      sorted.forEach((cls) => {
+        const lbl = document.createElement('label');
+        lbl.className = 'modal__class-checkbox';
+        const inp = document.createElement('input');
+        inp.type = 'checkbox';
+        inp.value = cls;
+        inp.checked = !!selected[cls];
+        const lockedForTeacher = !isAdmin && teacherClasses.indexOf(cls) < 0;
+        if (lockedForTeacher) {
+          inp.disabled = true;
+          lbl.style.opacity = '0.55';
+          lbl.title = 'You don’t teach this class';
+        }
+        inp.addEventListener('change', () => {
+          if (inp.checked) selected[cls] = true; else delete selected[cls];
+          updateSaveBtn();
+        });
+        lbl.appendChild(inp);
+        lbl.appendChild(document.createTextNode(' ' + cls));
+        box.appendChild(lbl);
+      });
+    }
+    body.appendChild(box);
+
+    const errMsg = document.createElement('div');
+    errMsg.className = 'modal__error';
+    errMsg.id = 'edit-classes-error';
+    body.appendChild(errMsg);
+
+    modal.appendChild(body);
+
+    const footer = document.createElement('div');
+    footer.className = 'modal__footer';
+    const cancel = document.createElement('button');
+    cancel.className = 'modal__btn';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', closeModal_);
+    footer.appendChild(cancel);
+
+    const save = document.createElement('button');
+    save.className = 'modal__btn modal__btn--primary';
+    save.textContent = 'Save';
+    function updateSaveBtn() {
+      save.disabled = Object.keys(selected).length === 0;
+    }
+    updateSaveBtn();
+    save.addEventListener('click', () => {
+      const chosen = Object.keys(selected);
+      if (chosen.length === 0) { errMsg.textContent = 'At least one class required.'; return; }
+      save.disabled = true; save.textContent = 'Saving…';
+      errMsg.textContent = '';
+      google.script.run
+        .withSuccessHandler((resp) => {
+          if (resp && resp.ok) {
+            closeModal_();
+            setStatus('Classes updated.', 'good', 2500);
+            myProjects.projects = null;
+            renderShell_();
+            fetchMyProjects_();
+          } else {
+            save.disabled = false; save.textContent = 'Save';
+            errMsg.textContent = 'Update failed.';
+          }
+        })
+        .withFailureHandler((e) => {
+          save.disabled = false; save.textContent = 'Save';
+          errMsg.textContent = String(e && e.message || e);
+        })
+        .consoleUpdateProjectClasses(p.projectId, chosen);
+    });
+    footer.appendChild(save);
+    modal.appendChild(footer);
+
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
+  };
+
+  setStatus('Loading classes…', null, 1000);
+  if (isAdmin) {
+    google.script.run
+      .withSuccessHandler((resp) => {
+        const all = (resp && resp.classes) ? resp.classes : [];
+        renderWithClasses(all);
+      })
+      .withFailureHandler(onFail_('loading classes'))
+      .consoleListAllClasses();
+  } else {
+    // For teachers, union of (their teacherClasses) ∪ (project's current classes)
+    // so they can see the others as locked. No server round-trip needed.
+    const set = {};
+    teacherClasses.forEach((c) => { set[c] = true; });
+    current.forEach((c) => { set[c] = true; });
+    renderWithClasses(Object.keys(set));
+  }
 }
 
 function confirmArchive_(p) {
