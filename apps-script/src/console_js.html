@@ -1210,8 +1210,17 @@ function updateManageBar_() {
   mergeBtn.textContent = '+ Merge into group (' + studentKeys.length + ')';
   mergeBtn.disabled = !soloStudentsOfSameClass;
 
-  // Move: exactly one student selected.
-  moveBtn.disabled = !(studentKeys.length === 1 && groupKeys.length === 0);
+  // Move: exactly one grouped student selected. Solo students can't be
+  // moved (move requires a source group); the doMove_ fallback message
+  // is enough but disabling the button is the cleaner signal.
+  const canMove = (() => {
+    if (studentKeys.length !== 1 || groupKeys.length !== 0) return false;
+    const data = dashboard.data;
+    if (!data) return false;
+    const student = (data.students || []).find((s) => s.email === studentKeys[0]);
+    return !!(student && student.groupId);
+  })();
+  moveBtn.disabled = !canMove;
 
   // Disband: exactly one group selected.
   disbandBtn.disabled = !(groupKeys.length === 1 && studentKeys.length === 0);

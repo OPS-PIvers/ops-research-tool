@@ -21,23 +21,34 @@
 // `<emailLower>|<projectId>` → Spreadsheet object or the sentinel `false`
 // (meaning "we already looked and there is no group").
 let _groupSheetCache = null;
+// Preheated map of every current group member in a project to that group's
+// sheetId. Populated lazily on the first `findGroupSheetForStudent_` call
+// per request from `listGroupsForProject_`. Without this, every solo
+// student in the dashboard would walk the class folder and open every
+// group Sheet just to confirm they're not in any of them (O(students ×
+// groups) Sheet opens; trivial to blow past the 6-minute execution cap).
+let _groupMemberMap = null;  // emailLower → sheetId (per project per request)
 
-/** Clear the request-scoped cache. Call from entry points if needed. */
+/** Clear the request-scoped caches. Call from entry points if needed. */
 function resetGroupSheetCache_() {
   _groupSheetCache = {};
+  _groupMemberMap = null;
 }
 
 /**
  * Find the active group Sheet for (student, project), or null.
  *
- * Implementation: walk the student's class folder for files whose name
- * starts with NAMES.GROUP_SHEET_PREFIX, open each, scan the Members tab
- * for an entry with this email and an empty leftAt. Return the first
- * match's Spreadsheet object.
+ * Strategy:
+ *   1. Per-(email,project) cache hit → return.
+ *   2. First call this request: preheat `_groupMemberMap` by walking
+ *      `listGroupsForProject_` once. That opens each group Sheet once
+ *      (unavoidable — we need the Members tab) and indexes all current
+ *      members.
+ *   3. Subsequent calls are pure dictionary lookups against the map.
  *
- * Cost: O(groups × open). At a typical project (<10 groups per class)
- * this is sub-second; the cache amortizes the rest of a doPost or
- * dashboard load.
+ * Worst-case Sheet opens: O(groups) per request, regardless of how many
+ * students the caller resolves. Solo students require 0 additional opens
+ * after the preheat.
  */
 function findGroupSheetForStudent_(actorEmail, project) {
   if (!actorEmail || !project) return null;
@@ -47,32 +58,25 @@ function findGroupSheetForStudent_(actorEmail, project) {
     return _groupSheetCache[cacheKey] || null;
   }
 
-  const roster = getStudentRosterEntry_(actorEmail);
-  if (!roster) { _groupSheetCache[cacheKey] = false; return null; }
-
-  const projectFolder = DriveApp.getFolderById(project.rootFolderId);
-  const classFolder = findChildFolder_(projectFolder, roster.Class);
-  if (!classFolder) { _groupSheetCache[cacheKey] = false; return null; }
+  // Preheat the project's email→sheetId map once per request.
+  if (_groupMemberMap === null) {
+    _groupMemberMap = {};
+    const groups = listGroupsForProject_(project);
+    groups.forEach((g) => {
+      (g.memberEmails || []).forEach((e) => {
+        _groupMemberMap[String(e).toLowerCase()] = g.sheetId;
+      });
+    });
+  }
 
   const target = String(actorEmail).toLowerCase();
-  const files = classFolder.getFiles();
-  while (files.hasNext()) {
-    const f = files.next();
-    const name = f.getName();
-    if (name.indexOf(NAMES.GROUP_SHEET_PREFIX) !== 0) continue;
-    let ss;
-    try { ss = SpreadsheetApp.openById(f.getId()); }
-    catch (e) { continue; }  // file may not be a Sheet; skip
-    const membersTab = ss.getSheetByName(TABS.GROUP_MEMBERS);
-    if (!membersTab) continue;
-    const rows = readAllAsObjects_(membersTab, HEADERS.GROUP_MEMBERS);
-    const hit = rows.find((r) =>
-      String(r.email || '').toLowerCase() === target &&
-      !String(r.leftAt || '').trim()
-    );
-    if (hit) {
+  if (_groupMemberMap[target]) {
+    try {
+      const ss = SpreadsheetApp.openById(_groupMemberMap[target]);
       _groupSheetCache[cacheKey] = ss;
       return ss;
+    } catch (e) {
+      // sheetId stale (group disbanded mid-request); fall through to null.
     }
   }
 
@@ -95,7 +99,8 @@ function listGroupsForProject_(project, classFilter) {
   const classFolders = projectFolder.getFolders();
   while (classFolders.hasNext()) {
     const cf = classFolders.next();
-    if (cf.getName() === NAMES.ARCHIVED_STUDENTS_FOLDER) continue;  // not a class
+    if (cf.getName() === NAMES.ARCHIVED_FOLDER) continue;          // project-level archive
+    if (cf.getName() === NAMES.ARCHIVED_STUDENTS_FOLDER) continue; // not a class
     if (classFilter && cf.getName() !== classFilter) continue;
     const files = cf.getFiles();
     while (files.hasNext()) {
@@ -157,6 +162,7 @@ function findGroupFileByGroupId_(project, groupId) {
   const classFolders = projectFolder.getFolders();
   while (classFolders.hasNext()) {
     const cf = classFolders.next();
+    if (cf.getName() === NAMES.ARCHIVED_FOLDER) continue;  // project-level archive
     // Include the active class folder AND the Archived-students subfolder
     // (so disband / cleanup operations can find archived group Sheets too).
     const candidates = [cf];
@@ -238,8 +244,7 @@ function createGroupSheet_(project, classFolder, name, groupId, rosterEntries) {
   const sheetName = NAMES.GROUP_SHEET_PREFIX + name;
   const ss = SpreadsheetApp.create(sheetName);
   const file = DriveApp.getFileById(ss.getId());
-  classFolder.addFile(file);
-  DriveApp.getRootFolder().removeFile(file);
+  file.moveTo(classFolder);
 
   const sheets = ss.getSheets();
   sheets[0].setName(TABS.META);
@@ -331,12 +336,7 @@ function archiveStudentSheetForGroup_(studentFile, classFolder) {
   while (parents.hasNext()) {
     if (parents.next().getId() === archived.getId()) return studentFile;
   }
-  archived.addFile(studentFile);
-  const remove = studentFile.getParents();
-  while (remove.hasNext()) {
-    const p = remove.next();
-    if (p.getId() !== archived.getId()) p.removeFile(studentFile);
-  }
+  studentFile.moveTo(archived);
   return studentFile;
 }
 
@@ -356,8 +356,7 @@ function restoreStudentSheetFromArchive_(email, project) {
   const file = findChildFile_(archived, String(email).toLowerCase());
   if (!file) return null;
   // Move to class folder root.
-  classFolder.addFile(file);
-  archived.removeFile(file);
+  file.moveTo(classFolder);
   // Clear Meta.groupId on the restored Sheet.
   try {
     const ss = SpreadsheetApp.openById(file.getId());
@@ -408,9 +407,21 @@ function appendMemberToGroup_(groupSpreadsheet, rosterEntry) {
 
 /**
  * Compute the next `Group N` placeholder for (project, class).
- * Counts current groups in the class and returns N = count + 1.
+ *
+ * Counts files whose name starts with the group prefix in the class
+ * folder. Deliberately does NOT call `listGroupsForProject_` — that
+ * opens every group's Sheet to read Meta/Members. For a placeholder
+ * that the teacher will probably override anyway, walking the file
+ * list once is enough.
  */
 function nextGroupPlaceholderName_(project, className) {
-  const groups = listGroupsForProject_(project, className);
-  return 'Group ' + (groups.length + 1);
+  const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+  const classFolder = findChildFolder_(projectFolder, className);
+  if (!classFolder) return 'Group 1';
+  let count = 0;
+  const files = classFolder.getFiles();
+  while (files.hasNext()) {
+    if (files.next().getName().indexOf(NAMES.GROUP_SHEET_PREFIX) === 0) count++;
+  }
+  return 'Group ' + (count + 1);
 }

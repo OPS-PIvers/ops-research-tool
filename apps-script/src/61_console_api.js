@@ -505,12 +505,13 @@ function consoleGroupCreate(projectId, name, memberEmails) {
                       projectFolder.createFolder(v.sharedClass);
   const created = createGroupSheet_(project, classFolder, v.trimmedName, groupId, v.rosters);
 
-  // Step 2 + 3: per-member copy + flip + move.
-  const errors = [];
+  // Step 2 + 3: per-member copy + flip + move. ATOMIC: if any member
+  // fails, trash the freshly-created group Sheet and throw. Otherwise
+  // the failed member would have writes routed to a group Sheet that
+  // never received their existing work — a data-loss surface.
   let sourcesCopied = 0, highlightsCopied = 0;
-  v.lowered.forEach((email, idx) => {
-    try {
-      const roster = v.rosters[idx];
+  try {
+    v.lowered.forEach((email, idx) => {
       // Locate the solo Sheet directly via Drive (don't go through the
       // group routing hook — that would create an infinite recursion now
       // that the group Sheet exists).
@@ -527,12 +528,18 @@ function consoleGroupCreate(projectId, name, memberEmails) {
       highlightsCopied += copied.highlightsCopied;
       setSoloMetaGroupId_(soloSpreadsheet, groupId);
       archiveStudentSheetForGroup_(soloFile, classFolder);
-    } catch (e) {
-      errors.push({ email, error: String(e && e.message || e) });
-    }
-  });
+    });
+  } catch (e) {
+    // Roll back the group Sheet so future writes don't route here.
+    try { DriveApp.getFileById(created.spreadsheet.getId()).setTrashed(true); }
+    catch (cleanupErr) { /* best-effort; surface original error below */ }
+    resetGroupSheetCache_();
+    throw new Error('Failed to create group and migrate members: ' + (e && e.message || e));
+  }
 
-  // Step 4: audit.
+  // Step 4: audit. Errors here are non-fatal — the migration succeeded;
+  // a missing audit row is a recoverable nuisance, not data loss.
+  const auditErrors = [];
   v.lowered.forEach((email) => {
     try {
       appendAuditEvent_({
@@ -542,7 +549,7 @@ function consoleGroupCreate(projectId, name, memberEmails) {
         detail: 'groupId=' + groupId + ';memberEmail=' + email,
       });
     } catch (e) {
-      errors.push({ email, error: 'audit: ' + String(e && e.message || e) });
+      auditErrors.push({ email, error: 'audit: ' + String(e && e.message || e) });
     }
   });
 
@@ -557,7 +564,7 @@ function consoleGroupCreate(projectId, name, memberEmails) {
     className: v.sharedClass,
     sourcesCopied,
     highlightsCopied,
-    errors,
+    errors: auditErrors,
   };
 }
 
@@ -673,7 +680,7 @@ function consoleGroupDisband(projectId, groupId) {
   }
 
   const members = currentMembers_(group.spreadsheet);
-  const errors = [];
+  const memberErrors = [];
   let restoredCount = 0;
   members.forEach((m) => {
     try {
@@ -687,11 +694,22 @@ function consoleGroupDisband(projectId, groupId) {
         detail: 'groupId=' + groupId + ';email=' + m.email,
       });
     } catch (e) {
-      errors.push({ email: m.email, error: String(e && e.message || e) });
+      memberErrors.push({ email: m.email, error: String(e && e.message || e) });
     }
   });
 
+  // If any member failed to restore, do NOT archive the group Sheet —
+  // those members would be left with no active Sheet at all (their next
+  // write would lazily create an empty solo, orphaning their pre-merge
+  // work in the group Sheet). Throw so the teacher can retry; successful
+  // members are already restored and marked left so retry is idempotent.
+  if (memberErrors.length > 0) {
+    resetGroupSheetCache_();
+    throw new Error('Failed to disband group completely: ' + JSON.stringify(memberErrors));
+  }
+
   // Move the group Sheet itself into Archived-students/.
+  const errors = [];
   try {
     archiveGroupSheet_(group.file, group.classFolder);
   } catch (e) {
