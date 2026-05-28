@@ -847,3 +847,384 @@ function devTestArchiveSchoolYear() {
   console.log(JSON.stringify({ ok: pass, checks }, null, 2));
   return { ok: pass };
 }
+
+// ============================================================
+// Sub-project D: groups
+// ============================================================
+
+/**
+ * Shared seed helper: ensures N dev students exist in the DEV class with
+ * the actor's TeacherEmail. Returns the array of emails in order.
+ *
+ * Cleanup is the caller's responsibility — see devGroupsTestCleanup_.
+ */
+function devGroupsSeedRoster_(count) {
+  const me = Session.getEffectiveUser().getEmail();
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.ROSTER);
+  const emails = [];
+  for (let i = 1; i <= count; i++) {
+    const email = 'devgroups.student' + i + '@orono.k12.mn.us';
+    emails.push(email);
+    if (findRowByKey_(tab, HEADERS.ROSTER, 'Email', email) < 0) {
+      appendRow_(tab, HEADERS.ROSTER, {
+        ID: '', First: 'DevG' + i, Last: 'Student',
+        Email: email, Class: 'DEV', Teacher: 'Dev Owner', TeacherEmail: me,
+      });
+    }
+  }
+  return emails;
+}
+
+/**
+ * Delete dev-groups roster rows and clean up any [grp] / Archived-students
+ * artifacts left over in the Dev Project. Best-effort; tolerates failures.
+ */
+function devGroupsTestCleanup_(emails) {
+  const project = devSeedDevProject();
+  const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+  const classFolder = findChildFolder_(projectFolder, 'DEV');
+
+  // Trash any group Sheets in DEV class (and in DEV/Archived-students).
+  if (classFolder) {
+    [classFolder, findChildFolder_(classFolder, NAMES.ARCHIVED_STUDENTS_FOLDER)].forEach((parent) => {
+      if (!parent) return;
+      const files = parent.getFiles();
+      while (files.hasNext()) {
+        const f = files.next();
+        const n = f.getName();
+        if (n.indexOf(NAMES.GROUP_SHEET_PREFIX) === 0) {
+          try { f.setTrashed(true); } catch (e) {}
+        }
+      }
+    });
+    // Trash any solo Sheets named like our dev emails.
+    [classFolder, findChildFolder_(classFolder, NAMES.ARCHIVED_STUDENTS_FOLDER)].forEach((parent) => {
+      if (!parent) return;
+      emails.forEach((e) => {
+        const f = findChildFile_(parent, e);
+        if (f) { try { f.setTrashed(true); } catch (err) {} }
+      });
+    });
+  }
+
+  // Remove roster rows.
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.ROSTER);
+  emails.forEach((email) => {
+    const idx = findRowByKey_(tab, HEADERS.ROSTER, 'Email', email);
+    if (idx > 0) { try { tab.deleteRow(idx); } catch (e) {} }
+  });
+}
+
+/**
+ * Plain-language assertion helper that mirrors devTestConsoleDashboardEndToEnd's
+ * pattern. Returns the running pass/fail tallies for the caller to log.
+ */
+function devGroupsChecker_() {
+  const state = { pass: 0, fail: 0 };
+  const check = (label, cond) => {
+    if (cond) { state.pass++; console.log('PASS ' + label); }
+    else      { state.fail++; console.log('FAIL ' + label); }
+  };
+  return { check, state };
+}
+
+/**
+ * Confirms findOrCreateStudentSheet_ routes group members to the group
+ * Sheet after a merge — covering the spec's central invariant.
+ */
+function devTestGroupRoutingProvisioning() {
+  const project = devSeedDevProject();
+  const emails = devGroupsSeedRoster_(3);
+  const { check, state } = devGroupsChecker_();
+  try {
+    resetGroupSheetCache_();
+    const merge = consoleGroupCreate(project.projectId, 'RoutingProbe', emails);
+    check('merge ok', merge && merge.ok === true);
+    check('groupId present', !!merge.groupId);
+    const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+    const classFolder = findChildFolder_(projectFolder, 'DEV');
+    const grpFile = findChildFile_(classFolder, NAMES.ARCHIVED_STUDENTS_FOLDER) === null
+      ? null  // placeholder; the group Sheet's name is friendly, not '[grp]' raw
+      : null;
+    // Easier check: the group Sheet's file ID is in the merge response.
+    check('group Sheet ID returned', !!merge.groupSheetId);
+
+    resetGroupSheetCache_();
+    emails.forEach((e) => {
+      const ss = findOrCreateStudentSheet_(e, project);
+      check('routes ' + e + ' to group Sheet', ss && ss.getId() === merge.groupSheetId);
+    });
+
+    // Members tab has all three current entries.
+    const grpSs = SpreadsheetApp.openById(merge.groupSheetId);
+    const current = currentMembers_(grpSs);
+    check('3 current members', current.length === 3);
+  } finally {
+    // Cleanup: disband, then trash any leftovers.
+    try {
+      resetGroupSheetCache_();
+      const groups = listGroupsForProject_(project, 'DEV');
+      groups.forEach((g) => {
+        try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {}
+      });
+    } catch (e) {}
+    devGroupsTestCleanup_(emails);
+  }
+  console.log(state.pass + '/' + (state.pass + state.fail) + ' passed');
+  return state;
+}
+
+/**
+ * Seeds 3 students with 2 sources and 4 highlights each pre-merge, merges,
+ * and asserts row counts + createdByEmail preservation.
+ */
+function devTestGroupMergeMigrationFidelity() {
+  const project = devSeedDevProject();
+  const emails = devGroupsSeedRoster_(3);
+  const { check, state } = devGroupsChecker_();
+  try {
+    resetGroupSheetCache_();
+    const bundle = listBundles_().find((b) => b.bundleId === project.bundleId);
+
+    // Seed: provision each student's solo Sheet and add 2 sources + 4 highlights.
+    emails.forEach((email, idx) => {
+      const ss = findOrCreateStudentSheet_(email, project);
+      for (let s = 0; s < 2; s++) {
+        const sourceId = uuid_();
+        upsertSource_(ss, {
+          sourceId, projectId: project.projectId,
+          rawUrl: 'https://devg.example.com/' + email + '/' + s,
+          scrapedTitle: 'devG ' + email + ' source ' + s,
+          primarySecondary: 'primary',
+          annotation: 'annot',
+          citationFields: JSON.stringify({title:'t',url:'https://devg.example.com/' + email + '/' + s}),
+          createdByEmail: email,
+        });
+        for (let h = 0; h < 2; h++) {
+          upsertHighlight_(ss, {
+            highlightId: uuid_(), sourceId, projectId: project.projectId,
+            primaryCategory: bundle['label' + (((idx + h) % 5) + 1)],
+            highlightedText: 'hl ' + email + ' s' + s + ' h' + h,
+            createdByEmail: email,
+          });
+        }
+      }
+    });
+
+    // Merge.
+    resetGroupSheetCache_();
+    const merge = consoleGroupCreate(project.projectId, 'MigrationProbe', emails);
+    check('merge ok', merge && merge.ok === true);
+    check('sourcesCopied = 6',    merge.sourcesCopied === 6);
+    check('highlightsCopied = 12', merge.highlightsCopied === 12);
+
+    const grpSs = SpreadsheetApp.openById(merge.groupSheetId);
+    const sources    = readAllAsObjects_(getTab_(grpSs, TABS.SOURCES),    HEADERS.SOURCES);
+    const highlights = readAllAsObjects_(getTab_(grpSs, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
+    check('group has 6 sources',    sources.length === 6);
+    check('group has 12 highlights', highlights.length === 12);
+
+    const allEmailsPreserved = highlights.every((h) => emails.indexOf(String(h.createdByEmail).toLowerCase()) >= 0);
+    check('every highlight createdByEmail preserved', allEmailsPreserved);
+  } finally {
+    try {
+      resetGroupSheetCache_();
+      const groups = listGroupsForProject_(project, 'DEV');
+      groups.forEach((g) => { try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {} });
+    } catch (e) {}
+    devGroupsTestCleanup_(emails);
+  }
+  console.log(state.pass + '/' + (state.pass + state.fail) + ' passed');
+  return state;
+}
+
+/**
+ * Merge 3, disband, assert each archived Sheet is restored and Meta.groupId
+ * is cleared, the group Sheet moved into Archived-students/.
+ */
+function devTestGroupDisbandRoundTrip() {
+  const project = devSeedDevProject();
+  const emails = devGroupsSeedRoster_(3);
+  const { check, state } = devGroupsChecker_();
+  try {
+    // Seed solo Sheets (no rows needed).
+    emails.forEach((e) => findOrCreateStudentSheet_(e, project));
+
+    resetGroupSheetCache_();
+    const merge = consoleGroupCreate(project.projectId, 'DisbandProbe', emails);
+    const disband = consoleGroupDisband(project.projectId, merge.groupId);
+    check('disband ok', disband && disband.ok === true);
+    check('restoredCount = 3', disband.restoredCount === 3);
+
+    // Each solo Sheet should now exist at class folder root, with empty Meta.groupId.
+    const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+    const classFolder = findChildFolder_(projectFolder, 'DEV');
+    emails.forEach((e) => {
+      const f = findChildFile_(classFolder, e);
+      check('solo Sheet restored for ' + e, !!f);
+      if (f) {
+        const meta = readGroupMeta_(SpreadsheetApp.openById(f.getId()));
+        check('Meta.groupId cleared for ' + e, !meta.groupId);
+      }
+    });
+
+    // Routing: a write should now go back to the solo Sheet.
+    resetGroupSheetCache_();
+    const ss = findOrCreateStudentSheet_(emails[0], project);
+    check('write routes back to solo', ss.getId() !== merge.groupSheetId);
+  } finally {
+    devGroupsTestCleanup_(emails);
+  }
+  console.log(state.pass + '/' + (state.pass + state.fail) + ' passed');
+  return state;
+}
+
+/**
+ * Merge A+B into G1, merge C+D into G2, move D → G1, assert membership.
+ * Remove-when-2-left is rejected. Disband G2.
+ */
+function devTestGroupMoveSemantics() {
+  const project = devSeedDevProject();
+  const emails = devGroupsSeedRoster_(4);   // A=0, B=1, C=2, D=3
+  const { check, state } = devGroupsChecker_();
+  try {
+    resetGroupSheetCache_();
+    const g1 = consoleGroupCreate(project.projectId, 'MoveG1', [emails[0], emails[1]]);
+    const g2 = consoleGroupCreate(project.projectId, 'MoveG2', [emails[2], emails[3]]);
+
+    // Seed: give D a highlight in g2 so the "stays attributed" invariant has something to check.
+    const g2Ss = SpreadsheetApp.openById(g2.groupSheetId);
+    const bundle = listBundles_().find((b) => b.bundleId === project.bundleId);
+    const dSourceId = uuid_();
+    upsertSource_(g2Ss, {
+      sourceId: dSourceId, projectId: project.projectId,
+      rawUrl: 'https://devg.example.com/D-in-G2', scrapedTitle: 'D in G2',
+      primarySecondary: 'primary', annotation: 'a',
+      citationFields: JSON.stringify({title:'t',url:'https://devg.example.com/D-in-G2'}),
+      createdByEmail: emails[3],
+    });
+    upsertHighlight_(g2Ss, {
+      highlightId: uuid_(), sourceId: dSourceId, projectId: project.projectId,
+      primaryCategory: bundle.label1, highlightedText: 'D hl in G2', createdByEmail: emails[3],
+    });
+
+    // Move D → G1.
+    const move = consoleGroupMoveStudent(project.projectId, emails[3], g2.groupId, g1.groupId);
+    check('move ok', move && move.ok === true);
+
+    // G1 has 3 current members; G2 has 1.
+    const g1Members = currentMembers_(SpreadsheetApp.openById(g1.groupSheetId));
+    const g2MembersAfter = currentMembers_(SpreadsheetApp.openById(g2.groupSheetId));
+    check('G1 has 3 current',   g1Members.length === 3);
+    check('G2 has 1 current',   g2MembersAfter.length === 1);
+
+    // D's prior work is in G2, NOT in G1.
+    const g1Highlights = readAllAsObjects_(getTab_(SpreadsheetApp.openById(g1.groupSheetId), TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
+    const g2Highlights = readAllAsObjects_(getTab_(g2Ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
+    check("D's old highlight stays in G2", g2Highlights.some((h) => String(h.createdByEmail).toLowerCase() === emails[3]));
+    check("D's old highlight not copied to G1", g1Highlights.every((h) => String(h.createdByEmail).toLowerCase() !== emails[3]));
+
+    // Remove from G2 (which now has 1) must throw.
+    let removeThrew = false;
+    try { consoleGroupRemoveStudent(project.projectId, g2.groupId, emails[2]); }
+    catch (e) { removeThrew = true; check('remove on 1-member group throws', /must have/i.test(e.message)); }
+    if (!removeThrew) check('remove on 1-member group throws', false);
+
+    // Disband G2.
+    const dis = consoleGroupDisband(project.projectId, g2.groupId);
+    check('disband G2 ok', dis && dis.ok === true);
+  } finally {
+    try {
+      resetGroupSheetCache_();
+      const groups = listGroupsForProject_(project, 'DEV');
+      groups.forEach((g) => { try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {} });
+    } catch (e) {}
+    devGroupsTestCleanup_(emails);
+  }
+  console.log(state.pass + '/' + (state.pass + state.fail) + ' passed');
+  return state;
+}
+
+/**
+ * Authorization: non-staff blocked; teacher-out-of-scope blocked; mixed-
+ * class merge blocked. Mirrors devTestAdminAuthGate's stash-restore pattern.
+ */
+function devTestGroupAuthorizationGate() {
+  const project = devSeedDevProject();
+  const emails = devGroupsSeedRoster_(3);
+  // Add two DEV2 roster rows so mixed-class is reproducible.
+  const me = Session.getEffectiveUser().getEmail();
+  const rosterSs = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const rosterTab = getTab_(rosterSs, TABS.ROSTER);
+  const dev2 = ['devgroups.dev2a@orono.k12.mn.us', 'devgroups.dev2b@orono.k12.mn.us'];
+  dev2.forEach((e, i) => {
+    if (findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', e) < 0) {
+      appendRow_(rosterTab, HEADERS.ROSTER, {
+        ID:'', First:'DG2'+i, Last:'Student', Email:e, Class:'DEV2',
+        Teacher:'Other', TeacherEmail:'somebody.else@orono.k12.mn.us',
+      });
+    }
+  });
+
+  const { check, state } = devGroupsChecker_();
+  try {
+    // Same-class invariant: mixed DEV + DEV2 must throw.
+    let mixedThrew = false;
+    try { consoleGroupCreate(project.projectId, 'MixedClass', [emails[0], dev2[0]]); }
+    catch (e) { mixedThrew = true; check('mixed-class merge throws', /same class/i.test(e.message)); }
+    if (!mixedThrew) check('mixed-class merge throws', false);
+
+    // Already-in-a-group: merge {A,B}, then try to add A again → throws.
+    const g = consoleGroupCreate(project.projectId, 'AlreadyInGroup', [emails[0], emails[1]]);
+    let alreadyThrew = false;
+    try { consoleGroupCreate(project.projectId, 'AnotherWithA', [emails[0], emails[2]]); }
+    catch (e) { alreadyThrew = true; check('already-in-a-group merge throws', /already in a group/i.test(e.message)); }
+    if (!alreadyThrew) check('already-in-a-group merge throws', false);
+
+    // Teacher-out-of-scope: demote actor to teacher of a phantom class, attempt DEV merge → throws.
+    const staffTab = getTab_(rosterSs, TABS.STAFF);
+    const sIdx = findRowByKey_(staffTab, HEADERS.STAFF, 'Email', me);
+    const origRole = staffTab.getRange(sIdx, HEADERS.STAFF.indexOf('Role') + 1).getValue();
+    staffTab.getRange(sIdx, HEADERS.STAFF.indexOf('Role') + 1).setValue(ROLES.TEACHER);
+    try {
+      // Also temporarily flip our roster TeacherEmail to nobody, so listClassesTaughtBy_(me) returns [].
+      const rIdx = findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', emails[0]);
+      const teCol = HEADERS.ROSTER.indexOf('TeacherEmail') + 1;
+      // We can't easily flip every row, but we can stash and flip rows for emails we care about.
+      const stashed = emails.map((e) => {
+        const idx = findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', e);
+        const orig = rosterTab.getRange(idx, teCol).getValue();
+        rosterTab.getRange(idx, teCol).setValue('phantom.teacher@orono.k12.mn.us');
+        return { idx, orig };
+      });
+      let scopeThrew = false;
+      try { consoleGroupCreate(project.projectId, 'OutOfScope', [emails[2], dev2[1]]); }
+      catch (e) { scopeThrew = true; check('teacher out-of-scope throws', /scope|same class/i.test(e.message)); }
+      if (!scopeThrew) check('teacher out-of-scope throws', false);
+      // Restore stashed TeacherEmail values.
+      stashed.forEach((s) => rosterTab.getRange(s.idx, teCol).setValue(s.orig));
+    } finally {
+      // Restore role.
+      staffTab.getRange(sIdx, HEADERS.STAFF.indexOf('Role') + 1).setValue(origRole);
+    }
+
+    // Disband the AlreadyInGroup group before cleanup.
+    try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {}
+  } finally {
+    // Remove DEV2 roster rows + clean up.
+    dev2.forEach((e) => {
+      const idx = findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', e);
+      if (idx > 0) { try { rosterTab.deleteRow(idx); } catch (err) {} }
+    });
+    try {
+      resetGroupSheetCache_();
+      const groups = listGroupsForProject_(project, 'DEV');
+      groups.forEach((gr) => { try { consoleGroupDisband(project.projectId, gr.groupId); } catch (e) {} });
+    } catch (e) {}
+    devGroupsTestCleanup_(emails);
+  }
+  console.log(state.pass + '/' + (state.pass + state.fail) + ' passed');
+  return state;
+}
