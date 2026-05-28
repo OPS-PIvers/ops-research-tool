@@ -8,9 +8,14 @@
 
 const state = {
   ctx: null,
-  view: null,            // 'MY_PROJECTS' | 'DASHBOARD' | 'STUDENT' | 'UNAUTHED' | 'BOOT'
+  view: null,
   projectId: null,
   studentEmail: null,
+  groupId: null,
+  // Dashboard mode flags
+  manageGroups: false,
+  collapsedGroups: {},    // {groupId: true} — collapsed in this session
+  dashboardSelection: {}, // {emailOrGroupId: 'student' | 'group'} — Manage Mode selection
 };
 
 const root = document.getElementById('console-root');
@@ -54,6 +59,7 @@ function applyHash_() {
   state.view = r.view;
   state.projectId = r.projectId;
   state.studentEmail = r.studentEmail;
+  state.groupId = r.groupId || null;
   renderShell_();
 }
 
@@ -87,6 +93,12 @@ function parseHash_(hash) {
       view: 'STUDENT',
       projectId: decodeURIComponent(parts[1]),
       studentEmail: decodeURIComponent(parts[3]),
+    };
+  if (parts.length === 4 && parts[2] === 'groups')
+    return {
+      view: 'GROUP',
+      projectId: decodeURIComponent(parts[1]),
+      groupId: decodeURIComponent(parts[3]),
     };
   return { view: 'MY_PROJECTS' };
 }
@@ -143,6 +155,7 @@ function renderView_(main) {
     case 'MY_PROJECTS':    return renderMyProjects_(main);
     case 'DASHBOARD':      return renderDashboard_(main);
     case 'STUDENT':        return renderStudentDetail_(main);
+    case 'GROUP':          return renderGroupDetail_(main);
     case 'ADMIN_ROSTER':   return renderAdminRoster_(main);
     case 'ADMIN_STAFF':    return renderAdminStaff_(main);
     case 'ADMIN_LIFECYCLE':return renderAdminLifecycle_(main);
@@ -925,6 +938,9 @@ function renderDashboard_(main) {
   if (dashboard.loadedFor !== state.projectId) {
     dashboard.loadedFor = null;
     dashboard.data = null;
+    state.manageGroups = false;
+    state.collapsedGroups = {};
+    state.dashboardSelection = {};
   }
 
   // Toolbar
@@ -948,6 +964,23 @@ function renderDashboard_(main) {
   refresh.textContent = '↻ Refresh';
   refresh.addEventListener('click', () => fetchDashboard_(state.projectId, true));
   toolbar.appendChild(refresh);
+
+  const manageBtn = document.createElement('button');
+  manageBtn.className = 'db-manage' + (state.manageGroups ? ' db-manage--on' : '');
+  manageBtn.id = 'db-manage';
+  manageBtn.textContent = state.manageGroups ? '✓ Manage groups' : 'Manage groups';
+  manageBtn.addEventListener('click', () => {
+    state.manageGroups = !state.manageGroups;
+    state.dashboardSelection = {};
+    paintDashboard_();
+    // Reset the toolbar so the toggle's visual reflects the new state.
+    const replacement = document.getElementById('db-manage');
+    if (replacement) {
+      replacement.classList.toggle('db-manage--on', state.manageGroups);
+      replacement.textContent = state.manageGroups ? '✓ Manage groups' : 'Manage groups';
+    }
+  });
+  toolbar.appendChild(manageBtn);
 
   const asof = document.createElement('div');
   asof.className = 'db-asof';
@@ -1062,8 +1095,11 @@ function paintDashboard_() {
   const title = document.getElementById('db-title');
   if (title) {
     const classes = proj.scopedClasses.join(', ') || '(no classes)';
-    const count = dashboard.data.students.length;
-    title.textContent = proj.name + ' · ' + classes + ' · ' + count + ' student' + (count === 1 ? '' : 's');
+    const totalStudents = dashboard.data.students.length;
+    const groupCount = (dashboard.data.groups || []).length;
+    let label = proj.name + ' · ' + classes + ' · ' + totalStudents + ' student' + (totalStudents === 1 ? '' : 's');
+    if (groupCount > 0) label += ' · ' + groupCount + ' group' + (groupCount === 1 ? '' : 's');
+    title.textContent = label;
   }
 
   const body = document.getElementById('db-body');
@@ -1072,12 +1108,15 @@ function paintDashboard_() {
 
   maybeRenderUnarchiveBanner_(body, dashboard.data);
 
-  if (dashboard.data.students.length === 0) {
+  if (dashboard.data.students.length === 0 && (dashboard.data.groups || []).length === 0) {
     const e = document.createElement('div');
     e.className = 'db-empty';
     e.textContent = 'No students enrolled in your classes for this project.';
     body.appendChild(e);
   } else {
+    if (state.manageGroups) {
+      body.appendChild(buildManageGroupsBar_());
+    }
     body.appendChild(buildDashboardTable_());
   }
 
@@ -1120,9 +1159,14 @@ function buildDashboardTable_() {
 
   const thead = document.createElement('thead');
   const trh = document.createElement('tr');
+  if (state.manageGroups) {
+    const thChk = document.createElement('th');
+    thChk.className = 'db-th-checkbox';
+    trh.appendChild(thChk);
+  }
   headers.forEach((h) => {
     const th = document.createElement('th');
-    const sortable = (h.key !== 'gaps');   // gaps don't make sense as a sort key
+    const sortable = (h.key !== 'gaps');
     th.textContent = h.label;
     if (sortable) {
       const arrow = document.createElement('span');
@@ -1147,77 +1191,331 @@ function buildDashboardTable_() {
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
-  sortedStudents_().forEach((s) => tbody.appendChild(buildStudentRow_(s)));
+  const rows = sortedDashboardRows_();
+  rows.forEach((entry) => {
+    if (entry.kind === 'group') {
+      tbody.appendChild(buildGroupHeaderRow_(entry.group, entry.members));
+      if (!state.collapsedGroups[entry.group.groupId]) {
+        entry.members.forEach((m) => tbody.appendChild(buildStudentRow_(m, entry.group)));
+      }
+    } else {
+      tbody.appendChild(buildStudentRow_(entry.student, null));
+    }
+  });
   table.appendChild(tbody);
 
   return table;
 }
 
-function sortedStudents_() {
-  const arr = dashboard.data.students.slice();
-  const dir = dashboard.sortDir === 'asc' ? 1 : -1;
-  switch (dashboard.sortKey) {
-    case 'name':
-      arr.sort((a, b) => dir * formatLastFirst_(a.name).localeCompare(formatLastFirst_(b.name)));
-      break;
-    case 'completion':
-      arr.sort((a, b) => dir * (a.completion.percent - b.completion.percent));
-      break;
-    case 'highlights':
-      arr.sort((a, b) => dir * (a.highlightCount - b.highlightCount));
-      break;
-    case 'sources':
-      arr.sort((a, b) => dir * (a.sourceCount - b.sourceCount));
-      break;
-    case 'activity':
-    default:
-      arr.sort((a, b) => dir * String(a.lastActivity || '').localeCompare(String(b.lastActivity || '')));
-  }
-  return arr;
-}
-
-function buildStudentRow_(s) {
-  const tr = document.createElement('tr');
-  tr.addEventListener('click', () => {
-    navigate_('/projects/' + encodeURIComponent(state.projectId) + '/students/' + encodeURIComponent(s.email));
+/**
+ * Partition the dashboard data into solo students + group blocks, then sort:
+ *   - group blocks are sorted by group name (asc) under the current sort key
+ *     for their header row's value; members inside are sorted by the same key.
+ *   - solo students are sorted normally.
+ *   - The combined list interleaves group blocks and solos by the header row's
+ *     sort value, so they share a single sorted axis.
+ *
+ * Returns [{kind: 'group', group, members[]} | {kind: 'student', student}, ...]
+ */
+function sortedDashboardRows_() {
+  const students = dashboard.data.students || [];
+  const groups = dashboard.data.groups || [];
+  // Build (groupId → group obj) and (groupId → members[]).
+  const memberByGroup = {};
+  const solo = [];
+  students.forEach((s) => {
+    if (s.groupId) {
+      if (!memberByGroup[s.groupId]) memberByGroup[s.groupId] = [];
+      memberByGroup[s.groupId].push(s);
+    } else {
+      solo.push(s);
+    }
   });
 
-  // Name
+  const cmpDir = dashboard.sortDir === 'asc' ? 1 : -1;
+  const cmp = (a, b) => {
+    switch (dashboard.sortKey) {
+      case 'name': {
+        const an = (a.name || a.groupName || '').toString();
+        const bn = (b.name || b.groupName || '').toString();
+        return cmpDir * an.localeCompare(bn);
+      }
+      case 'completion':  return cmpDir * (a._sortCompletion - b._sortCompletion);
+      case 'highlights':  return cmpDir * (a._sortHl - b._sortHl);
+      case 'sources':     return cmpDir * (a._sortSrc - b._sortSrc);
+      case 'activity':
+      default:            return cmpDir * String(a._sortAct || '').localeCompare(String(b._sortAct || ''));
+    }
+  };
+
+  // Annotate each entry with cmp keys.
+  const annotateStudent = (s) => ({
+    _sortKind: 'student',
+    name: formatLastFirst_(s.name),
+    _sortCompletion: s.completion ? s.completion.percent : 0,
+    _sortHl: s.highlightCount || 0,
+    _sortSrc: s.sourceCount || 0,
+    _sortAct: s.lastActivity || '',
+    student: s,
+  });
+  const annotateGroup = (g, members) => ({
+    _sortKind: 'group',
+    groupName: g.name,
+    name: g.name,
+    _sortCompletion: g.completion ? g.completion.percent : 0,
+    _sortHl: g.highlightCount || 0,
+    _sortSrc: g.sourceCount || 0,
+    _sortAct: g.lastActivity || '',
+    group: g,
+    members,
+  });
+
+  const annotated = [].concat(
+    solo.map(annotateStudent),
+    groups.map((g) => {
+      const m = (memberByGroup[g.groupId] || []).slice().map(annotateStudent);
+      m.sort(cmp);
+      return annotateGroup(g, m.map((x) => x.student));
+    })
+  );
+  annotated.sort(cmp);
+
+  return annotated.map((e) =>
+    e._sortKind === 'group'
+      ? { kind: 'group', group: e.group, members: e.members }
+      : { kind: 'student', student: e.student }
+  );
+}
+
+function buildGroupHeaderRow_(group, members) {
+  const tr = document.createElement('tr');
+  tr.className = 'db-group-header';
+  const collapsed = !!state.collapsedGroups[group.groupId];
+
+  if (state.manageGroups) {
+    const tdChk = document.createElement('td');
+    tdChk.className = 'db-td-checkbox';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = state.dashboardSelection[group.groupId] === 'group';
+    chk.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (chk.checked) state.dashboardSelection[group.groupId] = 'group';
+      else delete state.dashboardSelection[group.groupId];
+      if (typeof updateManageBar_ === 'function') updateManageBar_();
+    });
+    tdChk.appendChild(chk);
+    tr.appendChild(tdChk);
+  }
+
+  // Name cell: chevron + [grp] + name + member count
+  const tdName = document.createElement('td');
+  const wrap = document.createElement('div');
+  wrap.className = 'db-row__name db-row__name--group';
+  const chev = document.createElement('span');
+  chev.className = 'db-group-chev';
+  chev.textContent = collapsed ? '▶' : '▼';
+  chev.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (collapsed) delete state.collapsedGroups[group.groupId];
+    else state.collapsedGroups[group.groupId] = true;
+    paintDashboard_();
+  });
+  wrap.appendChild(chev);
+  const label = document.createElement('span');
+  label.className = 'db-group-label';
+  label.textContent = '[grp] ' + group.name + '  · ' + group.memberCount + ' member' + (group.memberCount === 1 ? '' : 's');
+  wrap.appendChild(label);
+  tdName.appendChild(wrap);
+  const cls = document.createElement('div');
+  cls.className = 'db-row__name-class';
+  cls.textContent = group.className;
+  tdName.appendChild(cls);
+  tr.appendChild(tdName);
+
+  // Aggregate columns mirror the student row's
+  const tdMix = document.createElement('td');
+  tdMix.appendChild(buildMixBar_(group.categoryMix));
+  tr.appendChild(tdMix);
+  const tdComp = document.createElement('td');
+  tdComp.appendChild(buildCompletionCell_(group.completion));
+  tr.appendChild(tdComp);
+  const tdGaps = document.createElement('td');
+  tdGaps.appendChild(buildGapsCell_(group.gaps));
+  tr.appendChild(tdGaps);
+  const tdAct = document.createElement('td');
+  tdAct.className = 'db-activity' + (group.lastActivity ? '' : ' db-activity--never');
+  tdAct.textContent = group.lastActivity ? relativeTime_(group.lastActivity) : '—';
+  tr.appendChild(tdAct);
+
+  // Body click → group drill-down (only when not in Manage mode).
+  tr.addEventListener('click', (e) => {
+    // Click on the chevron is handled by chev's listener (stopPropagation above).
+    if (state.manageGroups) return;
+    navigate_('/projects/' + encodeURIComponent(state.projectId) + '/groups/' + encodeURIComponent(group.groupId));
+  });
+
+  return tr;
+}
+
+function buildStudentRow_(s, parentGroup) {
+  const tr = document.createElement('tr');
+  if (parentGroup) tr.className = 'db-row--in-group';
+
+  if (state.manageGroups) {
+    const tdChk = document.createElement('td');
+    tdChk.className = 'db-td-checkbox';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = state.dashboardSelection[s.email] === 'student';
+    chk.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (chk.checked) state.dashboardSelection[s.email] = 'student';
+      else delete state.dashboardSelection[s.email];
+      if (typeof updateManageBar_ === 'function') updateManageBar_();
+    });
+    tdChk.appendChild(chk);
+    tr.appendChild(tdChk);
+  } else {
+    tr.addEventListener('click', () => {
+      navigate_('/projects/' + encodeURIComponent(state.projectId) + '/students/' + encodeURIComponent(s.email));
+    });
+  }
+
   const tdName = document.createElement('td');
   const nameWrap = document.createElement('div');
   nameWrap.className = 'db-row__name';
-  nameWrap.textContent = formatLastFirst_(s.name);
+  if (parentGroup) nameWrap.textContent = '└ ' + formatLastFirst_(s.name);
+  else             nameWrap.textContent = formatLastFirst_(s.name);
   tdName.appendChild(nameWrap);
   if (s.class) {
     const cls = document.createElement('div');
     cls.className = 'db-row__name-class';
-    cls.textContent = s.class;
+    cls.textContent = s.class + (parentGroup ? '' : ' · solo');
     tdName.appendChild(cls);
   }
   tr.appendChild(tdName);
 
-  // Category mix stack-bar
   const tdMix = document.createElement('td');
   tdMix.appendChild(buildMixBar_(s.categoryMix));
   tr.appendChild(tdMix);
-
-  // Completion
   const tdComp = document.createElement('td');
   tdComp.appendChild(buildCompletionCell_(s.completion));
   tr.appendChild(tdComp);
-
-  // Gaps
   const tdGaps = document.createElement('td');
   tdGaps.appendChild(buildGapsCell_(s.gaps));
   tr.appendChild(tdGaps);
-
-  // Activity
   const tdAct = document.createElement('td');
   tdAct.className = 'db-activity' + (s.lastActivity ? '' : ' db-activity--never');
   tdAct.textContent = s.lastActivity ? relativeTime_(s.lastActivity) : '—';
   tr.appendChild(tdAct);
 
   return tr;
+}
+
+function buildManageGroupsBar_() {
+  const wrap = document.createElement('div');
+  wrap.className = 'db-manage-bar';
+
+  const summary = document.createElement('div');
+  summary.className = 'db-manage-bar__summary';
+  summary.id = 'db-manage-summary';
+  wrap.appendChild(summary);
+
+  const actions = document.createElement('div');
+  actions.className = 'db-manage-bar__actions';
+
+  const mergeBtn = document.createElement('button');
+  mergeBtn.className = 'db-manage-bar__btn db-manage-bar__btn--primary';
+  mergeBtn.id = 'db-manage-merge';
+  mergeBtn.addEventListener('click', () => openMergeModal_());
+  actions.appendChild(mergeBtn);
+
+  const moveBtn = document.createElement('button');
+  moveBtn.className = 'db-manage-bar__btn';
+  moveBtn.id = 'db-manage-move';
+  moveBtn.textContent = 'Move to ▾';
+  moveBtn.addEventListener('click', (e) => openMoveDropdown_(e.currentTarget));
+  actions.appendChild(moveBtn);
+
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'db-manage-bar__btn';
+  removeBtn.id = 'db-manage-remove';
+  removeBtn.textContent = 'Remove from group';
+  removeBtn.addEventListener('click', () => confirmRemoveFromGroup_());
+  actions.appendChild(removeBtn);
+
+  const disbandBtn = document.createElement('button');
+  disbandBtn.className = 'db-manage-bar__btn db-manage-bar__btn--danger';
+  disbandBtn.id = 'db-manage-disband';
+  disbandBtn.textContent = 'Disband group';
+  disbandBtn.addEventListener('click', () => confirmDisband_());
+  actions.appendChild(disbandBtn);
+
+  const exit = document.createElement('button');
+  exit.className = 'db-manage-bar__exit';
+  exit.textContent = 'Exit';
+  exit.addEventListener('click', () => {
+    state.manageGroups = false;
+    state.dashboardSelection = {};
+    renderShell_();
+  });
+  actions.appendChild(exit);
+
+  wrap.appendChild(actions);
+  setTimeout(updateManageBar_, 0);
+  return wrap;
+}
+
+function updateManageBar_() {
+  const summary = document.getElementById('db-manage-summary');
+  const mergeBtn = document.getElementById('db-manage-merge');
+  const moveBtn = document.getElementById('db-manage-move');
+  const disbandBtn = document.getElementById('db-manage-disband');
+  if (!summary) return;
+
+  const sel = state.dashboardSelection || {};
+  const keys = Object.keys(sel);
+  const studentKeys = keys.filter((k) => sel[k] === 'student');
+  const groupKeys = keys.filter((k) => sel[k] === 'group');
+
+  summary.textContent = 'Manage groups mode — click rows to select.  ' + keys.length + ' selected.';
+
+  // Merge: 2-4 solo students of the same class.
+  const soloStudentsOfSameClass = (() => {
+    if (studentKeys.length < 2 || studentKeys.length > 4) return false;
+    if (groupKeys.length !== 0) return false;
+    const data = dashboard.data;
+    if (!data) return false;
+    const byEmail = {};
+    data.students.forEach((s) => { byEmail[s.email] = s; });
+    const rows = studentKeys.map((k) => byEmail[k]).filter(Boolean);
+    if (rows.length !== studentKeys.length) return false;
+    if (rows.some((r) => r.groupId)) return false;       // must be solo
+    const classes = {};
+    rows.forEach((r) => { classes[r.class] = true; });
+    return Object.keys(classes).length === 1;
+  })();
+  mergeBtn.textContent = '+ Merge into group (' + studentKeys.length + ')';
+  mergeBtn.disabled = !soloStudentsOfSameClass;
+
+  // Move / Add: exactly one student selected (no groups). A grouped student
+  // moves to another group; a solo student is added to one — same button,
+  // relabeled to match the selection.
+  const removeBtn = document.getElementById('db-manage-remove');
+  const selectedStudent = (studentKeys.length === 1 && groupKeys.length === 0 && dashboard.data)
+    ? (dashboard.data.students || []).find((s) => s.email === studentKeys[0])
+    : null;
+  if (moveBtn) {
+    moveBtn.disabled = !selectedStudent;
+    moveBtn.textContent = (selectedStudent && selectedStudent.groupId) ? 'Move to ▾' : 'Add to group ▾';
+  }
+
+  // Remove from group: exactly one grouped student selected.
+  if (removeBtn) removeBtn.disabled = !(selectedStudent && selectedStudent.groupId);
+
+  // Disband: exactly one group selected.
+  disbandBtn.disabled = !(groupKeys.length === 1 && studentKeys.length === 0);
 }
 
 function buildMixBar_(mix) {
@@ -1347,6 +1645,146 @@ function renderStudentDetail_(main) {
     body.appendChild(loader);
     fetchStudentDetail_(state.projectId, state.studentEmail);
   }
+}
+
+const groupDetail = {
+  loadedFor: null,        // 'projectId|groupId'
+  data: null,
+};
+
+function renderGroupDetail_(main) {
+  const key = state.projectId + '|' + state.groupId;
+  if (groupDetail.loadedFor !== key) {
+    groupDetail.loadedFor = null;
+    groupDetail.data = null;
+  }
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 'db-toolbar';
+  const back = document.createElement('button');
+  back.className = 'db-back';
+  back.textContent = '← Dashboard';
+  back.addEventListener('click', () => navigate_('/projects/' + encodeURIComponent(state.projectId)));
+  toolbar.appendChild(back);
+  const title = document.createElement('div');
+  title.className = 'db-title';
+  title.id = 'gd-title';
+  title.textContent = 'Loading group…';
+  toolbar.appendChild(title);
+  const refresh = document.createElement('button');
+  refresh.className = 'db-refresh';
+  refresh.textContent = '↻ Refresh';
+  refresh.addEventListener('click', () => fetchGroupDetail_(state.projectId, state.groupId));
+  toolbar.appendChild(refresh);
+  main.appendChild(toolbar);
+
+  const body = document.createElement('div');
+  body.className = 'db-body';
+  body.id = 'gd-body';
+  main.appendChild(body);
+
+  if (groupDetail.data) {
+    paintGroupDetail_();
+  } else {
+    body.innerHTML = '';
+    const loader = document.createElement('div');
+    loader.className = 'mp-loading';
+    const sp = document.createElement('div');
+    sp.className = 'console-spinner';
+    loader.appendChild(sp);
+    const txt = document.createElement('div');
+    txt.textContent = 'Loading group…';
+    loader.appendChild(txt);
+    body.appendChild(loader);
+    fetchGroupDetail_(state.projectId, state.groupId);
+  }
+}
+
+function fetchGroupDetail_(projectId, groupId) {
+  google.script.run
+    .withSuccessHandler((resp) => {
+      if (!resp || !resp.ok) {
+        setStatus('Could not load group.', 'bad', 4000);
+        return;
+      }
+      groupDetail.loadedFor = projectId + '|' + groupId;
+      groupDetail.data = resp;
+      paintGroupDetail_();
+    })
+    .withFailureHandler(onFail_('loading group'))
+    .consoleGetGroupDashboard(projectId, groupId);
+}
+
+function paintGroupDetail_() {
+  if (!groupDetail.data) return;
+  const data = groupDetail.data;
+  const title = document.getElementById('gd-title');
+  if (title) {
+    title.textContent = '[grp] ' + data.group.name + ' · ' + data.group.className + ' · ' +
+      data.group.memberCount + ' member' + (data.group.memberCount === 1 ? '' : 's');
+  }
+  const body = document.getElementById('gd-body');
+  if (!body) return;
+  body.innerHTML = '';
+
+  // Reuse the student drill-down grid by stashing data into the shape
+  // those builders expect.
+  body.appendChild(buildGroupDrillGrid_(data));
+  body.appendChild(buildGroupSourcesViewer_(data));
+}
+
+/** Group equivalent of buildDrillGrid_, adapted to read from groupDetail.data. */
+function buildGroupDrillGrid_(data) {
+  // Stash into a shape compatible with the per-student drill builders.
+  const stashed = studentDetail.data;
+  studentDetail.data = {
+    student: { email: '', name: data.group.name, class: data.group.className },
+    aggregates: data.aggregates,
+    sources: data.sources,
+    asOf: data.asOf,
+  };
+  let grid;
+  try {
+    grid = buildDrillGrid_();
+  } finally {
+    studentDetail.data = stashed;
+  }
+  return grid;
+}
+
+function buildGroupSourcesViewer_(data) {
+  const stashed = studentDetail.data;
+  studentDetail.data = {
+    student: { email: '', name: data.group.name, class: data.group.className },
+    aggregates: data.aggregates,
+    sources: data.sources,
+    asOf: data.asOf,
+  };
+  let viewer;
+  try {
+    viewer = buildSourcesViewer_();
+    // Walk highlight items in the viewer and inject an attribution badge.
+    viewer.querySelectorAll('.dd-hl').forEach((node) => {
+      const hid = node.getAttribute('data-hid');
+      if (!hid) return;
+      // Find the highlight + its author across all enriched sources.
+      let author = '';
+      for (let i = 0; i < data.sources.length; i++) {
+        const s = data.sources[i];
+        const match = (s.highlights || []).find((h) => h.highlightId === hid);
+        if (match) { author = match.createdByEmail || ''; break; }
+      }
+      if (!author) return;
+      const badge = document.createElement('span');
+      badge.className = 'drill-hl__byline';
+      badge.textContent = '— ' + author;
+      const meta = node.querySelector('.dd-hl__meta') || node;
+      meta.appendChild(badge);
+    });
+  } finally {
+    studentDetail.data = stashed;
+  }
+  return viewer;
 }
 
 function fetchStudentDetail_(projectId, email) {
@@ -1534,6 +1972,7 @@ function buildHighlightGroups_(s) {
 function buildHighlightItem_(h) {
   const row = document.createElement('div');
   row.className = 'dd-hl';
+  row.setAttribute('data-hid', h.highlightId);
   const bar = document.createElement('div');
   bar.className = 'dd-hl__bar';
   bar.style.backgroundColor = colorForCategoryInDrill_(h.primaryCategory) || '#dadce0';
@@ -1865,5 +2304,279 @@ function onFail_(stage) {
 
 function esc_(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function openMergeModal_() {
+  const sel = state.dashboardSelection || {};
+  const studentEmails = Object.keys(sel).filter((k) => sel[k] === 'student');
+  if (studentEmails.length < 2 || studentEmails.length > 4) return;
+
+  const byEmail = {};
+  (dashboard.data.students || []).forEach((s) => { byEmail[s.email] = s; });
+  const members = studentEmails.map((e) => byEmail[e]).filter(Boolean);
+  if (members.length === 0) return;
+  const sharedClass = members[0].class;
+
+  // Compute Group N placeholder by counting existing groups in this class.
+  const existingGroupsInClass = (dashboard.data.groups || []).filter((g) => g.className === sharedClass);
+  const placeholder = 'Group ' + (existingGroupsInClass.length + 1);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'console-modal-overlay db-merge-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'console-modal db-merge-modal';
+
+  const h = document.createElement('h2');
+  h.textContent = 'Merge into group';
+  modal.appendChild(h);
+
+  const subtitle = document.createElement('p');
+  subtitle.className = 'db-merge-subtitle';
+  subtitle.textContent = sharedClass + ' — ' + members.length + ' student' + (members.length === 1 ? '' : 's');
+  modal.appendChild(subtitle);
+
+  const list = document.createElement('ul');
+  list.className = 'db-merge-list';
+  members.forEach((m) => {
+    const li = document.createElement('li');
+    li.textContent = formatLastFirst_(m.name) + ' (' + m.email + ')';
+    list.appendChild(li);
+  });
+  modal.appendChild(list);
+
+  const labelEl = document.createElement('label');
+  labelEl.className = 'db-merge-label';
+  labelEl.textContent = 'Group name';
+  modal.appendChild(labelEl);
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'db-merge-input';
+  input.placeholder = placeholder;
+  input.maxLength = 60;
+  modal.appendChild(input);
+
+  const note = document.createElement('p');
+  note.className = 'db-merge-note';
+  note.textContent = 'Each selected student\'s existing sources and highlights move into the new group Sheet. Reversible: disbanding the group — or removing a member — rebuilds their solo Sheet with their own work, including anything they added while grouped.';
+  modal.appendChild(note);
+
+  const actions = document.createElement('div');
+  actions.className = 'console-modal__actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'console-modal__cancel';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => overlay.remove());
+  actions.appendChild(cancel);
+  const submit = document.createElement('button');
+  submit.className = 'console-modal__submit';
+  submit.textContent = 'Merge';
+  submit.addEventListener('click', () => {
+    submit.disabled = true;
+    submit.textContent = 'Merging…';
+    const name = (input.value || '').trim() || placeholder;
+    google.script.run
+      .withSuccessHandler((resp) => {
+        setStatus('Merged ' + members.length + ' students into "' + name + '".', 'good', 4000);
+        overlay.remove();
+        state.dashboardSelection = {};
+        fetchDashboard_(state.projectId, true);
+      })
+      .withFailureHandler((e) => {
+        submit.disabled = false;
+        submit.textContent = 'Merge';
+        setStatus('Merge failed: ' + (e && e.message || e), 'bad', 5000);
+      })
+      .consoleGroupCreate(state.projectId, name, studentEmails);
+  });
+  actions.appendChild(submit);
+  modal.appendChild(actions);
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  input.focus();
+}
+
+function openMoveDropdown_(anchor) {
+  const sel = state.dashboardSelection || {};
+  const studentEmails = Object.keys(sel).filter((k) => sel[k] === 'student');
+  if (studentEmails.length !== 1) return;
+  const email = studentEmails[0];
+
+  const byEmail = {};
+  (dashboard.data.students || []).forEach((s) => { byEmail[s.email] = s; });
+  const student = byEmail[email];
+  if (!student) return;
+
+  // Candidate groups: same class, not the student's current group, with room
+  // (≤4 members). Works for both a grouped student (move) and a solo one
+  // (add — their groupId is null, so every same-class group is a candidate).
+  const candidates = (dashboard.data.groups || []).filter((g) =>
+    g.className === student.class && g.groupId !== student.groupId && g.memberCount < 4);
+
+  // Close any open dropdown first.
+  document.querySelectorAll('.db-move-pop').forEach((el) => el.remove());
+  if (candidates.length === 0) {
+    const verb = student.groupId ? 'move into' : 'add them to';
+    setStatus('No ' + student.class + ' groups with room to ' + verb + '.', 'neutral', 3000);
+    return;
+  }
+
+  const pop = document.createElement('div');
+  pop.className = 'db-move-pop';
+  const rect = anchor.getBoundingClientRect();
+  pop.style.position = 'fixed';
+  pop.style.top = (rect.bottom + 4) + 'px';
+  pop.style.left = rect.left + 'px';
+
+  candidates.forEach((g) => {
+    const item = document.createElement('button');
+    item.className = 'db-move-pop__item';
+    item.textContent = g.name + '  (' + g.memberCount + ' member' + (g.memberCount === 1 ? '' : 's') + ')';
+    item.addEventListener('click', () => {
+      pop.remove();
+      if (student.groupId) doMove_(email, student.groupId, g.groupId, g.name);
+      else                 doAddToGroup_(email, g.groupId, g.name);
+    });
+    pop.appendChild(item);
+  });
+  document.body.appendChild(pop);
+  const closer = (e) => {
+    if (pop.contains(e.target) || e.target === anchor) return;
+    pop.remove();
+    document.removeEventListener('click', closer);
+  };
+  setTimeout(() => document.addEventListener('click', closer), 0);
+}
+
+function doMove_(email, fromGroupId, toGroupId, toName) {
+  if (!fromGroupId) {
+    setStatus('Solo students cannot be moved — merge them into a group instead.', 'bad', 4000);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(() => {
+      setStatus('Moved ' + email + ' into "' + toName + '".', 'good', 4000);
+      state.dashboardSelection = {};
+      fetchDashboard_(state.projectId, true);
+    })
+    .withFailureHandler((e) => setStatus('Move failed: ' + (e && e.message || e), 'bad', 5000))
+    .consoleGroupMoveStudent(state.projectId, email, fromGroupId, toGroupId);
+}
+
+function doAddToGroup_(email, toGroupId, toName) {
+  google.script.run
+    .withSuccessHandler(() => {
+      setStatus('Added ' + email + ' to "' + toName + '".', 'good', 4000);
+      state.dashboardSelection = {};
+      fetchDashboard_(state.projectId, true);
+    })
+    .withFailureHandler((e) => setStatus('Add failed: ' + (e && e.message || e), 'bad', 5000))
+    .consoleAddToGroup(state.projectId, toGroupId, email);
+}
+
+function confirmRemoveFromGroup_() {
+  if (!dashboard.data) return;
+  const sel = state.dashboardSelection || {};
+  const studentKeys = Object.keys(sel).filter((k) => sel[k] === 'student');
+  if (studentKeys.length !== 1) return;
+  const email = studentKeys[0];
+  const student = (dashboard.data.students || []).find((s) => s.email === email);
+  if (!student || !student.groupId) return;
+  const group = (dashboard.data.groups || []).find((g) => g.groupId === student.groupId);
+  const groupName = group ? group.name : 'the group';
+  const willDisband = !!(group && group.memberCount <= 2);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'console-modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'console-modal';
+  modal.innerHTML =
+    '<h2>Remove ' + esc_(formatLastFirst_(student.name)) + ' from "' + esc_(groupName) + '"?</h2>' +
+    '<p>They return to a solo Sheet with their own work — everything they authored, including what they did while grouped — rebuilt into it.</p>' +
+    (willDisband
+      ? '<p><strong>Only one member would remain, so the group disbands</strong> — that member also returns to a solo Sheet.</p>'
+      : '');
+  const actions = document.createElement('div');
+  actions.className = 'console-modal__actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'console-modal__cancel';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => overlay.remove());
+  actions.appendChild(cancel);
+  const submit = document.createElement('button');
+  submit.className = 'console-modal__submit';
+  submit.textContent = 'Remove';
+  submit.addEventListener('click', () => {
+    submit.disabled = true;
+    submit.textContent = 'Removing…';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        setStatus((resp && resp.autoDisbanded)
+          ? 'Removed ' + email + ' — group disbanded.'
+          : 'Removed ' + email + ' from "' + groupName + '".', 'good', 4000);
+        overlay.remove();
+        state.dashboardSelection = {};
+        fetchDashboard_(state.projectId, true);
+      })
+      .withFailureHandler((e) => {
+        submit.disabled = false;
+        submit.textContent = 'Remove';
+        setStatus('Remove failed: ' + (e && e.message || e), 'bad', 5000);
+      })
+      .consoleGroupRemoveStudent(state.projectId, student.groupId, email);
+  });
+  actions.appendChild(submit);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+}
+
+function confirmDisband_() {
+  const sel = state.dashboardSelection || {};
+  const groupIds = Object.keys(sel).filter((k) => sel[k] === 'group');
+  if (groupIds.length !== 1) return;
+  const groupId = groupIds[0];
+  const group = (dashboard.data.groups || []).find((g) => g.groupId === groupId);
+  if (!group) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'console-modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'console-modal';
+  modal.innerHTML =
+    '<h2>Disband "' + esc_(group.name) + '"?</h2>' +
+    '<p>The ' + group.memberCount + ' member' + (group.memberCount === 1 ? '' : 's') +
+    ' reappear as solos. Each member\'s solo Sheet is rebuilt with their own work — everything they authored, including what they did while grouped.</p>';
+  const actions = document.createElement('div');
+  actions.className = 'console-modal__actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'console-modal__cancel';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => overlay.remove());
+  actions.appendChild(cancel);
+  const submit = document.createElement('button');
+  submit.className = 'console-modal__danger';
+  submit.textContent = 'Disband';
+  submit.addEventListener('click', () => {
+    submit.disabled = true;
+    submit.textContent = 'Disbanding…';
+    google.script.run
+      .withSuccessHandler(() => {
+        setStatus('Disbanded "' + group.name + '".', 'good', 4000);
+        overlay.remove();
+        state.dashboardSelection = {};
+        fetchDashboard_(state.projectId, true);
+      })
+      .withFailureHandler((e) => {
+        submit.disabled = false;
+        submit.textContent = 'Disband';
+        setStatus('Disband failed: ' + (e && e.message || e), 'bad', 5000);
+      })
+      .consoleGroupDisband(state.projectId, groupId);
+  });
+  actions.appendChild(submit);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
 }
 </script>

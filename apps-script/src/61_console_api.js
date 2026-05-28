@@ -233,6 +233,7 @@ function consoleGetProjectDashboard(projectId) {
   const project = getProject_(projectId);
   if (!project) throw new Error('Unknown project ' + projectId);
   const bundle = getBundle_(project.bundleId);
+  resetGroupSheetCache_();
 
   const projectClasses = projectClassList_(project);
   const teacherClasses = isAdmin_(staff) ? null : listClassesTaughtBy_(actorEmail);
@@ -248,22 +249,72 @@ function consoleGetProjectDashboard(projectId) {
     (r) => r.Class && scopedClasses.indexOf(String(r.Class).trim()) >= 0
   );
 
+  // Sheet-id keyed cache: open each group Sheet once per request even if
+  // 3 students all resolve to the same group.
+  const sheetCache = {};  // sheetId → { sources, highlights }
+  function readForActor_(email) {
+    const ss = getStudentSheetIfExists_(email, project);
+    if (!ss) return { sources: [], highlights: [], sheetId: null, isGroup: false };
+    const sheetId = ss.getId();
+    if (!sheetCache[sheetId]) {
+      sheetCache[sheetId] = {
+        sources:    readAllAsObjects_(getTab_(ss, TABS.SOURCES),    HEADERS.SOURCES),
+        highlights: readAllAsObjects_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS),
+      };
+    }
+    const meta = readGroupMeta_(ss);
+    const isGroup = !!(meta && String(meta.groupId || '').trim());
+    return { sources: sheetCache[sheetId].sources, highlights: sheetCache[sheetId].highlights, sheetId, isGroup, meta };
+  }
+
+  // Per-student rows — for group members, filter the group's rows by createdByEmail.
   const students = enrolled.map((r) => {
-    const sources = readSourcesForActor_(r.Email, projectId);
-    const highlights = readHighlightsForActor_(r.Email, projectId);
-    const agg = aggregateStudent_(sources, highlights, bundle);
+    const fetched = readForActor_(r.Email);
+    const personalSources    = fetched.isGroup ? fetched.sources.filter((s)    => String(s.createdByEmail).toLowerCase()    === String(r.Email).toLowerCase()) : fetched.sources;
+    const personalHighlights = fetched.isGroup ? fetched.highlights.filter((h) => String(h.createdByEmail).toLowerCase() === String(r.Email).toLowerCase()) : fetched.highlights;
+    const agg = aggregateStudent_(personalSources, personalHighlights, bundle);
     return {
       email: r.Email,
-      name: composeStudentName_(r),
+      name:  composeStudentName_(r),
       class: String(r.Class || ''),
-      categoryMix: agg.categoryMix,
-      sourceCount: agg.sourceCount,
+      groupId: fetched.isGroup ? fetched.meta.groupId : null,
+      categoryMix:    agg.categoryMix,
+      sourceCount:    agg.sourceCount,
       highlightCount: agg.highlightCount,
-      completion: agg.completion,
-      gaps: agg.gaps,
-      lastActivity: agg.lastActivity,
+      completion:     agg.completion,
+      gaps:           agg.gaps,
+      lastActivity:   agg.lastActivity,
     };
   });
+
+  // Groups array — one entry per active group in scope.
+  const groupsInProject = listGroupsForProject_(project);
+  const groups = groupsInProject
+    .filter((g) => scopedClasses.indexOf(g.className) >= 0)
+    .map((g) => {
+      const ss = SpreadsheetApp.openById(g.sheetId);
+      const sheetId = ss.getId();
+      if (!sheetCache[sheetId]) {
+        sheetCache[sheetId] = {
+          sources:    readAllAsObjects_(getTab_(ss, TABS.SOURCES),    HEADERS.SOURCES),
+          highlights: readAllAsObjects_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS),
+        };
+      }
+      const agg = aggregateStudent_(sheetCache[sheetId].sources, sheetCache[sheetId].highlights, bundle);
+      return {
+        groupId: g.groupId,
+        name: g.name,
+        className: g.className,
+        memberEmails: g.memberEmails,
+        memberCount: g.memberCount,
+        categoryMix:    agg.categoryMix,
+        sourceCount:    agg.sourceCount,
+        highlightCount: agg.highlightCount,
+        completion:     agg.completion,
+        gaps:           agg.gaps,
+        lastActivity:   agg.lastActivity,
+      };
+    });
 
   const unarchive = latestUnarchiveFor_(project.projectId);
   const banner = (function () {
@@ -284,6 +335,7 @@ function consoleGetProjectDashboard(projectId) {
       scopedClasses,
     },
     students,
+    groups,
     asOf: nowIso_(),
   };
   if (banner) resp.recentUnarchive = banner;
@@ -452,6 +504,507 @@ function consoleGetStudentDetail(projectId, studentEmail) {
       email: studentEmail,
       name: composeStudentName_(rosterEntry),
       class: studentClass,
+    },
+    aggregates,
+    sources: enriched,
+    asOf: nowIso_(),
+  };
+}
+
+// ============================================================
+// Groups (Phase 4 sub-project D)
+// ============================================================
+
+/**
+ * List active groups in a project, scoped to the caller's classes.
+ * Teachers see groups in classes they teach; admins see all.
+ *
+ * Used by:
+ *   - The dashboard to build the "Move to ▾" dropdown.
+ *   - Manage Groups mode to map (studentEmail) → membership.
+ */
+function consoleListGroupsForProject(projectId) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  resetGroupSheetCache_();
+
+  let groups = listGroupsForProject_(project);
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    groups = groups.filter((g) => taught.indexOf(g.className) >= 0);
+  }
+  return { ok: true, groups };
+}
+
+/**
+ * Create a group containing the listed members and migrate their existing
+ * sources + highlights into the new group Sheet.
+ *
+ * Atomic order (spec §7.1):
+ *   1. Validate inputs + preconditions (validateGroupCreate_).
+ *   2. Mint groupId; create group Sheet + tabs + Meta + Members.
+ *   3. For each member: copy rows from solo Sheet → group Sheet, stamp
+ *      Meta.groupId on the solo Sheet, move it to Archived-students/.
+ *   4. Audit one row per member.
+ *
+ * Returns { ok, groupId, groupSheetId, name, classFolder,
+ *           sourcesCopied, highlightsCopied, errors }.
+ */
+function consoleGroupCreate(projectId, name, memberEmails) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  resetGroupSheetCache_();
+
+  const v = validateGroupCreate_(project, name, memberEmails);
+
+  // Teacher scope: must teach the shared class.
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    if (taught.indexOf(v.sharedClass) < 0) {
+      throw new Error('Class not in your scope');
+    }
+  }
+
+  return withGroupLock_(() => {
+    // Stage: mint groupId + create the group Sheet.
+    const groupId = uuid_();
+    const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+    const classFolder = findChildFolder_(projectFolder, v.sharedClass) ||
+                        projectFolder.createFolder(v.sharedClass);
+    const created = createGroupSheet_(project, classFolder, v.trimmedName, groupId, v.rosters);
+
+    // Copy each member's rows into the group, then trash their solo Sheet.
+    // ATOMIC: if any member fails, trash the new group Sheet and throw —
+    // otherwise the failed member would have writes routed to a group Sheet
+    // that never received their existing work (a data-loss surface). The
+    // group Sheet is the sole store from here; un-merge reconstructs solos
+    // from it by createdByEmail, so there's no archived snapshot to keep.
+    let sourcesCopied = 0, highlightsCopied = 0;
+    try {
+      v.lowered.forEach((email) => {
+        // Locate the solo Sheet directly via Drive (don't go through the
+        // group routing hook — that would recurse now the group exists).
+        const soloFile = findChildFile_(classFolder, email);
+        if (!soloFile) {
+          // Never highlighted — no rows to migrate. The Members row from
+          // createGroupSheet_ already routes their future writes here.
+          return;
+        }
+        const soloSpreadsheet = SpreadsheetApp.openById(soloFile.getId());
+        const copied = copyMemberRowsIntoGroup_(created.spreadsheet, soloSpreadsheet);
+        sourcesCopied    += copied.sourcesCopied;
+        highlightsCopied += copied.highlightsCopied;
+        DriveApp.getFileById(soloFile.getId()).setTrashed(true);
+      });
+    } catch (e) {
+      // Roll back the group Sheet so future writes don't route here.
+      try { DriveApp.getFileById(created.spreadsheet.getId()).setTrashed(true); }
+      catch (cleanupErr) { /* best-effort; surface original error below */ }
+      resetGroupSheetCache_();
+      throw new Error('Failed to create group and migrate members: ' + (e && e.message || e));
+    }
+
+    // Audit. Non-fatal — the migration succeeded; a missing audit row is a
+    // recoverable nuisance, not data loss.
+    const auditErrors = [];
+    v.lowered.forEach((email) => {
+      try {
+        appendAuditEvent_({
+          projectId,
+          action: AUDIT_ACTIONS.GROUP_MERGE,
+          actor:  actorEmail,
+          detail: 'groupId=' + groupId + ';memberEmail=' + email,
+        });
+      } catch (e) {
+        auditErrors.push({ email, error: 'audit: ' + String(e && e.message || e) });
+      }
+    });
+
+    // Bust the cache — subsequent reads must see the new routing.
+    resetGroupSheetCache_();
+
+    return {
+      ok: true,
+      groupId,
+      groupSheetId: created.spreadsheet.getId(),
+      name: v.trimmedName,
+      className: v.sharedClass,
+      sourcesCopied,
+      highlightsCopied,
+      errors: auditErrors,
+    };
+  });
+}
+
+/**
+ * Move a student from one group to another (same project, same class). The
+ * student's work follows them: it is pulled out of `from` (reconstructed,
+ * orphan-safe) and copied into `to`. If `from` drops to ≤1 member it
+ * auto-disbands. Use consoleAddToGroup to add an ungrouped student.
+ *
+ * Returns { ok, fromGroupId, toGroupId, email, errors }.
+ */
+function consoleGroupMoveStudent(projectId, email, fromGroupId, toGroupId) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  if (!email)     throw new Error('email required');
+  if (!fromGroupId) throw new Error('fromGroupId required');
+  if (!toGroupId)   throw new Error('toGroupId required');
+  if (fromGroupId === toGroupId) throw new Error('Source and target groups are the same');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  resetGroupSheetCache_();
+
+  const fromGroup = findGroupFileByGroupId_(project, fromGroupId);
+  const toGroup   = findGroupFileByGroupId_(project, toGroupId);
+  if (!fromGroup) throw new Error('From group not found: ' + fromGroupId);
+  if (!toGroup)   throw new Error('To group not found: '   + toGroupId);
+  fromGroup.groupId = fromGroupId;
+  toGroup.groupId   = toGroupId;
+
+  // Same-class invariant.
+  if (fromGroup.classFolder.getId() !== toGroup.classFolder.getId()) {
+    throw new Error('Cannot move across classes');
+  }
+
+  // Teacher scope.
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    if (taught.indexOf(fromGroup.classFolder.getName()) < 0) {
+      throw new Error('Class not in your scope');
+    }
+  }
+
+  const target = String(email).toLowerCase();
+  if (!currentMembers_(fromGroup.spreadsheet).find((m) => String(m.email).toLowerCase() === target)) {
+    throw new Error(email + ' is not a current member of the source group');
+  }
+  if (currentMembers_(toGroup.spreadsheet).find((m) => String(m.email).toLowerCase() === target)) {
+    throw new Error(email + ' is already in the target group');
+  }
+  if (currentMembers_(toGroup.spreadsheet).length >= 4) {
+    throw new Error('Target group already has 4 members');
+  }
+
+  const roster = getStudentRosterEntry_(email);
+  if (!roster) throw new Error('Not on roster: ' + email);
+
+  return withGroupLock_(() => {
+    // Pull the student (and their work) out of `from`, then add them (and
+    // that work) to `to`. Removing may auto-disband `from` if it drops to
+    // ≤1 member.
+    removeMemberFromGroupCore_(project, fromGroup, target, actorEmail);
+    addMemberToGroupCore_(project, toGroup, roster, actorEmail);
+    appendAuditEvent_({
+      projectId,
+      action: AUDIT_ACTIONS.GROUP_MOVE,
+      actor:  actorEmail,
+      detail: 'from=' + fromGroupId + ';to=' + toGroupId + ';email=' + target,
+    });
+    resetGroupSheetCache_();
+    return { ok: true, fromGroupId, toGroupId, email: target, errors: [] };
+  });
+}
+
+/**
+ * Disband a group: every current member's solo Sheet is reconstructed from
+ * the group's rows (their createdByEmail rows + referential closure), so
+ * their group-period work follows them out. The group Sheet is then moved
+ * into Archived-students/ for posterity.
+ *
+ * Returns { ok, groupId, restoredCount, errors }.
+ */
+function consoleGroupDisband(projectId, groupId) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  if (!groupId)   throw new Error('groupId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  resetGroupSheetCache_();
+
+  const group = findGroupFileByGroupId_(project, groupId);
+  if (!group) throw new Error('Group not found: ' + groupId);
+  group.groupId = groupId;
+
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    if (taught.indexOf(group.classFolder.getName()) < 0) {
+      throw new Error('Class not in your scope');
+    }
+  }
+
+  return withGroupLock_(() => {
+    const result = disbandGroupCore_(project, group, actorEmail);
+    resetGroupSheetCache_();
+    return { ok: true, groupId, restoredCount: result.restoredCount, errors: [] };
+  });
+}
+
+/**
+ * Un-merge a single student: reconstruct their solo Sheet from the group
+ * (their createdByEmail rows + referential closure) and strip their rows
+ * from the group, orphan-safe. If the group would drop to ≤1 member it
+ * auto-disbands (a one-person group is just a solo student).
+ *
+ * Returns { ok, groupId, email, autoDisbanded, errors }.
+ */
+function consoleGroupRemoveStudent(projectId, groupId, email) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  if (!groupId)   throw new Error('groupId required');
+  if (!email)     throw new Error('email required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  resetGroupSheetCache_();
+
+  const group = findGroupFileByGroupId_(project, groupId);
+  if (!group) throw new Error('Group not found: ' + groupId);
+  group.groupId = groupId;
+
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    if (taught.indexOf(group.classFolder.getName()) < 0) {
+      throw new Error('Class not in your scope');
+    }
+  }
+
+  const target = String(email).toLowerCase();
+  if (!currentMembers_(group.spreadsheet).find((m) => String(m.email).toLowerCase() === target)) {
+    throw new Error(email + ' is not a current member of this group');
+  }
+
+  return withGroupLock_(() => {
+    const result = removeMemberFromGroupCore_(project, group, target, actorEmail);
+    resetGroupSheetCache_();
+    return { ok: true, groupId, email: target, autoDisbanded: !!result.autoDisbanded, errors: [] };
+  });
+}
+
+/**
+ * Add an ungrouped, same-class student to an existing active group: their
+ * solo work is copied in and the solo Sheet trashed. Use
+ * consoleGroupMoveStudent to relocate an already-grouped student.
+ *
+ * Returns { ok, groupId, email, copiedSources, copiedHighlights, errors }.
+ */
+function consoleAddToGroup(projectId, groupId, email) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  if (!groupId)   throw new Error('groupId required');
+  if (!email)     throw new Error('email required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  resetGroupSheetCache_();
+
+  const group = findGroupFileByGroupId_(project, groupId);
+  if (!group) throw new Error('Group not found: ' + groupId);
+  group.groupId = groupId;
+
+  const roster = getStudentRosterEntry_(email);
+  if (!roster) throw new Error('Not on roster: ' + email);
+  if (String(roster.Class || '').trim() !== group.classFolder.getName()) {
+    throw new Error('Member must be in class ' + group.classFolder.getName());
+  }
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    if (taught.indexOf(group.classFolder.getName()) < 0) {
+      throw new Error('Class not in your scope');
+    }
+  }
+  const target = String(email).toLowerCase();
+  if (findGroupSheetForStudent_(target, project)) {
+    throw new Error(email + ' is already in a group — move them instead');
+  }
+  if (currentMembers_(group.spreadsheet).length >= 4) {
+    throw new Error('Group already has 4 members');
+  }
+
+  return withGroupLock_(() => {
+    const result = addMemberToGroupCore_(project, group, roster, actorEmail);
+    resetGroupSheetCache_();
+    return {
+      ok: true, groupId, email: target,
+      copiedSources: result.copiedSources, copiedHighlights: result.copiedHighlights,
+      errors: [],
+    };
+  });
+}
+
+/**
+ * Walk a project and report group/solo drift. Admin-only; no client UI —
+ * exposed for manual recovery via the GAS editor.
+ *
+ * Authoritative membership lives in each group's Members tab, so drift is
+ * detected by cross-referencing current members against live solo Sheets —
+ * NOT via solo `Meta.groupId` (no longer stamped; merge trashes solos and
+ * un-merge reconstructs them with an empty groupId).
+ *
+ * Returns { ok, issues: [{kind, ...}] }:
+ *   - kind 'group_member_solo_sheet_present':
+ *       a current group member also has a live solo Sheet at class root
+ *       (merge/add should have trashed it) — usually a half-applied add/move.
+ *   - kind 'orphan_meta_groupId':
+ *       a solo Sheet's Meta.groupId points to a non-existent group (legacy).
+ */
+function consoleGroupCheckIntegrity(projectId) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+
+  const issues = [];
+  const groups = listGroupsForProject_(project);
+  const groupIds = {};
+  const memberToGroup = {};  // lowercased email → groupId (current members of active groups)
+  groups.forEach((g) => {
+    groupIds[g.groupId] = g;
+    (g.memberEmails || []).forEach((m) => { memberToGroup[String(m).toLowerCase()] = g.groupId; });
+  });
+
+  // Walk every class folder.
+  const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+  const classFolders = projectFolder.getFolders();
+  while (classFolders.hasNext()) {
+    const cf = classFolders.next();
+    if (cf.getName() === NAMES.ARCHIVED_FOLDER) continue;
+
+    const files = cf.getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      if (f.isTrashed()) continue;  // a trashed solo is gone — not drift
+      const name = f.getName();
+      if (name.indexOf(NAMES.GROUP_SHEET_PREFIX) === 0) continue;  // group Sheets handled separately
+      if (name.indexOf('@') < 0) continue;
+
+      // A current group member should have NO live solo Sheet at class root.
+      const gid = memberToGroup[name.toLowerCase()];
+      if (gid) {
+        issues.push({
+          kind: 'group_member_solo_sheet_present',
+          email: name,
+          className: cf.getName(),
+          groupId: gid,
+        });
+      }
+
+      // Legacy back-pointer drift: a solo whose Meta.groupId names a dead group.
+      try {
+        const meta = readGroupMeta_(SpreadsheetApp.openById(f.getId()));
+        const metaGid = meta && String(meta.groupId || '').trim();
+        if (metaGid && !groupIds[metaGid]) {
+          issues.push({
+            kind: 'orphan_meta_groupId',
+            email: name,
+            className: cf.getName(),
+            groupIdPointer: metaGid,
+          });
+        }
+      } catch (e) { /* not a Sheet, skip */ }
+    }
+  }
+
+  return { ok: true, issues };
+}
+
+/**
+ * Group-aggregate drill-down. Same response shape as
+ * consoleGetStudentDetail but the inputs are the group's FULL
+ * unfiltered Sources + Highlights, and the response carries member
+ * attribution on each highlight so the teacher can see who wrote what.
+ */
+function consoleGetGroupDashboard(projectId, groupId) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  if (!groupId)   throw new Error('groupId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  const bundle = getBundle_(project.bundleId);
+  resetGroupSheetCache_();
+
+  const located = findGroupFileByGroupId_(project, groupId);
+  if (!located) throw new Error('Group not found: ' + groupId);
+
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    if (taught.indexOf(located.classFolder.getName()) < 0) {
+      throw new Error('Class not in your scope');
+    }
+  }
+
+  const ss = located.spreadsheet;
+  const sources    = readAllAsObjects_(getTab_(ss, TABS.SOURCES),    HEADERS.SOURCES);
+  const highlights = readAllAsObjects_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
+  const members    = currentMembers_(ss);
+  const meta       = readGroupMeta_(ss);
+
+  // Reuse the student-detail enrichment so the viewer renders identically.
+  const enriched = sources.map((s) => {
+    const parsed = parseCitationFields_(s);
+    const formatted = formatCitation(
+      Object.assign({}, parsed, {
+        sourceType: parsed.sourceType || s.sourceType || 'website',
+        title:      parsed.title      || s.scrapedTitle  || '',
+        siteName:   parsed.siteName   || s.scrapedSite   || '',
+        author:     parsed.author     || s.scrapedAuthor || '',
+        publishedDate: parsed.publishedDate || s.scrapedDate || '',
+        url:        parsed.url        || s.rawUrl || '',
+        accessDate: s.accessDate || parsed.accessDate || '',
+      }),
+      bundle ? bundle.style : 'mla'
+    );
+    return {
+      sourceId: s.sourceId,
+      scrapedTitle: s.scrapedTitle,
+      citationFieldsParsed: parsed,
+      primarySecondary: s.primarySecondary || 'unset',
+      annotation: s.annotation || '',
+      formattedCitation: formatted,
+      completionFlags: {
+        citation:       !!(parsed.title && parsed.url),
+        classification: s.primarySecondary && s.primarySecondary !== 'unset',
+        annotation:     !!(s.annotation && String(s.annotation).trim().length > 0),
+      },
+      // attributedAuthor: created on the source, useful for the viewer header.
+      createdByEmail: s.createdByEmail || '',
+      highlights: highlights
+        .filter((h) => h.sourceId === s.sourceId)
+        .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
+        .map((h) => ({
+          highlightId: h.highlightId,
+          primaryCategory: h.primaryCategory,
+          secondaryCategory: h.secondaryCategory,
+          highlightedText: h.highlightedText,
+          note: h.note || '',
+          createdByEmail: h.createdByEmail || '',
+          createdAt: h.createdAt,
+        })),
+      createdAt: s.createdAt,
+    };
+  });
+  enriched.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+  const aggregates = aggregateStudentDetail_(sources, highlights, bundle, project.createdAt);
+
+  return {
+    ok: true,
+    group: {
+      groupId,
+      name: meta ? meta.studentName : '',
+      className: located.classFolder.getName(),
+      memberEmails: members.map((m) => m.email),
+      memberCount: members.length,
     },
     aggregates,
     sources: enriched,

@@ -22,10 +22,23 @@ function findOrCreateClassFolder_(projectFolder, className) {
 }
 
 /**
- * Find or create the per-(student, project) Sheet, fully initialized.
- * Returns the Spreadsheet object. Idempotent.
+ * Resolve the Sheet a (student, project) writes to. Current members of an
+ * active group route to the shared group Sheet; everyone else gets their
+ * per-student Sheet. The group hook is the single chokepoint that re-points
+ * doPost, the sidebar, and source-dedup at once.
  */
 function findOrCreateStudentSheet_(actorEmail, project) {
+  const groupSheet = findGroupSheetForStudent_(actorEmail, project);
+  if (groupSheet) return groupSheet;
+  return findOrCreateSoloSheet_(actorEmail, project);
+}
+
+/**
+ * The per-(student, project) Sheet, fully initialized. Idempotent. SOLO
+ * ONLY — bypasses group routing, so un-merge can rebuild a member's personal
+ * Sheet even while the registry still lists them as grouped.
+ */
+function findOrCreateSoloSheet_(actorEmail, project) {
   const rosterEntry = getStudentRosterEntry_(actorEmail);
   if (!rosterEntry) {
     throw new Error(`Email ${actorEmail} is not on the roster — refusing to provision.`);

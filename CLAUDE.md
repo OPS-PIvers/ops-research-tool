@@ -74,7 +74,39 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     shadow-DOM-heavy pages); force-install setup with the district Admin
     console; possible polish on roster-not-found UX.
 - **Phase 3 — Google Docs sidebar — not started.**
-- **Phase 4 — Teacher Console + pilot — not started.**
+- **Phase 4 — Teacher Console — sub-projects A/B/C/D COMPLETE.**
+  - A+B: Console shell, My Projects, Project Dashboard, student drill-down.
+  - C: Admin Area (Roster CRUD, Staff CRUD, Archive School Year) + audit log
+    + 7-day recently-unarchived banner.
+  - D: Groups — teacher-driven merge of 2–4 in-class students into a single
+    group Sheet (existing work migrated), Manage Groups mode on the dashboard
+    (merge / move / add / remove / disband), group-aggregate drill-down with
+    author attribution. Routing goes through `findGroupSheetForStudent_` so the
+    extension + sidebar work transparently for group members. Source dedup on
+    merge is intentionally NOT done (build plan §Groups lock).
+    - **Un-merge reconstructs from the group, not an archive.** Disband /
+      remove / move rebuild a member's solo Sheet from the group's rows
+      filtered by `createdByEmail` (+ the referential closure of any source a
+      member's highlight cites), so group-period work follows the student
+      out. Merge therefore *trashes* the per-student Sheets — the group Sheet
+      is the sole store. `reconstructSoloFromGroup_` + the solo cores
+      (`findOrCreateSoloSheet_` / `getSoloSheetIfExists_`, which bypass group
+      routing) do the rebuild.
+    - **Move** carries the student's work into the target group; **remove**
+      auto-disbands a group that would drop to ≤1 member.
+    - **`consoleAddToGroup`** adds an ungrouped same-class student to an
+      existing group (copies their solo rows in, trashes the solo). In the
+      dashboard's Manage Groups bar, the "Move to ▾" button doubles as "Add
+      to group ▾" when the selected student is solo; "Remove from group"
+      removes a selected grouped student.
+    - All group mutations are serialized with `LockService` (`withGroupLock_`).
+  - **Known follow-ups:**
+    - `consoleGroupCheckIntegrity` is admin-only and editor-callable; no
+      client UI yet — surface if pilot reveals it's needed.
+    - Group renaming — trivial follow-up; no schema change required.
+    - Sidebar currently allows any group member to delete highlights they
+      didn't author. Document only; gate later if pilot reveals abuse.
+  - **Pilot — still TODO** (force-install + run one section).
 
 ## 4. Decisions made beyond the build plan
 
@@ -175,6 +207,11 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   resolve to the same source
 - `devProbeUrlConstructor` — diagnostic for the GAS URL quirk
 - `devValidateRoster` — runs roster + staff validation
+- Groups (sub-project D) — each builds a DEV-class fixture, asserts, and
+  cleans up after itself: `devTestGroupRoutingProvisioning`,
+  `devTestGroupMergeMigrationFidelity`, `devTestGroupDisbandRoundTrip`,
+  `devTestGroupMoveSemantics`, `devTestGroupAddToGroup`,
+  `devTestGroupAuthorizationGate`. Run all six green after any group change.
 
 ## 9. How to start a Phase 2 session
 

@@ -1068,4 +1068,176 @@ select, input, textarea { font: inherit; }
 }
 .admin-lifecycle__errors-head { color: #b06000; font-weight: 500; padding-bottom: 6px; }
 .admin-lifecycle__errors ul { margin: 0; padding-left: 24px; font-size: 13px; color: #3c4043; }
+
+/* ============================================================
+ * Groups (Phase 4 sub-project D)
+ * ============================================================ */
+
+/* Manage Groups toggle */
+.db-manage {
+  margin-left: 8px;
+  padding: 6px 12px;
+  border: 1px solid #d0d7de;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+}
+.db-manage:hover { background: #f5f7fa; }
+.db-manage--on {
+  background: #e8f0fe;
+  border-color: #1a73e8;
+  color: #1a73e8;
+  font-weight: 600;
+}
+
+/* Manage Groups action bar */
+.db-manage-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: #fff8e1;
+  border: 1px solid #f0c040;
+  border-radius: 4px;
+  margin-bottom: 12px;
+}
+.db-manage-bar__summary {
+  font-size: 13px;
+  color: #5f4d10;
+}
+.db-manage-bar__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.db-manage-bar__btn {
+  padding: 6px 12px;
+  border: 1px solid #d0d7de;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+}
+.db-manage-bar__btn:not(:disabled):hover { background: #f5f7fa; }
+.db-manage-bar__btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.db-manage-bar__btn--primary {
+  background: #1a73e8;
+  border-color: #1a73e8;
+  color: #fff;
+}
+.db-manage-bar__btn--primary:not(:disabled):hover { background: #1666c1; }
+.db-manage-bar__btn--danger {
+  background: #d32f2f;
+  border-color: #d32f2f;
+  color: #fff;
+}
+.db-manage-bar__btn--danger:not(:disabled):hover { background: #b71c1c; }
+.db-manage-bar__exit {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  color: #5f4d10;
+}
+
+/* Checkbox column */
+.db-th-checkbox, .db-td-checkbox {
+  width: 32px;
+  text-align: center;
+  padding: 0 4px;
+}
+
+/* Group header row */
+.db-group-header {
+  background: #f0f4ff;
+  border-top: 2px solid #c7d6f5;
+  cursor: pointer;
+}
+.db-group-header:hover { background: #e3ebfb; }
+.db-group-chev {
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+  margin-right: 6px;
+  cursor: pointer;
+  color: #1a73e8;
+  font-size: 12px;
+}
+.db-row__name--group { font-weight: 600; color: #1a73e8; }
+.db-group-label { vertical-align: middle; }
+
+/* Grouped member rows */
+.db-row--in-group td:nth-child(1) { padding-left: 24px; }
+.db-row--in-group .db-row__name { color: #4a5e7a; }
+
+/* Move dropdown popover */
+.db-move-pop {
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  min-width: 220px;
+  padding: 4px 0;
+  z-index: 50;
+}
+.db-move-pop__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+.db-move-pop__item:hover { background: #f5f7fa; }
+
+/* Merge modal */
+.db-merge-modal { max-width: 480px; }
+.db-merge-subtitle { color: #5a6478; margin: 0 0 12px 0; }
+.db-merge-list {
+  margin: 0 0 16px 0;
+  padding: 8px 12px 8px 28px;
+  background: #f5f7fa;
+  border-radius: 4px;
+  font-size: 13px;
+  list-style: disc;
+}
+.db-merge-list li { padding: 2px 0; }
+.db-merge-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+}
+.db-merge-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #d0d7de;
+  border-radius: 4px;
+  font: inherit;
+}
+.db-merge-note {
+  font-size: 12px;
+  color: #5a6478;
+  margin: 8px 0 0 0;
+}
+
+/* Group drill-down attribution */
+.drill-hl__byline {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  background: #eef2f7;
+  color: #4a5e7a;
+  border-radius: 3px;
+  font-size: 11px;
+  font-style: italic;
+}
 </style>
