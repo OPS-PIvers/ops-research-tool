@@ -1156,6 +1156,13 @@ function buildManageGroupsBar_() {
   moveBtn.addEventListener('click', (e) => openMoveDropdown_(e.currentTarget));
   actions.appendChild(moveBtn);
 
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'db-manage-bar__btn';
+  removeBtn.id = 'db-manage-remove';
+  removeBtn.textContent = 'Remove from group';
+  removeBtn.addEventListener('click', () => confirmRemoveFromGroup_());
+  actions.appendChild(removeBtn);
+
   const disbandBtn = document.createElement('button');
   disbandBtn.className = 'db-manage-bar__btn db-manage-bar__btn--danger';
   disbandBtn.id = 'db-manage-disband';
@@ -1210,17 +1217,20 @@ function updateManageBar_() {
   mergeBtn.textContent = '+ Merge into group (' + studentKeys.length + ')';
   mergeBtn.disabled = !soloStudentsOfSameClass;
 
-  // Move: exactly one grouped student selected. Solo students can't be
-  // moved (move requires a source group); the doMove_ fallback message
-  // is enough but disabling the button is the cleaner signal.
-  const canMove = (() => {
-    if (studentKeys.length !== 1 || groupKeys.length !== 0) return false;
-    const data = dashboard.data;
-    if (!data) return false;
-    const student = (data.students || []).find((s) => s.email === studentKeys[0]);
-    return !!(student && student.groupId);
-  })();
-  moveBtn.disabled = !canMove;
+  // Move / Add: exactly one student selected (no groups). A grouped student
+  // moves to another group; a solo student is added to one — same button,
+  // relabeled to match the selection.
+  const removeBtn = document.getElementById('db-manage-remove');
+  const selectedStudent = (studentKeys.length === 1 && groupKeys.length === 0 && dashboard.data)
+    ? (dashboard.data.students || []).find((s) => s.email === studentKeys[0])
+    : null;
+  if (moveBtn) {
+    moveBtn.disabled = !selectedStudent;
+    moveBtn.textContent = (selectedStudent && selectedStudent.groupId) ? 'Move to ▾' : 'Add to group ▾';
+  }
+
+  // Remove from group: exactly one grouped student selected.
+  if (removeBtn) removeBtn.disabled = !(selectedStudent && selectedStudent.groupId);
 
   // Disband: exactly one group selected.
   disbandBtn.disabled = !(groupKeys.length === 1 && studentKeys.length === 0);
@@ -2065,7 +2075,7 @@ function openMergeModal_() {
 
   const note = document.createElement('p');
   note.className = 'db-merge-note';
-  note.textContent = 'Each selected student\'s existing sources and highlights will move into the new group Sheet. This is reversible (disband restores them) but the group-period work stays with the group.';
+  note.textContent = 'Each selected student\'s existing sources and highlights move into the new group Sheet. Reversible: disbanding the group — or removing a member — rebuilds their solo Sheet with their own work, including anything they added while grouped.';
   modal.appendChild(note);
 
   const actions = document.createElement('div');
@@ -2115,14 +2125,17 @@ function openMoveDropdown_(anchor) {
   const student = byEmail[email];
   if (!student) return;
 
-  // Candidate groups: same class, not the student's current group.
+  // Candidate groups: same class, not the student's current group, with room
+  // (≤4 members). Works for both a grouped student (move) and a solo one
+  // (add — their groupId is null, so every same-class group is a candidate).
   const candidates = (dashboard.data.groups || []).filter((g) =>
-    g.className === student.class && g.groupId !== student.groupId);
+    g.className === student.class && g.groupId !== student.groupId && g.memberCount < 4);
 
   // Close any open dropdown first.
   document.querySelectorAll('.db-move-pop').forEach((el) => el.remove());
   if (candidates.length === 0) {
-    setStatus('No other groups in ' + student.class + ' to move into.', 'neutral', 3000);
+    const verb = student.groupId ? 'move into' : 'add them to';
+    setStatus('No ' + student.class + ' groups with room to ' + verb + '.', 'neutral', 3000);
     return;
   }
 
@@ -2139,13 +2152,11 @@ function openMoveDropdown_(anchor) {
     item.textContent = g.name + '  (' + g.memberCount + ' member' + (g.memberCount === 1 ? '' : 's') + ')';
     item.addEventListener('click', () => {
       pop.remove();
-      doMove_(email, student.groupId, g.groupId, g.name);
+      if (student.groupId) doMove_(email, student.groupId, g.groupId, g.name);
+      else                 doAddToGroup_(email, g.groupId, g.name);
     });
     pop.appendChild(item);
   });
-  // Solo students moving into their first group are not supported via Move —
-  // the spec routes this through Merge (build a new group). But moving a
-  // grouped student between groups is the canonical case.
   document.body.appendChild(pop);
   const closer = (e) => {
     if (pop.contains(e.target) || e.target === anchor) return;
@@ -2170,6 +2181,73 @@ function doMove_(email, fromGroupId, toGroupId, toName) {
     .consoleGroupMoveStudent(state.projectId, email, fromGroupId, toGroupId);
 }
 
+function doAddToGroup_(email, toGroupId, toName) {
+  google.script.run
+    .withSuccessHandler(() => {
+      setStatus('Added ' + email + ' to "' + toName + '".', 'good', 4000);
+      state.dashboardSelection = {};
+      fetchDashboard_(state.projectId, true);
+    })
+    .withFailureHandler((e) => setStatus('Add failed: ' + (e && e.message || e), 'bad', 5000))
+    .consoleAddToGroup(state.projectId, toGroupId, email);
+}
+
+function confirmRemoveFromGroup_() {
+  const sel = state.dashboardSelection || {};
+  const studentKeys = Object.keys(sel).filter((k) => sel[k] === 'student');
+  if (studentKeys.length !== 1) return;
+  const email = studentKeys[0];
+  const student = (dashboard.data.students || []).find((s) => s.email === email);
+  if (!student || !student.groupId) return;
+  const group = (dashboard.data.groups || []).find((g) => g.groupId === student.groupId);
+  const groupName = group ? group.name : 'the group';
+  const willDisband = !!(group && group.memberCount <= 2);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'console-modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'console-modal';
+  modal.innerHTML =
+    '<h2>Remove ' + esc_(formatLastFirst_(student.name)) + ' from "' + esc_(groupName) + '"?</h2>' +
+    '<p>They return to a solo Sheet with their own work — everything they authored, including what they did while grouped — rebuilt into it.</p>' +
+    (willDisband
+      ? '<p><strong>Only one member would remain, so the group disbands</strong> — that member also returns to a solo Sheet.</p>'
+      : '');
+  const actions = document.createElement('div');
+  actions.className = 'console-modal__actions';
+  const cancel = document.createElement('button');
+  cancel.className = 'console-modal__cancel';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => overlay.remove());
+  actions.appendChild(cancel);
+  const submit = document.createElement('button');
+  submit.className = 'console-modal__submit';
+  submit.textContent = 'Remove';
+  submit.addEventListener('click', () => {
+    submit.disabled = true;
+    submit.textContent = 'Removing…';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        setStatus((resp && resp.autoDisbanded)
+          ? 'Removed ' + email + ' — group disbanded.'
+          : 'Removed ' + email + ' from "' + groupName + '".', 'good', 4000);
+        overlay.remove();
+        state.dashboardSelection = {};
+        fetchDashboard_(state.projectId, true);
+      })
+      .withFailureHandler((e) => {
+        submit.disabled = false;
+        submit.textContent = 'Remove';
+        setStatus('Remove failed: ' + (e && e.message || e), 'bad', 5000);
+      })
+      .consoleGroupRemoveStudent(state.projectId, student.groupId, email);
+  });
+  actions.appendChild(submit);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+}
+
 function confirmDisband_() {
   const sel = state.dashboardSelection || {};
   const groupIds = Object.keys(sel).filter((k) => sel[k] === 'group');
@@ -2185,9 +2263,7 @@ function confirmDisband_() {
   modal.innerHTML =
     '<h2>Disband "' + esc_(group.name) + '"?</h2>' +
     '<p>The ' + group.memberCount + ' member' + (group.memberCount === 1 ? '' : 's') +
-    ' will reappear as solos with their pre-merge work restored.</p>' +
-    '<p><strong>Work created during the group stays in the (archived) group Sheet.</strong> ' +
-    'Students who want to keep researching a URL the group started on will need to re-add it as a solo source.</p>';
+    ' reappear as solos. Each member\'s solo Sheet is rebuilt with their own work — everything they authored, including what they did while grouped.</p>';
   const actions = document.createElement('div');
   actions.className = 'console-modal__actions';
   const cancel = document.createElement('button');
