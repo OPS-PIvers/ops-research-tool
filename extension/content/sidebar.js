@@ -27,17 +27,37 @@ const SIDEBAR_CSS = `
 .root *, .root *::before, .root *::after { box-sizing: border-box; }
 .root button { font: inherit; cursor: pointer; }
 
+/* Slim bookmark-style tab tucked to the right edge. OPS Primary Blue,
+   semi-transparent at rest so it recedes into the page; brightens and
+   nudges out on hover/focus. Lexend leads the stack as progressive
+   enhancement — it falls back to system fonts on host pages that don't
+   load it, and renders properly inside the extension's own PDF panel. */
 .launcher {
   position: fixed; top: 50%; right: 0; transform: translateY(-50%);
-  background: #1a73e8; color: #fff; border: none;
-  border-radius: 8px 0 0 8px; padding: 10px 8px;
-  font-weight: 600; font-size: 12px; letter-spacing: 0.04em;
-  box-shadow: -2px 2px 8px rgba(0,0,0,0.18);
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: #2d3f89; color: #fff; border: none;
+  border-radius: 8px 0 0 8px; padding: 12px 5px 12px 6px;
+  font-family: "Lexend", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-weight: 600; font-size: 11px;
+  box-shadow: -1px 1px 5px rgba(29,42,93,0.22);
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  opacity: 0.6;
+  transition: opacity 0.18s ease, padding-right 0.18s ease, box-shadow 0.18s ease;
+}
+.launcher:hover {
+  opacity: 1; padding-right: 9px;
+  box-shadow: -2px 2px 12px rgba(29,42,93,0.34);
+}
+.launcher:focus-visible {
+  opacity: 1; outline: none;
+  box-shadow: -2px 2px 12px rgba(29,42,93,0.34), 0 0 0 2px rgba(67,86,160,0.9);
+}
+.launcher__label {
+  writing-mode: vertical-rl; text-orientation: upright;
+  letter-spacing: 0.16em; line-height: 1;
 }
 .launcher__count {
-  background: rgba(255,255,255,0.25); border-radius: 999px;
-  padding: 2px 8px; font-size: 11px;
+  background: rgba(255,255,255,0.22); border-radius: 999px;
+  padding: 2px 6px; font-size: 10px; font-weight: 700;
 }
 
 .panel {
@@ -514,6 +534,7 @@ const OpsSidebar = (function () {
     const visibleCount = state.pageHighlights.length;
     state.launcherEl.innerHTML = '';
     const label = document.createElement('span');
+    label.className = 'launcher__label';
     label.textContent = 'OPS';
     state.launcherEl.appendChild(label);
     if (visibleCount > 0) {
