@@ -508,3 +508,267 @@ function consoleGroupCreate(projectId, name, memberEmails) {
     errors,
   };
 }
+
+/**
+ * Move a student from one group to another (same project, same class).
+ * Per spec §7.2: the student's prior work stays in `from`. Only the
+ * membership rows change. The Meta.groupId pointer on the archived solo
+ * Sheet (if any) is updated to point at the new group so a future
+ * un-merge restores correctly.
+ *
+ * Returns { ok, fromGroupId, toGroupId, email, errors }.
+ */
+function consoleGroupMoveStudent(projectId, email, fromGroupId, toGroupId) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  if (!email)     throw new Error('email required');
+  if (!fromGroupId) throw new Error('fromGroupId required');
+  if (!toGroupId)   throw new Error('toGroupId required');
+  if (fromGroupId === toGroupId) throw new Error('Source and target groups are the same');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  resetGroupSheetCache_();
+
+  const fromGroup = findGroupFileByGroupId_(project, fromGroupId);
+  const toGroup   = findGroupFileByGroupId_(project, toGroupId);
+  if (!fromGroup) throw new Error('From group not found: ' + fromGroupId);
+  if (!toGroup)   throw new Error('To group not found: '   + toGroupId);
+
+  // Same-class invariant.
+  if (fromGroup.classFolder.getId() !== toGroup.classFolder.getId()) {
+    throw new Error('Cannot move across classes');
+  }
+
+  // Teacher scope.
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    if (taught.indexOf(fromGroup.classFolder.getName()) < 0) {
+      throw new Error('Class not in your scope');
+    }
+  }
+
+  const target = String(email).toLowerCase();
+  // Member must currently be in `from`.
+  const fromMembers = currentMembers_(fromGroup.spreadsheet);
+  if (!fromMembers.find((m) => String(m.email).toLowerCase() === target)) {
+    throw new Error(email + ' is not a current member of the source group');
+  }
+  // Must not already be in `to`.
+  const toMembers = currentMembers_(toGroup.spreadsheet);
+  if (toMembers.find((m) => String(m.email).toLowerCase() === target)) {
+    throw new Error(email + ' is already in the target group');
+  }
+
+  const roster = getStudentRosterEntry_(email);
+  if (!roster) throw new Error('Not on roster: ' + email);
+
+  // Apply: stamp leftAt on `from`, append member on `to`.
+  markMemberLeftAt_(fromGroup.spreadsheet, target);
+  appendMemberToGroup_(toGroup.spreadsheet, roster);
+
+  // If the student's archived solo Sheet still exists (from the merge
+  // into `from`), update its Meta.groupId to the new group's id so a
+  // future un-merge restores cleanly.
+  try {
+    const archived = findChildFolder_(fromGroup.classFolder, NAMES.ARCHIVED_STUDENTS_FOLDER);
+    if (archived) {
+      const soloFile = findChildFile_(archived, target);
+      if (soloFile) {
+        setSoloMetaGroupId_(SpreadsheetApp.openById(soloFile.getId()), toGroupId);
+      }
+    }
+  } catch (e) { /* tolerate; un-merge will inspect Members tab as fallback */ }
+
+  // Audit.
+  appendAuditEvent_({
+    projectId,
+    action: AUDIT_ACTIONS.GROUP_MOVE,
+    actor:  actorEmail,
+    detail: 'from=' + fromGroupId + ';to=' + toGroupId + ';email=' + target,
+  });
+
+  resetGroupSheetCache_();
+  return { ok: true, fromGroupId, toGroupId, email: target, errors: [] };
+}
+
+/**
+ * Disband a group: every current member's solo Sheet is restored from
+ * Archived-students/ (Meta.groupId cleared), and the group Sheet is
+ * itself moved into Archived-students/ for posterity.
+ *
+ * Group-period work stays in the (now-archived) group Sheet — spec §7.3.
+ *
+ * Returns { ok, groupId, restoredCount, errors }.
+ */
+function consoleGroupDisband(projectId, groupId) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  if (!groupId)   throw new Error('groupId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  resetGroupSheetCache_();
+
+  const group = findGroupFileByGroupId_(project, groupId);
+  if (!group) throw new Error('Group not found: ' + groupId);
+
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    if (taught.indexOf(group.classFolder.getName()) < 0) {
+      throw new Error('Class not in your scope');
+    }
+  }
+
+  const members = currentMembers_(group.spreadsheet);
+  const errors = [];
+  let restoredCount = 0;
+  members.forEach((m) => {
+    try {
+      const file = restoreStudentSheetFromArchive_(m.email, project);
+      if (file) restoredCount++;
+      markMemberLeftAt_(group.spreadsheet, m.email);
+      appendAuditEvent_({
+        projectId,
+        action: AUDIT_ACTIONS.GROUP_DISBAND,
+        actor:  actorEmail,
+        detail: 'groupId=' + groupId + ';email=' + m.email,
+      });
+    } catch (e) {
+      errors.push({ email: m.email, error: String(e && e.message || e) });
+    }
+  });
+
+  // Move the group Sheet itself into Archived-students/.
+  try {
+    archiveGroupSheet_(group.file, group.classFolder);
+  } catch (e) {
+    errors.push({ step: 'archiveGroupSheet', error: String(e && e.message || e) });
+  }
+  try {
+    appendAuditEvent_({
+      projectId,
+      action: AUDIT_ACTIONS.GROUP_DISBAND_GROUP,
+      actor:  actorEmail,
+      detail: 'groupId=' + groupId,
+    });
+  } catch (e) {
+    errors.push({ step: 'audit', error: String(e && e.message || e) });
+  }
+
+  resetGroupSheetCache_();
+  return { ok: true, groupId, restoredCount, errors };
+}
+
+/**
+ * Un-merge a single student from a group of ≥3 members (cannot drop a
+ * 2-member group below 2 — use disband instead). Per spec §7.4.
+ *
+ * Returns { ok, groupId, email, errors }.
+ */
+function consoleGroupRemoveStudent(projectId, groupId, email) {
+  const actorEmail = getActorEmail_();
+  const staff = assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  if (!groupId)   throw new Error('groupId required');
+  if (!email)     throw new Error('email required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  resetGroupSheetCache_();
+
+  const group = findGroupFileByGroupId_(project, groupId);
+  if (!group) throw new Error('Group not found: ' + groupId);
+
+  if (!isAdmin_(staff)) {
+    const taught = listClassesTaughtBy_(actorEmail);
+    if (taught.indexOf(group.classFolder.getName()) < 0) {
+      throw new Error('Class not in your scope');
+    }
+  }
+
+  const target = String(email).toLowerCase();
+  const members = currentMembers_(group.spreadsheet);
+  if (!members.find((m) => String(m.email).toLowerCase() === target)) {
+    throw new Error(email + ' is not a current member of this group');
+  }
+  if (members.length <= 2) {
+    throw new Error('Group must have ≥ 2 members. Use disband instead.');
+  }
+
+  // Restore the solo Sheet (or no-op if absent), mark leftAt, audit.
+  restoreStudentSheetFromArchive_(target, project);
+  markMemberLeftAt_(group.spreadsheet, target);
+  appendAuditEvent_({
+    projectId,
+    action: AUDIT_ACTIONS.GROUP_UNMERGE,
+    actor:  actorEmail,
+    detail: 'groupId=' + groupId + ';email=' + target,
+  });
+
+  resetGroupSheetCache_();
+  return { ok: true, groupId, email: target, errors: [] };
+}
+
+/**
+ * Walk a project and report any group/solo drift. Admin-only; no client
+ * UI in this sub-project — exposed for manual recovery via GAS editor.
+ *
+ * Returns { ok, issues: [{kind, ...}] }:
+ *   - kind 'group_member_solo_sheet_present':
+ *       a current member's solo Sheet exists outside Archived-students/
+ *   - kind 'orphan_meta_groupId':
+ *       a solo Sheet's Meta.groupId points to a non-existent group
+ */
+function consoleGroupCheckIntegrity(projectId) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+
+  const issues = [];
+  const groups = listGroupsForProject_(project);
+  const groupIds = {};
+  groups.forEach((g) => { groupIds[g.groupId] = g; });
+
+  // Walk every class folder.
+  const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+  const classFolders = projectFolder.getFolders();
+  while (classFolders.hasNext()) {
+    const cf = classFolders.next();
+    if (cf.getName() === NAMES.ARCHIVED_FOLDER) continue;
+
+    const files = cf.getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      const name = f.getName();
+      if (name.indexOf(NAMES.GROUP_SHEET_PREFIX) === 0) continue;  // group Sheets handled separately
+      if (name.indexOf('@') < 0) continue;
+      // Solo Sheet at class folder root — check Meta.groupId.
+      try {
+        const ss = SpreadsheetApp.openById(f.getId());
+        const meta = readGroupMeta_(ss);
+        const gid = meta && String(meta.groupId || '').trim();
+        if (gid && !groupIds[gid]) {
+          issues.push({
+            kind: 'orphan_meta_groupId',
+            email: name,
+            className: cf.getName(),
+            groupIdPointer: gid,
+          });
+        }
+        if (gid && groupIds[gid]) {
+          // Solo Sheet is at class root but Meta says it's grouped — should be archived.
+          issues.push({
+            kind: 'group_member_solo_sheet_present',
+            email: name,
+            className: cf.getName(),
+            groupId: gid,
+          });
+        }
+      } catch (e) { /* not a Sheet, skip */ }
+    }
+  }
+
+  return { ok: true, issues };
+}
