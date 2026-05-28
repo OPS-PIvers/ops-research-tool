@@ -165,12 +165,13 @@ function renderRosterTable_(host) {
 function buildRosterHeader_(host) {
   const tr = document.createElement('tr');
   const cols = [
-    { label: 'ID',        sortKey: 'ID' },
-    { label: 'Name',      sortKey: 'Last' },
-    { label: 'Email',     sortKey: 'Email' },
-    { label: 'Class',     sortKey: 'Class' },
-    { label: 'Teacher',   sortKey: 'Teacher' },
-    { label: '',          sortKey: null },   // kebab
+    { label: 'ID',             sortKey: 'ID' },
+    { label: 'Name',           sortKey: 'Last' },
+    { label: 'Email',          sortKey: 'Email' },
+    { label: 'Class',          sortKey: 'Class' },
+    { label: 'Teacher name',   sortKey: 'Teacher' },
+    { label: 'Teacher email',  sortKey: 'TeacherEmail' },
+    { label: '',               sortKey: null },   // kebab
   ];
   cols.forEach((c) => {
     const th = document.createElement('th');
@@ -239,6 +240,7 @@ function buildRosterRow_(r, host) {
 
   tr.appendChild(inlineEditTd_('Class', r));
   tr.appendChild(inlineEditTd_('Teacher', r));
+  tr.appendChild(inlineEditTd_('TeacherEmail', r));
 
   // Kebab cell
   const kebabCell = document.createElement('td');
