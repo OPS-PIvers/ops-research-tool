@@ -32,6 +32,23 @@ const adminLifecycle = {
   confirmText: '',
 };
 
+// Click-away to close open kebab menus on the admin tables. The kebab
+// button + menu items use stopPropagation, so any click that bubbles to
+// the document is by definition "outside" an open menu — close it and
+// re-render the active admin view.
+document.addEventListener('click', () => {
+  let changed = false;
+  if (adminRoster.openMenuEmail !== null) {
+    adminRoster.openMenuEmail = null;
+    if (state.view === 'ADMIN_ROSTER') changed = true;
+  }
+  if (adminStaff.openMenuEmail !== null) {
+    adminStaff.openMenuEmail = null;
+    if (state.view === 'ADMIN_STAFF') changed = true;
+  }
+  if (changed) renderShell_();
+});
+
 // ---------- View entry points (stubs replaced by Tasks 14-17) ----------
 
 function renderAdminRoster_(main) {
