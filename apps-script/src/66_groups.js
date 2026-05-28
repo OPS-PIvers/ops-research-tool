@@ -511,6 +511,12 @@ function removeMemberFromGroupCore_(project, group, email, actorEmail) {
 function addMemberToGroupCore_(project, group, rosterEntry, actorEmail) {
   const e = String(rosterEntry.Email || '').toLowerCase();
   const groupSs = group.spreadsheet;
+  // Capacity guard re-checked here, inside the lock — the endpoint's pre-lock
+  // check is a TOCTOU window; this is the authoritative gate against a 5th
+  // member slipping in via a concurrent add/move.
+  if (currentMembers_(groupSs).length >= 4) {
+    throw new Error('Group already has 4 members');
+  }
   const soloFile = findChildFile_(group.classFolder, e);
   let copiedSources = 0, copiedHighlights = 0;
   if (soloFile) {
@@ -518,9 +524,12 @@ function addMemberToGroupCore_(project, group, rosterEntry, actorEmail) {
     const copied = copyMemberRowsIntoGroup_(groupSs, soloSs);
     copiedSources = copied.sourcesCopied;
     copiedHighlights = copied.highlightsCopied;
-    DriveApp.getFileById(soloFile.getId()).setTrashed(true);
   }
+  // Establish membership BEFORE trashing the solo. If a later step throws, the
+  // member's data still lives in their (un-trashed) solo Sheet rather than
+  // only in a trashed one with no group row pointing at it.
   appendMemberToGroup_(groupSs, rosterEntry);
+  if (soloFile) DriveApp.getFileById(soloFile.getId()).setTrashed(true);
   appendAuditEvent_({
     projectId: project.projectId, action: AUDIT_ACTIONS.GROUP_MERGE,
     actor: actorEmail, detail: 'add;groupId=' + group.groupId + ';email=' + e,

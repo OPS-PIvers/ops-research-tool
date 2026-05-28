@@ -52,10 +52,19 @@ function findChildFolder_(parent, name) {
   return it.hasNext() ? it.next() : null;
 }
 
-/** Find a single child file by name under a parent; null if absent. */
+/**
+ * Find a single non-trashed child file by name under a parent; null if absent.
+ * `getFilesByName` still returns trashed files (trashing keeps the parent
+ * link), so we must skip them — otherwise a Sheet that was trashed (e.g. a
+ * solo Sheet absorbed into a group) would be re-found and its rows re-copied.
+ */
 function findChildFile_(parent, name) {
   const it = parent.getFilesByName(name);
-  return it.hasNext() ? it.next() : null;
+  while (it.hasNext()) {
+    const f = it.next();
+    if (!f.isTrashed()) return f;
+  }
+  return null;
 }
 
 /** Set headers on row 1 if missing, idempotent. */

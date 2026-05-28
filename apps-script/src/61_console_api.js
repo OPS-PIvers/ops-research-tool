@@ -768,14 +768,20 @@ function consoleAddToGroup(projectId, groupId, email) {
 }
 
 /**
- * Walk a project and report any group/solo drift. Admin-only; no client
- * UI in this sub-project — exposed for manual recovery via GAS editor.
+ * Walk a project and report group/solo drift. Admin-only; no client UI —
+ * exposed for manual recovery via the GAS editor.
+ *
+ * Authoritative membership lives in each group's Members tab, so drift is
+ * detected by cross-referencing current members against live solo Sheets —
+ * NOT via solo `Meta.groupId` (no longer stamped; merge trashes solos and
+ * un-merge reconstructs them with an empty groupId).
  *
  * Returns { ok, issues: [{kind, ...}] }:
  *   - kind 'group_member_solo_sheet_present':
- *       a current member's solo Sheet exists outside Archived-students/
+ *       a current group member also has a live solo Sheet at class root
+ *       (merge/add should have trashed it) — usually a half-applied add/move.
  *   - kind 'orphan_meta_groupId':
- *       a solo Sheet's Meta.groupId points to a non-existent group
+ *       a solo Sheet's Meta.groupId points to a non-existent group (legacy).
  */
 function consoleGroupCheckIntegrity(projectId) {
   const actorEmail = getActorEmail_();
@@ -787,7 +793,11 @@ function consoleGroupCheckIntegrity(projectId) {
   const issues = [];
   const groups = listGroupsForProject_(project);
   const groupIds = {};
-  groups.forEach((g) => { groupIds[g.groupId] = g; });
+  const memberToGroup = {};  // lowercased email → groupId (current members of active groups)
+  groups.forEach((g) => {
+    groupIds[g.groupId] = g;
+    (g.memberEmails || []).forEach((m) => { memberToGroup[String(m).toLowerCase()] = g.groupId; });
+  });
 
   // Walk every class folder.
   const projectFolder = DriveApp.getFolderById(project.rootFolderId);
@@ -799,29 +809,32 @@ function consoleGroupCheckIntegrity(projectId) {
     const files = cf.getFiles();
     while (files.hasNext()) {
       const f = files.next();
+      if (f.isTrashed()) continue;  // a trashed solo is gone — not drift
       const name = f.getName();
       if (name.indexOf(NAMES.GROUP_SHEET_PREFIX) === 0) continue;  // group Sheets handled separately
       if (name.indexOf('@') < 0) continue;
-      // Solo Sheet at class folder root — check Meta.groupId.
+
+      // A current group member should have NO live solo Sheet at class root.
+      const gid = memberToGroup[name.toLowerCase()];
+      if (gid) {
+        issues.push({
+          kind: 'group_member_solo_sheet_present',
+          email: name,
+          className: cf.getName(),
+          groupId: gid,
+        });
+      }
+
+      // Legacy back-pointer drift: a solo whose Meta.groupId names a dead group.
       try {
-        const ss = SpreadsheetApp.openById(f.getId());
-        const meta = readGroupMeta_(ss);
-        const gid = meta && String(meta.groupId || '').trim();
-        if (gid && !groupIds[gid]) {
+        const meta = readGroupMeta_(SpreadsheetApp.openById(f.getId()));
+        const metaGid = meta && String(meta.groupId || '').trim();
+        if (metaGid && !groupIds[metaGid]) {
           issues.push({
             kind: 'orphan_meta_groupId',
             email: name,
             className: cf.getName(),
-            groupIdPointer: gid,
-          });
-        }
-        if (gid && groupIds[gid]) {
-          // Solo Sheet is at class root but Meta says it's grouped — should be archived.
-          issues.push({
-            kind: 'group_member_solo_sheet_present',
-            email: name,
-            className: cf.getName(),
-            groupId: gid,
+            groupIdPointer: metaGid,
           });
         }
       } catch (e) { /* not a Sheet, skip */ }

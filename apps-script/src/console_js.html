@@ -2193,6 +2193,7 @@ function doAddToGroup_(email, toGroupId, toName) {
 }
 
 function confirmRemoveFromGroup_() {
+  if (!dashboard.data) return;
   const sel = state.dashboardSelection || {};
   const studentKeys = Object.keys(sel).filter((k) => sel[k] === 'student');
   if (studentKeys.length !== 1) return;
