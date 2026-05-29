@@ -361,6 +361,11 @@ const OpsSidebar = (function () {
 
   async function show() {
     await ensureInit_();
+    // Re-resolve the active project/bundle each open. At init the projects
+    // cache can be cold (popup never opened), leaving state.project null and a
+    // false "No active project" subheader; reloading here (now self-healing in
+    // the service worker) corrects it without needing a page refresh.
+    if (!state.project || !state.bundle) await loadContext_();
     state.panelEl.style.display = 'flex';
     state.launcherEl.style.display = 'none';
     render_();

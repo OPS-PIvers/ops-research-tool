@@ -488,9 +488,25 @@ async function enqueueHighlight(h) {
 /** Returns { activeProjectId, project, bundle } using cache; refreshes if absent. */
 async function getActiveProjectInfo() {
   const activeProjectId = await getActiveProjectId();
-  const projects = (await getCache('cachedProjects')) || [];
-  const bundles = (await getCache('cachedBundles')) || [];
-  const project = projects.find((p) => p.projectId === activeProjectId) || null;
+  let projects = (await getCache('cachedProjects')) || [];
+  let bundles = (await getCache('cachedBundles')) || [];
+  let project = projects.find((p) => p.projectId === activeProjectId) || null;
+  // Cold/stale cache: the projects/bundles caches are only warmed when the
+  // popup is opened (it calls refreshContext). On a fresh page the content
+  // script's sidebar calls this before any popup has run, so an active project
+  // id can't be resolved to its object and the sidebar falsely shows "No active
+  // project" — even though saves are correctly targeted at activeProjectId.
+  // Self-heal: if we have an id but no object, refresh from the server once.
+  if (activeProjectId && !project) {
+    try {
+      await refreshContext();
+      projects = (await getCache('cachedProjects')) || [];
+      bundles = (await getCache('cachedBundles')) || [];
+      project = projects.find((p) => p.projectId === activeProjectId) || null;
+    } catch (e) {
+      console.debug('[OPS] getActiveProjectInfo refresh failed (offline?):', e.message || e);
+    }
+  }
   const bundle = project ? bundles.find((b) => b.bundleId === project.bundleId) || null : null;
   return { ok: true, activeProjectId, project, bundle, projectsKnown: projects.length > 0 };
 }
