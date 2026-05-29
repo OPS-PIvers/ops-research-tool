@@ -271,6 +271,23 @@ const SIDEBAR_CSS = `
 .facet__lab { flex:1; }
 .facet__count { color:#9aa0a6; font-variant-numeric:tabular-nums; }
 .facet--active .facet__count { color:#1a73e8; }
+.src { padding:10px 14px 16px; overflow-y:auto; }
+.src__empty { padding:24px 14px; text-align:center; color:#5f6368; font-size:12px; line-height:1.5; }
+.src__fld { margin-bottom:9px; }
+.src__fld label { display:block; font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:#80868b; margin-bottom:3px; }
+.src__fld input, .src__fld select {
+  width:100%; border:1px solid #dadce0; border-radius:6px; padding:6px 8px; font:inherit; font-size:12.5px; color:#202124; background:#fff;
+}
+.src__seg { display:flex; border:1px solid #dadce0; border-radius:7px; overflow:hidden; }
+.src__seg button { flex:1; border:none; border-right:1px solid #eceff1; background:#fff; padding:7px 4px; font-size:12px; color:#5f6368; }
+.src__seg button:last-child { border-right:none; }
+.src__seg button.src__seg--on { background:#e8f0fe; color:#1a73e8; font-weight:600; }
+.src__ta { width:100%; border:1px solid #dadce0; border-radius:6px; padding:6px 8px; font:inherit; font-size:12.5px; min-height:48px; resize:vertical; }
+.src__preview { margin-top:10px; padding:9px 11px; background:#f8f9fa; border:1px solid #eceff1; border-radius:7px; font-size:11.5px; line-height:1.5; color:#3c4043; }
+.src__preview-lbl { display:block; font-size:9.5px; text-transform:uppercase; letter-spacing:0.05em; color:#9aa0a6; margin-bottom:3px; }
+.src__status { font-size:10.5px; color:#0f9d58; margin-top:8px; min-height:14px; }
+.src__status--pending { color:#b06000; }
+.src__status--error { color:#d93025; }
 `;
 
 const OpsSidebar = (function () {
@@ -290,6 +307,8 @@ const OpsSidebar = (function () {
     confirmingDeleteTimer: null,
     initialized: false,
     activeTab: 'annotations', // 'source' | 'annotations'
+    pageSource: null, // canonical source object for this page (server + local scrape)
+    sourceSaveStatus: null,
   };
 
   // ---------- public API ----------
@@ -402,7 +421,11 @@ const OpsSidebar = (function () {
     } catch (e) {
       return; // offline / backend down; launcher already visible, nothing more to do
     }
-    if (!resp || !resp.ok || !resp.highlights || resp.highlights.length === 0) return;
+    if (!resp || !resp.ok) return;
+    if (resp && resp.ok && resp.source) {
+      state.pageSource = normalizeSourceObj_(resp.source);
+    }
+    if (!resp.highlights || resp.highlights.length === 0) { render_(); return; }
     resp.highlights.forEach((h) => {
       if (state.pageHighlights.some((x) => x.highlightId === h.highlightId)) return;
       state.pageHighlights.push({
@@ -613,9 +636,155 @@ const OpsSidebar = (function () {
     state.panelEl.appendChild(state.listEl);
   }
 
-  function renderSourceTab_() {
-    return el_('div', 'list__empty', 'Source tab coming soon.');
+  const SRC_TYPES = ['website', 'article', 'book', 'primary'];
+  const PS_OPTS = ['primary', 'secondary', 'unset'];
+
+  function sourceFieldsFor_(sourceType) {
+    switch (sourceType) {
+      case 'website': return [
+        { key:'title', label:'Title' }, { key:'siteName', label:'Site name' },
+        { key:'author', label:'Author' }, { key:'publishedDate', label:'Published date' },
+        { key:'url', label:'URL' }];
+      case 'article': return [
+        { key:'title', label:'Article title' }, { key:'publication', label:'Publication name' },
+        { key:'author', label:'Author' }, { key:'publishedDate', label:'Published date' },
+        { key:'volume', label:'Volume (opt.)' }, { key:'issue', label:'Issue (opt.)' },
+        { key:'pages', label:'Pages (opt.)' }, { key:'url', label:'URL' }];
+      case 'book': return [
+        { key:'title', label:'Book title' }, { key:'author', label:'Author' },
+        { key:'publisher', label:'Publisher' }, { key:'publishedDate', label:'Year' }];
+      case 'primary': return [
+        { key:'title', label:'Title' }, { key:'author', label:'Author / creator' },
+        { key:'publishedDate', label:'Date' }, { key:'archive', label:'Archive / repository' },
+        { key:'url', label:'URL' }];
+      default: return [];
+    }
   }
+
+  // Effective field values: student-entered citationFields win, then the rich
+  // scrape, then defaults. Mirrors source_editor_js.html renderCitationForm.
+  function effectiveFields_(src) {
+    const extra = src.scrapedExtra || {};
+    const f = Object.assign({}, src.citationFields || {});
+    f.sourceType    = f.sourceType    || src.sourceType || extra.sourceType || 'website';
+    f.title         = f.title         || src.scrapedTitle || '';
+    f.siteName      = f.siteName      || src.scrapedSite || '';
+    f.publishedDate = f.publishedDate || src.scrapedDate || '';
+    f.author        = f.author        || src.scrapedAuthor || '';
+    f.publication   = f.publication   || extra.publication || '';
+    f.publisher     = f.publisher     || extra.publisher || '';
+    f.volume        = f.volume        || extra.volume || '';
+    f.issue         = f.issue         || extra.issue || '';
+    f.pages         = f.pages         || extra.pages || '';
+    f.url           = f.url           || src.rawUrl || '';
+    return f;
+  }
+
+  function renderSourceTab_() {
+    if (!state.pageSource) {
+      return el_('div', 'src__empty', 'Highlight something on this page to start its citation.');
+    }
+    const src = state.pageSource;
+    const fields = effectiveFields_(src);
+    src.citationFields = fields; // persist resolved values so edits build on them
+    src.sourceType = fields.sourceType;
+
+    const form = el_('div', 'src');
+
+    // Source type
+    const typeWrap = el_('div', 'src__fld');
+    typeWrap.appendChild(el_('label', null, 'Source type'));
+    const sel = document.createElement('select');
+    SRC_TYPES.forEach((t) => {
+      const o = document.createElement('option'); o.value = t; o.textContent = t;
+      if (t === fields.sourceType) o.selected = true; sel.appendChild(o);
+    });
+    sel.addEventListener('change', () => {
+      fields.sourceType = sel.value; src.sourceType = sel.value;
+      saveSource_(); render_(); // re-render to swap the field set
+    });
+    typeWrap.appendChild(sel);
+    form.appendChild(typeWrap);
+
+    // Per-type fields
+    sourceFieldsFor_(fields.sourceType).forEach((def) => {
+      const wrap = el_('div', 'src__fld');
+      wrap.appendChild(el_('label', null, def.label));
+      const inp = document.createElement('input');
+      inp.type = 'text'; inp.value = fields[def.key] || '';
+      const commit = () => { fields[def.key] = inp.value; saveSource_(); schedulePreview_(); };
+      inp.addEventListener('change', commit);
+      inp.addEventListener('blur', commit);
+      wrap.appendChild(inp);
+      form.appendChild(wrap);
+    });
+
+    // Primary/Secondary segmented control
+    const tagWrap = el_('div', 'src__fld');
+    tagWrap.appendChild(el_('label', null, 'Tag'));
+    const seg = el_('div', 'src__seg');
+    PS_OPTS.forEach((opt) => {
+      const b = el_('button', 'src__seg' + ((src.primarySecondary || 'unset') === opt ? ' src__seg--on' : ''), opt[0].toUpperCase() + opt.slice(1));
+      b.type = 'button';
+      b.addEventListener('click', () => { src.primarySecondary = opt; saveSource_(); render_(); });
+      seg.appendChild(b);
+    });
+    tagWrap.appendChild(seg);
+    form.appendChild(tagWrap);
+
+    // Annotation
+    const annWrap = el_('div', 'src__fld');
+    annWrap.appendChild(el_('label', null, 'Annotation'));
+    const ta = document.createElement('textarea');
+    ta.className = 'src__ta'; ta.value = src.annotation || '';
+    ta.placeholder = '2–3 sentence annotation…';
+    let annTimer;
+    ta.addEventListener('input', () => {
+      clearTimeout(annTimer);
+      src.annotation = ta.value;
+      annTimer = setTimeout(() => saveSource_(), 600);
+    });
+    annWrap.appendChild(ta);
+    form.appendChild(annWrap);
+
+    // Live preview (C4 wires the network call; container + initial paint here)
+    const preview = el_('div', 'src__preview');
+    preview.id = 'ops-src-preview';
+    preview.innerHTML = '<span class="src__preview-lbl">MLA preview</span><em>…</em>';
+    form.appendChild(preview);
+
+    // Save status
+    const status = el_('div', 'src__status' + (state.sourceSaveStatus ? ' src__status--' + state.sourceSaveStatus : ''));
+    status.textContent = { pending: 'saving…', saved: '✓ saved', error: '⚠ save failed' }[state.sourceSaveStatus] || '';
+    form.appendChild(status);
+
+    schedulePreview_();
+    return form;
+  }
+
+  // Debounced autosave of the whole source via the service worker.
+  let _srcSaveTimer = null;
+  function saveSource_() {
+    if (!state.pageSource) return;
+    state.sourceSaveStatus = 'pending';
+    const statusEl = state.shadowRoot && state.shadowRoot.querySelector('.src__status');
+    if (statusEl) { statusEl.textContent = 'saving…'; statusEl.className = 'src__status src__status--pending'; }
+    clearTimeout(_srcSaveTimer);
+    const snapshot = JSON.parse(JSON.stringify(state.pageSource));
+    _srcSaveTimer = setTimeout(() => {
+      chrome.runtime.sendMessage({ type: 'enqueueSourcePatch', source: snapshot })
+        .then(() => { state.sourceSaveStatus = 'saved'; paintSourceStatus_(); })
+        .catch(() => { state.sourceSaveStatus = 'error'; paintSourceStatus_(); });
+    }, 500);
+  }
+  function paintSourceStatus_() {
+    const el = state.shadowRoot && state.shadowRoot.querySelector('.src__status');
+    if (!el) return;
+    el.className = 'src__status' + (state.sourceSaveStatus ? ' src__status--' + state.sourceSaveStatus : '');
+    el.textContent = { pending: 'saving…', saved: '✓ saved', error: '⚠ save failed' }[state.sourceSaveStatus] || '';
+  }
+
+  function schedulePreview_() { /* wired in C4 */ }
 
   function renderFacetList_() {
     const wrap = el_('div', 'facets');
@@ -1007,6 +1176,27 @@ const OpsSidebar = (function () {
     }).then(() => markSynced(h.highlightId)).catch((e) => markError(h.highlightId, e.message));
   }
 
+  function normalizeSourceObj_(s) {
+    if (!s) return null;
+    const parse = (v) => { try { return v ? JSON.parse(v) : null; } catch (_) { return null; } };
+    return {
+      sourceId: s.sourceId,
+      projectId: s.projectId,
+      normalizedUrl: s.normalizedUrl || '',
+      rawUrl: s.rawUrl || '',
+      accessDate: s.accessDate || '',
+      scrapedTitle: s.scrapedTitle || '',
+      scrapedSite: s.scrapedSite || '',
+      scrapedDate: s.scrapedDate || '',
+      scrapedAuthor: s.scrapedAuthor || '',
+      scrapedExtra: parse(s.scrapedExtra) || {},
+      sourceType: s.sourceType || '',
+      citationFields: parse(s.citationFields) || {},
+      primarySecondary: s.primarySecondary || 'unset',
+      annotation: s.annotation || '',
+    };
+  }
+
   function el_(tag, className, text) {
     const e = document.createElement(tag);
     if (className) e.className = className;
@@ -1020,9 +1210,28 @@ const OpsSidebar = (function () {
 
   // Internal: lets toolbar.js backfill the sourceId once
   // getOrCreateSourceId resolves, so subsequent edits include it.
-  function _setSourceId(highlightId, sourceId) {
+  function _setSourceId(highlightId, sourceId, scrape) {
     const h = state.pageHighlights.find((x) => x.highlightId === highlightId);
     if (h) h.sourceId = sourceId;
+    if (!state.pageSource && sourceId) {
+      const sc = scrape || {};
+      state.pageSource = {
+        sourceId,
+        projectId: state.project ? state.project.projectId : '',
+        normalizedUrl: '',
+        rawUrl: location.href,
+        accessDate: new Date().toISOString(),
+        scrapedTitle: sc.title || '',
+        scrapedSite: sc.site || '',
+        scrapedDate: sc.date || '',
+        scrapedAuthor: sc.author || '',
+        scrapedExtra: { publication: sc.publication, publisher: sc.publisher, volume: sc.volume, issue: sc.issue, pages: sc.pages, sourceType: sc.sourceType },
+        sourceType: sc.sourceType || '',
+        citationFields: {},
+        primarySecondary: 'unset',
+        annotation: '',
+      };
+    }
   }
 
   return { addHighlight, markSynced, markError, focus, show, hide, toggle, _setSourceId, loadForCurrentPage, reanchorIn, whenLoaded };
