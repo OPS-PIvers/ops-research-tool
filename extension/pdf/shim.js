@@ -56,6 +56,15 @@
     catch (e) { host = ''; }
     // Keep any richer fields the base scrape found; only the title + site need
     // to reflect the real PDF (not the panel.html wrapper URL).
-    return Object.assign({}, base, { title: name, site: host });
+    var out = Object.assign({}, base, { title: name, site: host });
+    // Merge the PDF's embedded document metadata (set by panel.js once the
+    // doc loads). PDFs have no HTML meta tags, so this is the only auto-fill
+    // channel — fill only fields the base scrape left empty so we never clobber
+    // a real value. Title stays the filename (embedded PDF titles are often
+    // junk like "Microsoft Word - …"); author + date are the wins.
+    var pdfMeta = window.OPS_PDF_META || {};
+    if (pdfMeta.author && !out.author) out.author = pdfMeta.author;
+    if (pdfMeta.date && !out.date) out.date = pdfMeta.date;
+    return out;
   };
 })();

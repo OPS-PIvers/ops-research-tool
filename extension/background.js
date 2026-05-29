@@ -227,6 +227,22 @@ async function loadPageHighlights_(rawUrl) {
     const matching = allSources.filter((s) => s.normalizedUrl === normalized);
     const matchingSourceIds = new Set(matching.map((s) => s.sourceId));
     const highlights = allHighlights.filter((h) => matchingSourceIds.has(h.sourceId));
+
+    // Cross-device / cache-cleared dedup: this device may not have a local
+    // pageSource cache entry for this URL (the cache is per-device). Seed it
+    // from the server match so a NEW highlight captured here merges into the
+    // existing source instead of minting a duplicate source row for the same
+    // URL. Reuses this fetch — no extra round-trip, offline-safe. When dups
+    // already exist, pick the oldest as canonical so everything converges on
+    // one source over time.
+    if (matching.length) {
+      const canonical = matching.slice().sort((a, b) =>
+        String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+      )[0];
+      if (canonical && canonical.sourceId) {
+        await setCachedSourceId(projectId, normalized, canonical.sourceId);
+      }
+    }
     console.log('[OPS] loadPageHighlights:', {
       rawUrl,
       normalized,
@@ -252,27 +268,36 @@ async function openPdfPanel_(url) {
 
 /**
  * Source dedup. Content script sends rawUrl + scrape; we return a sourceId.
- * Order: in-session local cache → mint new + enqueue. NO remote round-trip,
- * so the call is instant.
+ * Order: local cache → mint new. NO remote round-trip here, so the call stays
+ * instant and works offline. The cache is seeded two ways: by this function on
+ * first capture, and by loadPageHighlights_ from the server match on page
+ * visit — the latter is what lets a different device (or a cache-cleared one)
+ * reuse the existing source instead of duplicating it.
  *
- * The cost: if two devices first-highlight the same page in parallel, each
- * mints its own sourceId and the project ends up with two source rows for
- * the same normalized URL. Acceptable per build plan §2 ("Backend writes
- * are idempotent" / "data created offline … is stranded" was the worse case
- * already accepted; cross-device dup is a milder version). Manual cleanup
- * possible in the sidebar later.
+ * Residual dup window: if two devices BOTH first-highlight the same URL before
+ * either has loaded the page's server highlights, each mints its own sourceId
+ * and the project ends up with two source rows for that URL. Narrow and
+ * accepted per build plan §2; they converge on the oldest source on the next
+ * visit, and manual cleanup is possible in the sidebar.
  */
 async function getOrCreateSourceId(rawUrl, scrape) {
   const projectId = await getActiveProjectId();
   if (!projectId) throw new Error('No active project — pick one from the extension toolbar.');
   const normalized = normalizeUrl(rawUrl);
 
+  // The cache gives a STABLE sourceId per page so multiple highlights group
+  // under one source. But it can outlive the source row it points at: deleting
+  // a source from the Docs sidebar is purely server-side and never clears this
+  // (persistent) cache. So we no longer trust a cache hit to mean "the source
+  // row exists" — we ALWAYS (re)assert the source row below. upsertSource_ is
+  // idempotent and preserves any sidebar-owned citation work on an existing
+  // row, so this is a cheap no-op when the source is already present, and a
+  // self-heal when it was deleted (the orphaned highlights then reattach).
   const cached = await getCachedSourceId(projectId, normalized);
-  if (cached) return { ok: true, sourceId: cached, normalizedUrl: normalized, source: 'cache' };
+  const sourceId = cached || newUuid();
+  if (!cached) await setCachedSourceId(projectId, normalized, sourceId);
 
-  const sourceId = newUuid();
-  await setCachedSourceId(projectId, normalized, sourceId);
-  await enqueue('source', {
+  await enqueueSourceUpsert_({
     sourceId,
     projectId,
     normalizedUrl: normalized,
@@ -284,7 +309,24 @@ async function getOrCreateSourceId(rawUrl, scrape) {
     scrapedAuthor: scrape.author || '',
     scrapedExtra: pickScrapedExtra_(scrape),
   });
-  return { ok: true, sourceId, normalizedUrl: normalized, source: 'new' };
+  return { ok: true, sourceId, normalizedUrl: normalized, source: cached ? 'cache' : 'new' };
+}
+
+/**
+ * Enqueue a source upsert, collapsing any not-yet-synced source item for the
+ * same sourceId first. Without this, every highlight on a page would queue an
+ * identical source write; with it, repeated highlights coalesce to one pending
+ * write that carries the freshest scrape data.
+ */
+async function enqueueSourceUpsert_(payload) {
+  const all = await chrome.storage.local.get(null);
+  const stale = Object.keys(all).filter((k) =>
+    k.startsWith(QUEUE_PREFIX) &&
+    all[k] && all[k].kind === 'source' &&
+    all[k].payload && all[k].payload.sourceId === payload.sourceId
+  );
+  if (stale.length) await chrome.storage.local.remove(stale);
+  await enqueue('source', payload);
 }
 
 // The richer scrape fields beyond the four discrete scraped* columns. Only

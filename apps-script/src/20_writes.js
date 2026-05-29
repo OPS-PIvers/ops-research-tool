@@ -9,23 +9,37 @@ function upsertSource_(studentSheet, source) {
   validateSourcePayload_(source);
   const tab = getTab_(studentSheet, TABS.SOURCES);
   ensureHeaders_(tab, HEADERS.SOURCES);
+
+  // If the row already exists, read it so we can PRESERVE the fields the
+  // sidebar owns (citation form, annotation, primary/secondary, sourceType).
+  // The extension re-asserts a source row on every page it captures on (so a
+  // sidebar-deleted source self-heals), and its payload carries none of those
+  // edited fields — without this merge, a re-assert would wipe the student's
+  // citation work. Scraped*/url/createdBy stay extension-owned and refresh.
+  const existingIdx = findRowByKey_(tab, HEADERS.SOURCES, 'sourceId', source.sourceId);
+  const prior = existingIdx >= 0
+    ? rowToObj_(HEADERS.SOURCES, tab.getRange(existingIdx, 1, 1, HEADERS.SOURCES.length).getValues()[0])
+    : null;
+
   const row = {
     sourceId: source.sourceId,
     projectId: source.projectId,
     normalizedUrl: source.normalizedUrl || normalizeUrl_(source.rawUrl),
     rawUrl: source.rawUrl,
-    accessDate: source.accessDate || nowIso_(),
+    accessDate: source.accessDate || (prior && prior.accessDate) || nowIso_(),
     scrapedTitle: source.scrapedTitle || '',
     scrapedSite: source.scrapedSite || '',
     scrapedDate: source.scrapedDate || '',
     scrapedAuthor: source.scrapedAuthor || '',
-    sourceType: source.sourceType || '',
-    citationFields: source.citationFields ? JSON.stringify(source.citationFields) : '',
-    primarySecondary: source.primarySecondary || 'unset',
-    annotation: source.annotation || '',
-    annotationLastEdited: source.annotationLastEdited || '',
+    // Sidebar-owned: take the payload's value when it explicitly provides one
+    // (the sidebar's own writes do), else keep what's stored, else default.
+    sourceType: source.sourceType !== undefined ? (source.sourceType || '') : (prior ? prior.sourceType : ''),
+    citationFields: source.citationFields ? JSON.stringify(source.citationFields) : (prior ? prior.citationFields : ''),
+    primarySecondary: source.primarySecondary || (prior ? prior.primarySecondary : 'unset'),
+    annotation: source.annotation !== undefined ? (source.annotation || '') : (prior ? prior.annotation : ''),
+    annotationLastEdited: source.annotationLastEdited || (prior ? prior.annotationLastEdited : ''),
     createdByEmail: source.createdByEmail,
-    createdAt: source.createdAt || nowIso_(),
+    createdAt: source.createdAt || (prior && prior.createdAt) || nowIso_(),
     scrapedExtra: source.scrapedExtra ? JSON.stringify(source.scrapedExtra) : '',
   };
   upsertByKey_(tab, HEADERS.SOURCES, 'sourceId', row);

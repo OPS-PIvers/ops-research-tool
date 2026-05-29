@@ -187,6 +187,36 @@ These supersede or refine the spec — apply them before defaulting to plan text
   migration script to run. Column mapping is positional via the `HEADERS`
   constant, so even write paths that skip `ensureHeaders_` stay correct; the
   header row is cosmetic.
+- **PDF citation auto-fill comes from the file, not the page.** A PDF has no
+  HTML `<meta>`/JSON-LD, so `scrape.js` finds nothing — author/date came back
+  blank. The Tier-2 panel now extracts citation metadata two ways in
+  [`panel.js`](extension/pdf/panel.js) and stashes `{title, author, date}` on
+  `window.OPS_PDF_META` (merged by [`shim.js`](extension/pdf/shim.js)'s
+  `scrapePageMeta` override, filling only empty fields — title stays the
+  filename since embedded PDF titles are usually junk):
+  1. **Embedded metadata** (`extractPdfMeta_`): PDF.js `getMetadata()` → Info
+     dict (`Title`/`Author`/`CreationDate`) + XMP fallback. Authoritative when
+     present.
+  2. **Conservative page-1 body heuristics** (`extractPdfBodyHints_`): font-size
+     line grouping → largest line is the title, name-shaped lines just below are
+     the author block, dated lines anywhere give the date (copyright-year
+     preferred to dodge "Received…Accepted…" ambiguity). Hard-gated: returns
+     BLANK rather than guess (a wrong author a student trusts is worse than an
+     empty field). DOM-side, so no GAS test — real-PDF QA only.
+- **Source writes are self-healing against cross-surface deletes.** Deleting a
+  source from the Docs sidebar is purely server-side and never touched the
+  extension's persistent `pageSource:` cache, so a re-save hit the stale cache,
+  skipped creating the source row, and left invisible orphan highlights.
+  [`background.js`](extension/background.js) `getOrCreateSourceId` now ALWAYS
+  idempotently re-asserts the source row (deduped in the queue), reusing the
+  cached id so orphans reattach. This is only safe because
+  [`upsertSource_`](apps-script/src/20_writes.js) now PRESERVES sidebar-owned
+  fields (citation, annotation, primary/secondary, sourceType) on existing rows
+  — a scrape re-assert can never wipe a student's citation work. Also:
+  `loadPageHighlights_` seeds the local cache from the server match on page
+  visit, so a NEW highlight on a second device merges into the existing source
+  instead of duplicating it (the long-claimed-but-unwired `findSource` dedup is
+  still NOT wired; this covers the same ground without a save-path round-trip).
 
 ## 5. GAS V8 quirks discovered
 
