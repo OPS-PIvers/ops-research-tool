@@ -139,6 +139,8 @@ async function handleMessage(msg, sender) {
       return getOrCreateSourceId(msg.rawUrl, msg.scrape || {});
     case 'enqueueHighlight':
       return enqueueHighlight(msg.highlight);
+    case 'enqueueSourcePatch':
+      return enqueueSourcePatch_(msg.source);
     case 'getActiveProject':
       return getActiveProjectInfo();
     case 'setActiveProject':
@@ -309,6 +311,39 @@ async function getOrCreateSourceId(rawUrl, scrape) {
     scrapedExtra: pickScrapedExtra_(scrape),
   });
   return { ok: true, sourceId, normalizedUrl: normalized, source: cached ? 'cache' : 'new' };
+}
+
+/**
+ * Persist a student's citation edits from the in-page Source tab. Sends a full
+ * source upsert (scraped + citation fields) so no column blanks on the merge,
+ * and routes through enqueueSourceUpsert_ so it coalesces with any pending
+ * scrape re-assert for the same source.
+ */
+async function enqueueSourcePatch_(source) {
+  const projectId = await getActiveProjectId();
+  if (!projectId) throw new Error('No active project.');
+  if (!source || !source.sourceId || !source.rawUrl) {
+    throw new Error('source must have sourceId and rawUrl');
+  }
+  await enqueueSourceUpsert_({
+    sourceId: source.sourceId,
+    projectId,
+    normalizedUrl: source.normalizedUrl || normalizeUrl(source.rawUrl),
+    rawUrl: source.rawUrl,
+    accessDate: source.accessDate || new Date().toISOString(),
+    scrapedTitle: source.scrapedTitle || '',
+    scrapedSite: source.scrapedSite || '',
+    scrapedDate: source.scrapedDate || '',
+    scrapedAuthor: source.scrapedAuthor || '',
+    scrapedExtra: source.scrapedExtra || null,
+    // The Source tab always resolves these to concrete values, so they're
+    // never empty here — safe to send (upsertSource_ takes the provided value).
+    sourceType: source.sourceType || '',
+    citationFields: source.citationFields || null,
+    primarySecondary: source.primarySecondary || 'unset',
+    annotation: source.annotation || '',
+  });
+  return { ok: true };
 }
 
 /**
