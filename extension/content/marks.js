@@ -225,14 +225,49 @@ function reAnchorHighlights(highlights, colorForLabel, root) {
   // first wrap's text-node splits don't invalidate the segments map).
   // Live Range adjustment then carries the boundaries through subsequent
   // splits for the remaining wraps.
+  // Whitespace-normalized fallback, built lazily on the first exact-match miss
+  // and reused across highlights. The browser collapses whitespace when it
+  // produces selection text (source line breaks, indentation, runs of spaces,
+  // non-breaking spaces all become single spaces), but `flat` is the raw
+  // textContent concatenation — so a highlight spanning any of those never
+  // matched exactly and was wrongly flagged "page changed". `normToRaw` maps
+  // each normalized index back to its offset in `flat` so the fallback still
+  // builds an accurate Range. Exact matches keep the original fast path.
+  let norm = null;
+  let normToRaw = null;
+  const buildNorm_ = () => {
+    norm = '';
+    normToRaw = [];
+    let j = 0;
+    while (j < flat.length) {
+      if (/\s/.test(flat[j])) {
+        const runStart = j;
+        while (j < flat.length && /\s/.test(flat[j])) j++;
+        if (norm.length > 0) { normToRaw.push(runStart); norm += ' '; } // collapse run; skip leading
+      } else {
+        normToRaw.push(j); norm += flat[j]; j++;
+      }
+    }
+    normToRaw.push(flat.length); // sentinel so an end index maps cleanly
+  };
+
   const tasks = [];
   const failed = [];
   for (const h of highlights) {
     const text = h.highlightedText;
     if (!text) { failed.push(h.highlightId); continue; }
-    const idx = flat.indexOf(text);
-    if (idx === -1) { failed.push(h.highlightId); continue; }
-    const endIdx = idx + text.length;
+    let idx = flat.indexOf(text);
+    let endIdx;
+    if (idx !== -1) {
+      endIdx = idx + text.length;
+    } else {
+      if (norm === null) buildNorm_();
+      const needle = text.replace(/\s+/g, ' ').trim();
+      const nIdx = needle ? norm.indexOf(needle) : -1;
+      if (nIdx === -1) { failed.push(h.highlightId); continue; }
+      idx = normToRaw[nIdx];
+      endIdx = normToRaw[nIdx + needle.length];
+    }
     let startSeg = null, startOff = 0;
     let endSeg = null, endOff = 0;
     for (const s of segments) {
