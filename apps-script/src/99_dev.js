@@ -1444,6 +1444,111 @@ function devTestScrapedExtraRoundTrip() {
 }
 
 /**
+ * previewCitation GET delegates to the MLA formatter and returns
+ * { ok, text, italics }. Single source of truth — the extension Source tab
+ * renders this rather than forking the formatter.
+ */
+function devTestPreviewCitation() {
+  const fields = {
+    sourceType: 'website',
+    title: 'The Role of Technology in Blended Learning',
+    siteName: 'Journal of Language and Education',
+    author: 'Hekmat, Ali Mohammad',
+    publishedDate: '2023',
+    url: 'https://example.org/blended-learning',
+  };
+  const resp = handleGet_({ parameter: {
+    action: 'previewCitation',
+    fields: JSON.stringify(fields),
+    style: 'mla',
+  } });
+  let pass = 0, fail = 0;
+  const check = (label, cond) => { if (cond) { pass++; console.log('PASS ' + label); } else { fail++; console.log('FAIL ' + label); } };
+  check('resp.ok', resp && resp.ok === true);
+  check('text non-empty', resp && typeof resp.text === 'string' && resp.text.length > 0);
+  check('italics is array', resp && Array.isArray(resp.italics));
+  console.log(fail === 0 ? 'devTestPreviewCitation: ALL GREEN — ' + (resp && resp.text) : 'devTestPreviewCitation: NOT GREEN (' + fail + ' fail)');
+}
+
+/**
+ * doPost deletes accept { kind:'source', id } and route to the orphan-safe
+ * deleteSourceIfOrphaned_ — removes a source with no referencing highlights,
+ * refuses one that still has evidence. Backs the extension's "Delete source"
+ * toast action.
+ */
+function devTestSourceDeleteViaPost() {
+  const project = devSeedDevProject();
+  const me = Session.getEffectiveUser().getEmail();
+  const ss = findOrCreateStudentSheet_(me, project);
+
+  const orphanId = uuid_();
+  const referencedId = uuid_();
+  const hlId = uuid_();
+  upsertSource_(ss, { sourceId: orphanId, projectId: project.projectId, rawUrl: 'https://orphan.example.com/x', scrapedTitle: 'Orphan', createdByEmail: me });
+  upsertSource_(ss, { sourceId: referencedId, projectId: project.projectId, rawUrl: 'https://ref.example.com/x', scrapedTitle: 'Referenced', createdByEmail: me });
+  upsertHighlight_(ss, { highlightId: hlId, sourceId: referencedId, projectId: project.projectId, primaryCategory: 'Background', highlightedText: 'keep me', createdByEmail: me });
+
+  const post = (deletes) => handlePost_({ postData: { contents: JSON.stringify({ projectId: project.projectId, deletes }) } });
+  const r1 = post([{ kind: 'source', id: orphanId }]);
+  const r2 = post([{ kind: 'source', id: referencedId }]);
+
+  const sourcesAfter = readSourcesForActor_(me, project.projectId);
+  let pass = 0, fail = 0;
+  const check = (label, cond) => { if (cond) { pass++; console.log('PASS ' + label); } else { fail++; console.log('FAIL ' + label); } };
+  check('orphan delete ok', r1 && r1.ok === true);
+  check('orphan deleted.sources === 1', r1 && r1.deleted && r1.deleted.sources === 1);
+  check('orphan row gone', !sourcesAfter.find((s) => s.sourceId === orphanId));
+  check('referenced deleted.sources === 0', r2 && r2.deleted && r2.deleted.sources === 0);
+  check('referenced row still present', !!sourcesAfter.find((s) => s.sourceId === referencedId));
+
+  // Cleanup.
+  deleteHighlightById_(ss, hlId);
+  deleteSourceIfOrphaned_(ss, referencedId);
+  console.log(fail === 0 ? 'devTestSourceDeleteViaPost: ALL GREEN' : 'devTestSourceDeleteViaPost: NOT GREEN (' + fail + ' fail)');
+}
+
+/**
+ * Locks the invariant the extension Source tab depends on: a citation write
+ * (citationFields + sourceType + primarySecondary + annotation) survives a
+ * later scrape-only re-assert (the shape getOrCreateSourceId enqueues, which
+ * omits those keys). If this ever goes red, the extension's citation edits are
+ * being clobbered by re-highlighting.
+ */
+function devTestCitationSurvivesReassert() {
+  const project = devSeedDevProject();
+  const me = Session.getEffectiveUser().getEmail();
+  const ss = findOrCreateStudentSheet_(me, project);
+
+  const sid = uuid_();
+  // 1) Citation write (as the Source tab will send).
+  upsertSource_(ss, {
+    sourceId: sid, projectId: project.projectId, rawUrl: 'https://reassert.example.com/x',
+    scrapedTitle: 'Scraped Title', createdByEmail: me,
+    sourceType: 'article', primarySecondary: 'primary', annotation: 'My annotation.',
+    citationFields: { sourceType: 'article', title: 'Edited Title', author: 'Doe, Jane' },
+  });
+  // 2) Scrape-only re-assert (as getOrCreateSourceId enqueues — no citation keys).
+  upsertSource_(ss, {
+    sourceId: sid, projectId: project.projectId, rawUrl: 'https://reassert.example.com/x',
+    scrapedTitle: 'Scraped Title v2', scrapedAuthor: 'Scraper', createdByEmail: me,
+    scrapedExtra: { publication: 'Some Journal' },
+  });
+
+  const src = readSourcesForActor_(me, project.projectId).find((s) => s.sourceId === sid);
+  const cf = src ? JSON.parse(src.citationFields || '{}') : {};
+  let pass = 0, fail = 0;
+  const check = (label, cond) => { if (cond) { pass++; console.log('PASS ' + label); } else { fail++; console.log('FAIL ' + label); } };
+  check('citationFields preserved', cf.title === 'Edited Title' && cf.author === 'Doe, Jane');
+  check('sourceType preserved', src && src.sourceType === 'article');
+  check('primarySecondary preserved', src && src.primarySecondary === 'primary');
+  check('annotation preserved', src && src.annotation === 'My annotation.');
+  check('scraped fields refreshed', src && src.scrapedTitle === 'Scraped Title v2');
+
+  deleteSourceIfOrphaned_(ss, sid);
+  console.log(fail === 0 ? 'devTestCitationSurvivesReassert: ALL GREEN' : 'devTestCitationSurvivesReassert: NOT GREEN (' + fail + ' fail)');
+}
+
+/**
  * Verifies ensureHeaders_ heals a pure trailing append in place (the migration
  * path for the new scrapedExtra column on already-provisioned Sheets) while
  * still throwing on a real reorder/rename. Uses a throwaway spreadsheet that
