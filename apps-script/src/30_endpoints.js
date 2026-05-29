@@ -148,6 +148,13 @@ function handleGet_(e) {
         return { ok: true, normalizedUrl: normalized, source: existing };
       }
 
+      case 'previewCitation': {
+        if (!params.fields) throw new Error('fields required');
+        const fields = JSON.parse(params.fields);
+        const formatted = formatCitation(fields, params.style || 'mla');
+        return { ok: true, text: formatted.text, italics: formatted.italics };
+      }
+
       case 'getActiveProject': {
         // Server-side activeProjectId so the Docs sidebar and the Chrome
         // extension stay in sync without each side maintaining its own.
