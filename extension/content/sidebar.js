@@ -288,6 +288,16 @@ const SIDEBAR_CSS = `
 .src__status { font-size:10.5px; color:#0f9d58; margin-top:8px; min-height:14px; }
 .src__status--pending { color:#b06000; }
 .src__status--error { color:#d93025; }
+.toast {
+  position:absolute; left:12px; right:12px; bottom:12px; z-index:5;
+  background:#202124; color:#fff; border-radius:8px; padding:10px 12px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.28); font-size:12px; line-height:1.4;
+  display:flex; flex-direction:column; gap:8px;
+}
+.toast__actions { display:flex; gap:8px; justify-content:flex-end; }
+.toast__btn { font:inherit; font-size:11px; padding:4px 10px; border-radius:5px; border:none; cursor:pointer; }
+.toast__btn--keep { background:rgba(255,255,255,0.16); color:#fff; }
+.toast__btn--delete { background:#f28b82; color:#202124; font-weight:600; }
 `;
 
 const OpsSidebar = (function () {
@@ -991,12 +1001,9 @@ const OpsSidebar = (function () {
   }
 
   async function deleteHighlight_(h) {
-    // If no other in-page highlight references this source, ask the server
-    // to cascade-delete the source too — "as if it was never saved".
-    const stillReferenced = state.pageHighlights.some(
-      (x) => x.highlightId !== h.highlightId && x.sourceId && x.sourceId === h.sourceId
+    const wasLastForSource = h.sourceId && !state.pageHighlights.some(
+      (x) => x.highlightId !== h.highlightId && x.sourceId === h.sourceId
     );
-    const cascadeSource = !stillReferenced;
 
     if (self.unwrapMark) self.unwrapMark(h.highlightId);
     const idx = state.pageHighlights.findIndex((x) => x.highlightId === h.highlightId);
@@ -1004,22 +1011,52 @@ const OpsSidebar = (function () {
     if (state.editingId === h.highlightId) state.editingId = null;
     if (state.altPickerOpenId === h.highlightId) state.altPickerOpenId = null;
     state.confirmingDeleteId = null;
-    if (state.confirmingDeleteTimer) {
-      clearTimeout(state.confirmingDeleteTimer);
-      state.confirmingDeleteTimer = null;
-    }
+    if (state.confirmingDeleteTimer) { clearTimeout(state.confirmingDeleteTimer); state.confirmingDeleteTimer = null; }
     render_();
 
     try {
+      // Never silently cascade now — the source may hold citation work. Delete
+      // the highlight only; offer source removal via the toast below.
       await chrome.runtime.sendMessage({
         type: 'deleteHighlight',
         highlightId: h.highlightId,
         sourceId: h.sourceId || '',
-        cascadeSource,
+        cascadeSource: false,
       });
     } catch (e) {
       console.warn('[OPS sidebar] delete failed:', e);
     }
+
+    if (wasLastForSource) showOrphanToast_(h.sourceId);
+  }
+
+  let _orphanToastTimer = null;
+  function showOrphanToast_(sourceId) {
+    dismissOrphanToast_();
+    const toast = el_('div', 'toast');
+    toast.appendChild(el_('div', null, 'Last note removed. Keep this source’s citation, or delete the source too?'));
+    const actions = el_('div', 'toast__actions');
+    const keep = el_('button', 'toast__btn toast__btn--keep', 'Keep');
+    keep.type = 'button';
+    keep.addEventListener('click', dismissOrphanToast_);
+    const del = el_('button', 'toast__btn toast__btn--delete', 'Delete source');
+    del.type = 'button';
+    del.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ type: 'deleteSource', sourceId }).catch(() => {});
+      if (state.pageSource && state.pageSource.sourceId === sourceId) state.pageSource = null;
+      dismissOrphanToast_();
+      render_();
+    });
+    actions.appendChild(keep);
+    actions.appendChild(del);
+    toast.appendChild(actions);
+    state.panelEl.appendChild(toast);
+    _orphanToastTimer = setTimeout(dismissOrphanToast_, 7000); // default = keep
+  }
+  function dismissOrphanToast_() {
+    if (_orphanToastTimer) { clearTimeout(_orphanToastTimer); _orphanToastTimer = null; }
+    const t = state.panelEl && state.panelEl.querySelector('.toast');
+    if (t) t.remove();
   }
 
   function setSecondary_(h, label) {
