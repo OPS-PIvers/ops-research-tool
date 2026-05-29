@@ -347,24 +347,28 @@ async function enqueueSourcePatch_(source) {
   if (!source || !source.sourceId || !source.rawUrl) {
     throw new Error('source must have sourceId and rawUrl');
   }
-  await enqueueSourceUpsert_({
+  // Build the payload, omitting empty scraped* / scrapedExtra fields so a
+  // Source-tab patch carrying '' for a scraped field cannot overwrite a
+  // not-yet-synced scrape's real value on merge. Citation-owned fields are
+  // always included (the Source tab always provides concrete values, and an
+  // empty annotation is an intentional server-side clear).
+  const patch = {
     sourceId: source.sourceId,
     projectId,
     normalizedUrl: source.normalizedUrl || normalizeUrl(source.rawUrl),
     rawUrl: source.rawUrl,
     accessDate: source.accessDate || new Date().toISOString(),
-    scrapedTitle: source.scrapedTitle || '',
-    scrapedSite: source.scrapedSite || '',
-    scrapedDate: source.scrapedDate || '',
-    scrapedAuthor: source.scrapedAuthor || '',
-    scrapedExtra: source.scrapedExtra || null,
-    // The Source tab always resolves these to concrete values, so they're
-    // never empty here — safe to send (upsertSource_ takes the provided value).
     sourceType: source.sourceType || '',
     citationFields: source.citationFields || null,
     primarySecondary: source.primarySecondary || 'unset',
-    annotation: source.annotation || '',
-  });
+    annotation: typeof source.annotation === 'string' ? source.annotation : '',
+  };
+  if (source.scrapedTitle)  patch.scrapedTitle  = source.scrapedTitle;
+  if (source.scrapedSite)   patch.scrapedSite   = source.scrapedSite;
+  if (source.scrapedDate)   patch.scrapedDate   = source.scrapedDate;
+  if (source.scrapedAuthor) patch.scrapedAuthor = source.scrapedAuthor;
+  if (source.scrapedExtra)  patch.scrapedExtra  = source.scrapedExtra;
+  await enqueueSourceUpsert_(patch);
   return { ok: true };
 }
 
@@ -384,8 +388,14 @@ async function enqueueSourceUpsert_(payload) {
   // Merge any pending writes for this source, newest winning per key it
   // provides; keys it omits keep the prior pending value. Without this, a
   // scrape re-assert (no citation keys) would drop a not-yet-synced citation
-  // edit, or vice-versa. In practice staleKeys.length is 0 or 1 because each
-  // enqueue already coalesces.
+  // edit, or vice-versa.
+  //
+  // Sort ascending by enqueuedAt (the stable creation timestamp on every item,
+  // distinct from nextAttemptAt which mutates on backoff retries) so that when
+  // two near-simultaneous enqueues leave 2 stale items, the fold is
+  // deterministic: earlier payloads are applied first, later ones win per key.
+  // The incoming `payload` is always folded last, so it always wins.
+  staleKeys.sort((a, b) => (all[a].enqueuedAt || 0) - (all[b].enqueuedAt || 0));
   let merged = {};
   staleKeys.forEach((k) => { merged = Object.assign(merged, all[k].payload); });
   merged = Object.assign(merged, payload);
