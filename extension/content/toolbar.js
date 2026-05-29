@@ -290,7 +290,9 @@ async function syncHighlight_(highlightId, primaryCategory, text, note) {
     });
     if (!srcResp || !srcResp.ok) throw new Error((srcResp && srcResp.error) || 'no sourceId');
     if (self.OpsSidebar && self.OpsSidebar._setSourceId) {
-      self.OpsSidebar._setSourceId(highlightId, srcResp.sourceId);
+      // Pass the scrape so the sidebar's Source tab can seed its citation form
+      // from page metadata before the source row syncs back from the server.
+      self.OpsSidebar._setSourceId(highlightId, srcResp.sourceId, scrape);
     }
     const hlResp = await chrome.runtime.sendMessage({
       type: 'enqueueHighlight',
