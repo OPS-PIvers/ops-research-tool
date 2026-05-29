@@ -235,24 +235,23 @@ async function loadPageHighlights_(rawUrl) {
     // URL. Reuses this fetch — no extra round-trip, offline-safe. When dups
     // already exist, pick the oldest as canonical so everything converges on
     // one source over time.
+    let canonicalSource = null;
     if (matching.length) {
-      const canonical = matching.slice().sort((a, b) =>
+      canonicalSource = matching.slice().sort((a, b) =>
         String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
       )[0];
-      if (canonical && canonical.sourceId) {
-        await setCachedSourceId(projectId, normalized, canonical.sourceId);
+      if (canonicalSource && canonicalSource.sourceId) {
+        await setCachedSourceId(projectId, normalized, canonicalSource.sourceId);
       }
     }
     console.log('[OPS] loadPageHighlights:', {
-      rawUrl,
-      normalized,
+      rawUrl, normalized,
       totalSources: allSources.length,
       totalHighlights: allHighlights.length,
       matchingSources: matching.length,
       matchingHighlights: highlights.length,
-      sourceNormalizedUrls: allSources.map((s) => s.normalizedUrl).slice(0, 5),
     });
-    return { ok: true, highlights, sourceCount: matchingSourceIds.size };
+    return { ok: true, highlights, sourceCount: matchingSourceIds.size, source: canonicalSource };
   } catch (e) {
     console.warn('[OPS] loadPageHighlights threw:', e);
     return { ok: false, error: e.message || String(e) };
