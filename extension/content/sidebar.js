@@ -433,7 +433,11 @@ const OpsSidebar = (function () {
     }
     if (!resp || !resp.ok) return;
     if (resp && resp.ok && resp.source) {
-      state.pageSource = normalizeSourceObj_(resp.source);
+      const incoming = normalizeSourceObj_(resp.source);
+      const dirty = state.pageSource
+        && state.pageSource.sourceId === incoming.sourceId
+        && state.sourceSaveStatus === 'pending';
+      if (!dirty) state.pageSource = incoming;
     }
     if (!resp.highlights || resp.highlights.length === 0) { render_(); return; }
     resp.highlights.forEach((h) => {
@@ -671,22 +675,27 @@ const OpsSidebar = (function () {
     }
   }
 
-  // Effective field values: student-entered citationFields win, then the rich
-  // scrape, then defaults. Mirrors source_editor_js.html renderCitationForm.
+  // Effective field values: student-entered citationFields win (including
+  // deliberate empties), then the rich scrape, then defaults. A key that is
+  // present in citationFields — even as an empty string — is taken as-is so
+  // that a student who clears a field is not overridden by a scraped value.
+  // Mirrors source_editor_js.html renderCitationForm.
   function effectiveFields_(src) {
     const extra = src.scrapedExtra || {};
-    const f = Object.assign({}, src.citationFields || {});
-    f.sourceType    = f.sourceType    || src.sourceType || extra.sourceType || 'website';
-    f.title         = f.title         || src.scrapedTitle || '';
-    f.siteName      = f.siteName      || src.scrapedSite || '';
-    f.publishedDate = f.publishedDate || src.scrapedDate || '';
-    f.author        = f.author        || src.scrapedAuthor || '';
-    f.publication   = f.publication   || extra.publication || '';
-    f.publisher     = f.publisher     || extra.publisher || '';
-    f.volume        = f.volume        || extra.volume || '';
-    f.issue         = f.issue         || extra.issue || '';
-    f.pages         = f.pages         || extra.pages || '';
-    f.url           = f.url           || src.rawUrl || '';
+    const cf = src.citationFields || {};
+    const pick = (key, fallback) => (key in cf ? cf[key] : (fallback || ''));
+    const f = {};
+    f.sourceType    = ('sourceType' in cf && cf.sourceType) ? cf.sourceType : (src.sourceType || extra.sourceType || 'website');
+    f.title         = pick('title', src.scrapedTitle);
+    f.siteName      = pick('siteName', src.scrapedSite);
+    f.publishedDate = pick('publishedDate', src.scrapedDate);
+    f.author        = pick('author', src.scrapedAuthor);
+    f.publication   = pick('publication', extra.publication);
+    f.publisher     = pick('publisher', extra.publisher);
+    f.volume        = pick('volume', extra.volume);
+    f.issue         = pick('issue', extra.issue);
+    f.pages         = pick('pages', extra.pages);
+    f.url           = pick('url', src.rawUrl);
     return f;
   }
 
@@ -696,8 +705,6 @@ const OpsSidebar = (function () {
     }
     const src = state.pageSource;
     const fields = effectiveFields_(src);
-    src.citationFields = fields; // persist resolved values so edits build on them
-    src.sourceType = fields.sourceType;
 
     const form = el_('div', 'src');
 
@@ -710,8 +717,11 @@ const OpsSidebar = (function () {
       if (t === fields.sourceType) o.selected = true; sel.appendChild(o);
     });
     sel.addEventListener('change', () => {
-      fields.sourceType = sel.value; src.sourceType = sel.value;
-      saveSource_(); render_(); // re-render to swap the field set
+      if (!src.citationFields) src.citationFields = {};
+      src.citationFields.sourceType = sel.value;
+      src.sourceType = sel.value;
+      saveSource_();
+      render_(); // re-render to swap the field set
     });
     typeWrap.appendChild(sel);
     form.appendChild(typeWrap);
@@ -722,7 +732,12 @@ const OpsSidebar = (function () {
       wrap.appendChild(el_('label', null, def.label));
       const inp = document.createElement('input');
       inp.type = 'text'; inp.value = fields[def.key] || '';
-      const commit = () => { fields[def.key] = inp.value; saveSource_(); schedulePreview_(); };
+      const commit = () => {
+        if (!src.citationFields) src.citationFields = {};
+        src.citationFields[def.key] = inp.value;
+        saveSource_();
+        schedulePreview_();
+      };
       inp.addEventListener('change', commit);
       inp.addEventListener('blur', commit);
       wrap.appendChild(inp);
