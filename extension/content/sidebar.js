@@ -784,7 +784,39 @@ const OpsSidebar = (function () {
     el.textContent = { pending: 'saving…', saved: '✓ saved', error: '⚠ save failed' }[state.sourceSaveStatus] || '';
   }
 
-  function schedulePreview_() { /* wired in C4 */ }
+  let _previewTimer = null;
+  function schedulePreview_() {
+    clearTimeout(_previewTimer);
+    _previewTimer = setTimeout(renderPreviewNow_, 350);
+  }
+  function renderPreviewNow_() {
+    if (!state.pageSource) return;
+    const el = state.shadowRoot && state.shadowRoot.querySelector('#ops-src-preview');
+    if (!el) return;
+    const fields = effectiveFields_(state.pageSource);
+    chrome.runtime.sendMessage({ type: 'previewCitation', fields, style: 'mla' })
+      .then((res) => {
+        const cur = state.shadowRoot && state.shadowRoot.querySelector('#ops-src-preview');
+        if (!cur) return;
+        if (!res || !res.ok) {
+          cur.innerHTML = '<span class="src__preview-lbl">MLA preview</span><em>Preview updates when you\'re back online.</em>';
+          return;
+        }
+        cur.innerHTML = '<span class="src__preview-lbl">MLA preview</span>' + previewHtml_(res.text || '', res.italics || []);
+      })
+      .catch(() => {});
+  }
+  function previewHtml_(text, italics) {
+    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    let html = '', cursor = 0;
+    italics.forEach(([s, e]) => {
+      if (s > cursor) html += esc(text.slice(cursor, s));
+      html += '<em>' + esc(text.slice(s, e)) + '</em>';
+      cursor = e;
+    });
+    if (cursor < text.length) html += esc(text.slice(cursor));
+    return html;
+  }
 
   function renderFacetList_() {
     const wrap = el_('div', 'facets');
