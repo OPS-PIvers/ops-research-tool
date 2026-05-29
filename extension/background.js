@@ -80,7 +80,12 @@ async function drain() {
             id: b.payload.highlightId,
             cascadeSource: b.payload.cascadeSource,
             sourceId: b.payload.sourceId,
-          }));
+          }))
+          .concat(
+            batch
+              .filter((b) => b.kind === 'deleteSource')
+              .map((b) => ({ kind: 'source', id: b.payload.sourceId }))
+          );
         try {
           const resp = await apiPost({ projectId, sources, highlights, deletes });
           anyOnline = true;
@@ -139,6 +144,8 @@ async function handleMessage(msg, sender) {
       return getOrCreateSourceId(msg.rawUrl, msg.scrape || {});
     case 'enqueueHighlight':
       return enqueueHighlight(msg.highlight);
+    case 'enqueueSourcePatch':
+      return enqueueSourcePatch_(msg.source);
     case 'getActiveProject':
       return getActiveProjectInfo();
     case 'setActiveProject':
@@ -163,8 +170,12 @@ async function handleMessage(msg, sender) {
       return openPdfPanel_(msg.url);
     case 'loadPageHighlights':
       return loadPageHighlights_(msg.rawUrl);
+    case 'previewCitation':
+      return previewCitation_(msg.fields, msg.style);
     case 'deleteHighlight':
       return deleteHighlightRequest_(msg.highlightId, msg.sourceId, msg.cascadeSource);
+    case 'deleteSource':
+      return deleteSourceRequest_(msg.sourceId);
     default:
       return { ok: false, error: 'unknown message type: ' + msg.type };
   }
@@ -235,26 +246,38 @@ async function loadPageHighlights_(rawUrl) {
     // URL. Reuses this fetch — no extra round-trip, offline-safe. When dups
     // already exist, pick the oldest as canonical so everything converges on
     // one source over time.
+    let canonicalSource = null;
     if (matching.length) {
-      const canonical = matching.slice().sort((a, b) =>
+      canonicalSource = matching.slice().sort((a, b) =>
         String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
       )[0];
-      if (canonical && canonical.sourceId) {
-        await setCachedSourceId(projectId, normalized, canonical.sourceId);
+      if (canonicalSource && canonicalSource.sourceId) {
+        await setCachedSourceId(projectId, normalized, canonicalSource.sourceId);
       }
     }
     console.log('[OPS] loadPageHighlights:', {
-      rawUrl,
-      normalized,
+      rawUrl, normalized,
       totalSources: allSources.length,
       totalHighlights: allHighlights.length,
       matchingSources: matching.length,
       matchingHighlights: highlights.length,
-      sourceNormalizedUrls: allSources.map((s) => s.normalizedUrl).slice(0, 5),
     });
-    return { ok: true, highlights, sourceCount: matchingSourceIds.size };
+    return { ok: true, highlights, sourceCount: matchingSourceIds.size, source: canonicalSource };
   } catch (e) {
     console.warn('[OPS] loadPageHighlights threw:', e);
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+/**
+ * Proxy the read-only MLA preview to GAS. Content scripts can't call the API
+ * directly (chrome.identity lives here). Returns { ok:false, error } on
+ * network failure so the Source tab can fall back to "preview offline".
+ */
+async function previewCitation_(fields, style) {
+  try {
+    return await apiGet({ action: 'previewCitation', fields: JSON.stringify(fields || {}), style: style || 'mla' });
+  } catch (e) {
     return { ok: false, error: e.message || String(e) };
   }
 }
@@ -313,6 +336,43 @@ async function getOrCreateSourceId(rawUrl, scrape) {
 }
 
 /**
+ * Persist a student's citation edits from the in-page Source tab. Sends a full
+ * source upsert (scraped + citation fields) so no column blanks on the merge,
+ * and routes through enqueueSourceUpsert_ so it coalesces with any pending
+ * scrape re-assert for the same source.
+ */
+async function enqueueSourcePatch_(source) {
+  const projectId = await getActiveProjectId();
+  if (!projectId) throw new Error('No active project.');
+  if (!source || !source.sourceId || !source.rawUrl) {
+    throw new Error('source must have sourceId and rawUrl');
+  }
+  // Build the payload, omitting empty scraped* / scrapedExtra fields so a
+  // Source-tab patch carrying '' for a scraped field cannot overwrite a
+  // not-yet-synced scrape's real value on merge. Citation-owned fields are
+  // always included (the Source tab always provides concrete values, and an
+  // empty annotation is an intentional server-side clear).
+  const patch = {
+    sourceId: source.sourceId,
+    projectId,
+    normalizedUrl: source.normalizedUrl || normalizeUrl(source.rawUrl),
+    rawUrl: source.rawUrl,
+    accessDate: source.accessDate || new Date().toISOString(),
+    sourceType: source.sourceType || '',
+    citationFields: source.citationFields || null,
+    primarySecondary: source.primarySecondary || 'unset',
+    annotation: typeof source.annotation === 'string' ? source.annotation : '',
+  };
+  if (source.scrapedTitle)  patch.scrapedTitle  = source.scrapedTitle;
+  if (source.scrapedSite)   patch.scrapedSite   = source.scrapedSite;
+  if (source.scrapedDate)   patch.scrapedDate   = source.scrapedDate;
+  if (source.scrapedAuthor) patch.scrapedAuthor = source.scrapedAuthor;
+  if (source.scrapedExtra)  patch.scrapedExtra  = source.scrapedExtra;
+  await enqueueSourceUpsert_(patch);
+  return { ok: true };
+}
+
+/**
  * Enqueue a source upsert, collapsing any not-yet-synced source item for the
  * same sourceId first. Without this, every highlight on a page would queue an
  * identical source write; with it, repeated highlights coalesce to one pending
@@ -320,13 +380,27 @@ async function getOrCreateSourceId(rawUrl, scrape) {
  */
 async function enqueueSourceUpsert_(payload) {
   const all = await chrome.storage.local.get(null);
-  const stale = Object.keys(all).filter((k) =>
+  const staleKeys = Object.keys(all).filter((k) =>
     k.startsWith(QUEUE_PREFIX) &&
     all[k] && all[k].kind === 'source' &&
     all[k].payload && all[k].payload.sourceId === payload.sourceId
   );
-  if (stale.length) await chrome.storage.local.remove(stale);
-  await enqueue('source', payload);
+  // Merge any pending writes for this source, newest winning per key it
+  // provides; keys it omits keep the prior pending value. Without this, a
+  // scrape re-assert (no citation keys) would drop a not-yet-synced citation
+  // edit, or vice-versa.
+  //
+  // Sort ascending by enqueuedAt (the stable creation timestamp on every item,
+  // distinct from nextAttemptAt which mutates on backoff retries) so that when
+  // two near-simultaneous enqueues leave 2 stale items, the fold is
+  // deterministic: earlier payloads are applied first, later ones win per key.
+  // The incoming `payload` is always folded last, so it always wins.
+  staleKeys.sort((a, b) => (all[a].enqueuedAt || 0) - (all[b].enqueuedAt || 0));
+  let merged = {};
+  staleKeys.forEach((k) => { merged = Object.assign(merged, all[k].payload); });
+  merged = Object.assign(merged, payload);
+  if (staleKeys.length) await chrome.storage.local.remove(staleKeys);
+  await enqueue('source', merged);
 }
 
 // The richer scrape fields beyond the four discrete scraped* columns. Only
@@ -369,6 +443,26 @@ async function deleteHighlightRequest_(highlightId, sourceId, cascadeSource) {
   return { ok: true };
 }
 
+/**
+ * Enqueue a standalone source deletion (the last-note "Delete source" toast).
+ * Orphan-safe on the server. Also clears any pageSource cache entry pointing at
+ * the deleted source so a later highlight on that page mints a fresh source
+ * rather than reusing a server-deleted id.
+ */
+async function deleteSourceRequest_(sourceId) {
+  const projectId = await getActiveProjectId();
+  if (!projectId) throw new Error('No active project.');
+  if (!sourceId) throw new Error('sourceId required');
+  await enqueue('deleteSource', { projectId, sourceId });
+  const all = await chrome.storage.local.get(null);
+  const toRemove = [];
+  for (const k of Object.keys(all)) {
+    if (k.startsWith(PAGE_SOURCE_PREFIX) && all[k] === sourceId) toRemove.push(k);
+  }
+  if (toRemove.length) await chrome.storage.local.remove(toRemove);
+  return { ok: true };
+}
+
 async function enqueueHighlight(h) {
   const projectId = await getActiveProjectId();
   if (!projectId) throw new Error('No active project.');
@@ -394,9 +488,25 @@ async function enqueueHighlight(h) {
 /** Returns { activeProjectId, project, bundle } using cache; refreshes if absent. */
 async function getActiveProjectInfo() {
   const activeProjectId = await getActiveProjectId();
-  const projects = (await getCache('cachedProjects')) || [];
-  const bundles = (await getCache('cachedBundles')) || [];
-  const project = projects.find((p) => p.projectId === activeProjectId) || null;
+  let projects = (await getCache('cachedProjects')) || [];
+  let bundles = (await getCache('cachedBundles')) || [];
+  let project = projects.find((p) => p.projectId === activeProjectId) || null;
+  // Cold/stale cache: the projects/bundles caches are only warmed when the
+  // popup is opened (it calls refreshContext). On a fresh page the content
+  // script's sidebar calls this before any popup has run, so an active project
+  // id can't be resolved to its object and the sidebar falsely shows "No active
+  // project" — even though saves are correctly targeted at activeProjectId.
+  // Self-heal: if we have an id but no object, refresh from the server once.
+  if (activeProjectId && !project) {
+    try {
+      await refreshContext();
+      projects = (await getCache('cachedProjects')) || [];
+      bundles = (await getCache('cachedBundles')) || [];
+      project = projects.find((p) => p.projectId === activeProjectId) || null;
+    } catch (e) {
+      console.debug('[OPS] getActiveProjectInfo refresh failed (offline?):', e.message || e);
+    }
+  }
   const bundle = project ? bundles.find((b) => b.bundleId === project.bundleId) || null : null;
   return { ok: true, activeProjectId, project, bundle, projectsKnown: projects.length > 0 };
 }

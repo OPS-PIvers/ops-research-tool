@@ -82,25 +82,6 @@ const SIDEBAR_CSS = `
   font-size: 11px; color: #5f6368;
 }
 
-.filter-row {
-  display: flex; gap: 4px; padding: 8px 12px;
-  border-bottom: 1px solid #dadce0; flex-wrap: wrap;
-}
-.filter-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: #f1f3f4; border: 1px solid transparent;
-  border-radius: 999px; padding: 4px 10px 4px 6px;
-  font-size: 11px; color: #5f6368; white-space: nowrap;
-}
-.filter-chip:hover { border-color: #dadce0; }
-.filter-chip--active {
-  background: #fff; border-color: #1a73e8; color: #1a73e8; font-weight: 500;
-}
-.filter-chip__dot { width: 10px; height: 10px; border-radius: 50%; }
-.filter-chip__count {
-  background: rgba(0,0,0,0.05); border-radius: 999px; padding: 0 6px; font-size: 10px;
-}
-
 .list { flex: 1; overflow-y: auto; padding: 8px 0; min-height: 0; }
 .list__empty {
   padding: 24px 14px; text-align: center;
@@ -266,6 +247,57 @@ const SIDEBAR_CSS = `
 .editor__btn--primary {
   background: #1a73e8; border-color: #1a73e8; color: #fff;
 }
+.tabs { display:flex; border-bottom:1px solid #e8eaed; padding:0 8px; gap:2px; }
+.tab {
+  flex:1; text-align:center; padding:10px 6px 8px; font-size:12.5px; font-weight:600;
+  color:#80868b; background:none; border:none; border-bottom:2.5px solid transparent;
+}
+.tab--active { color:#1a73e8; border-bottom-color:#1a73e8; }
+.tab__badge {
+  display:inline-block; min-width:16px; padding:0 5px; margin-left:5px; font-size:10px;
+  font-weight:700; line-height:16px; border-radius:999px; background:#eceff1; color:#5f6368;
+}
+.tab--active .tab__badge { background:#e8f0fe; color:#1a73e8; }
+.facets { padding:6px 8px 8px; border-bottom:1px solid #f1f3f4; }
+.facet {
+  display:flex; align-items:center; gap:9px; width:100%; padding:5px 8px; border:none;
+  background:none; border-radius:6px; font-size:12px; color:#3c4043; text-align:left;
+}
+.facet:hover { background:#f8f9fa; }
+.facet--all { font-weight:600; margin-bottom:2px; }
+.facet--active { background:#e8f0fe; color:#1a73e8; font-weight:600; }
+.facet--zero { opacity:0.42; }
+.facet__dot { width:11px; height:11px; border-radius:3px; flex:0 0 auto; }
+.facet__lab { flex:1; }
+.facet__count { color:#9aa0a6; font-variant-numeric:tabular-nums; }
+.facet--active .facet__count { color:#1a73e8; }
+.src { padding:10px 14px 16px; overflow-y:auto; }
+.src__empty { padding:24px 14px; text-align:center; color:#5f6368; font-size:12px; line-height:1.5; }
+.src__fld { margin-bottom:9px; }
+.src__fld label { display:block; font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:#80868b; margin-bottom:3px; }
+.src__fld input, .src__fld select {
+  width:100%; border:1px solid #dadce0; border-radius:6px; padding:6px 8px; font:inherit; font-size:12.5px; color:#202124; background:#fff;
+}
+.src__seg { display:flex; border:1px solid #dadce0; border-radius:7px; overflow:hidden; }
+.src__seg button { flex:1; border:none; border-right:1px solid #eceff1; background:#fff; padding:7px 4px; font-size:12px; color:#5f6368; text-align:center; }
+.src__seg button:last-child { border-right:none; }
+.src__seg button.src__seg--on { background:#e8f0fe; color:#1a73e8; font-weight:600; }
+.src__ta { width:100%; border:1px solid #dadce0; border-radius:6px; padding:6px 8px; font:inherit; font-size:12.5px; min-height:48px; resize:vertical; }
+.src__preview { margin-top:10px; padding:9px 11px; background:#f8f9fa; border:1px solid #eceff1; border-radius:7px; font-size:11.5px; line-height:1.5; color:#3c4043; }
+.src__preview-lbl { display:block; font-size:9.5px; text-transform:uppercase; letter-spacing:0.05em; color:#9aa0a6; margin-bottom:3px; }
+.src__status { font-size:10.5px; color:#0f9d58; margin-top:8px; min-height:14px; }
+.src__status--pending { color:#b06000; }
+.src__status--error { color:#d93025; }
+.toast {
+  position:absolute; left:12px; right:12px; bottom:12px; z-index:5;
+  background:#202124; color:#fff; border-radius:8px; padding:10px 12px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.28); font-size:12px; line-height:1.4;
+  display:flex; flex-direction:column; gap:8px;
+}
+.toast__actions { display:flex; gap:8px; justify-content:flex-end; }
+.toast__btn { font:inherit; font-size:11px; padding:4px 10px; border-radius:5px; border:none; cursor:pointer; }
+.toast__btn--keep { background:rgba(255,255,255,0.16); color:#fff; }
+.toast__btn--delete { background:#f28b82; color:#202124; font-weight:600; }
 `;
 
 const OpsSidebar = (function () {
@@ -284,6 +316,9 @@ const OpsSidebar = (function () {
     confirmingDeleteId: null, // highlightId whose Delete button is showing "Confirm?"
     confirmingDeleteTimer: null,
     initialized: false,
+    activeTab: 'annotations', // 'source' | 'annotations'
+    pageSource: null, // canonical source object for this page (server + local scrape)
+    sourceSaveStatus: null,
   };
 
   // ---------- public API ----------
@@ -326,6 +361,11 @@ const OpsSidebar = (function () {
 
   async function show() {
     await ensureInit_();
+    // Re-resolve the active project/bundle each open. At init the projects
+    // cache can be cold (popup never opened), leaving state.project null and a
+    // false "No active project" subheader; reloading here (now self-healing in
+    // the service worker) corrects it without needing a page refresh.
+    if (!state.project || !state.bundle) await loadContext_();
     state.panelEl.style.display = 'flex';
     state.launcherEl.style.display = 'none';
     render_();
@@ -396,7 +436,15 @@ const OpsSidebar = (function () {
     } catch (e) {
       return; // offline / backend down; launcher already visible, nothing more to do
     }
-    if (!resp || !resp.ok || !resp.highlights || resp.highlights.length === 0) return;
+    if (!resp || !resp.ok) return;
+    if (resp && resp.ok && resp.source) {
+      const incoming = normalizeSourceObj_(resp.source);
+      const dirty = state.pageSource
+        && state.pageSource.sourceId === incoming.sourceId
+        && state.sourceSaveStatus === 'pending';
+      if (!dirty) state.pageSource = incoming;
+    }
+    if (!resp.highlights || resp.highlights.length === 0) { render_(); return; }
     resp.highlights.forEach((h) => {
       if (state.pageHighlights.some((x) => x.highlightId === h.highlightId)) return;
       state.pageHighlights.push({
@@ -420,15 +468,79 @@ const OpsSidebar = (function () {
     // page as it comes on screen. Without this we'd mark every highlight
     // as "page changed" on first load, since no pages are in the DOM yet.
     if (self.reAnchorHighlights && !self.OPS_DEFER_REANCHOR) {
-      const colorWithFallback = (label) => colorForLabel_(label) || '#fff8c4';
-      const { failed } = self.reAnchorHighlights(resp.highlights, colorWithFallback);
-      const failedSet = new Set(failed);
-      state.pageHighlights.forEach((h) => {
-        if (failedSet.has(h.highlightId)) h.notFoundOnPage = true;
-      });
+      scheduleReanchorRetries_(resp.highlights);
     }
 
     render_();
+  }
+
+  // Re-anchoring can run before late-rendered / hydrated / lazy-loaded body
+  // text is in the DOM, so a first miss usually means "not ready yet", not
+  // "page changed". Retry the still-unanchored set as the page settles — driven
+  // by a debounced MutationObserver plus a few backstop timers — and clear the
+  // per-entry "page changed" flag as marks land. Give up after a bounded window
+  // so a genuinely changed page does eventually surface the flag. reAnchor is
+  // idempotent (skips IDs already marked in the DOM), so re-passing the full
+  // set only re-attempts the ones still missing.
+  let _reanchorObserver = null;
+  let _reanchorTimers = [];
+
+  function scheduleReanchorRetries_(serverHighlights) {
+    cleanupReanchorRetries_();            // reset any prior run (e.g. re-enable)
+    runReanchorPass_(serverHighlights);   // initial attempt + flag misses
+    if (!anyPendingReanchor_()) return;
+
+    let queued = false;
+    const retry = () => {
+      runReanchorPass_(serverHighlights);
+      if (!anyPendingReanchor_()) cleanupReanchorRetries_();
+    };
+    const kick = () => {                  // debounce a burst of mutations
+      if (queued) return;
+      queued = true;
+      setTimeout(() => { queued = false; retry(); }, 250);
+    };
+
+    try {
+      _reanchorObserver = new MutationObserver(kick);
+      _reanchorObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+    } catch (e) { /* no body yet — the timers below still cover it */ }
+
+    // Backstop for content that settles without further mutations, and a hard
+    // stop so the observer can't linger for the life of the tab.
+    [600, 1500, 4000, 9000].forEach((ms) => _reanchorTimers.push(setTimeout(retry, ms)));
+    _reanchorTimers.push(setTimeout(cleanupReanchorRetries_, 30000));
+  }
+
+  function runReanchorPass_(serverHighlights) {
+    if (!self.reAnchorHighlights) return;
+    const colorWithFallback = (label) => colorForLabel_(label) || '#fff8c4';
+    const { failed } = self.reAnchorHighlights(serverHighlights, colorWithFallback);
+    const failedSet = new Set(failed);
+    let changed = false;
+    state.pageHighlights.forEach((h) => {
+      const missing = failedSet.has(h.highlightId);
+      if (!!h.notFoundOnPage !== missing) { h.notFoundOnPage = missing; changed = true; }
+    });
+    // Marks are applied to the page regardless; only skip the sidebar re-render
+    // (which would steal focus / cursor) while the student is editing a field.
+    if (changed && !isEditingInPanel_()) render_();
+  }
+
+  function anyPendingReanchor_() {
+    return state.pageHighlights.some((h) => h.notFoundOnPage);
+  }
+
+  function cleanupReanchorRetries_() {
+    if (_reanchorObserver) { _reanchorObserver.disconnect(); _reanchorObserver = null; }
+    _reanchorTimers.forEach((t) => clearTimeout(t));
+    _reanchorTimers = [];
+  }
+
+  function isEditingInPanel_() {
+    if (!state.shadowRoot) return false;
+    const a = state.shadowRoot.activeElement;
+    return !!a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT' || a.tagName === 'SELECT');
   }
 
   /**
@@ -567,19 +679,30 @@ const OpsSidebar = (function () {
       : 'No active project — pick one from the extension toolbar.';
     state.panelEl.appendChild(sub);
 
-    // Filter row
-    if (state.bundle) {
-      const filterRow = el_('div', 'filter-row');
-      const allChip = makeFilterChip_(null, 'All', '#dadce0', countByCategory_(null));
-      filterRow.appendChild(allChip);
-      for (let i = 1; i <= 5; i++) {
-        const label = state.bundle['label' + i];
-        const color = state.bundle['color' + i];
-        if (!label) continue;
-        filterRow.appendChild(makeFilterChip_(label, label, color, countByCategory_(label)));
-      }
-      state.panelEl.appendChild(filterRow);
+    // Tab bar
+    const tabs = el_('div', 'tabs');
+    const srcTab = el_('button', 'tab' + (state.activeTab === 'source' ? ' tab--active' : ''), 'Source');
+    srcTab.type = 'button';
+    srcTab.addEventListener('click', () => { state.activeTab = 'source'; render_(); });
+    const annTab = el_('button', 'tab' + (state.activeTab === 'annotations' ? ' tab--active' : ''));
+    annTab.type = 'button';
+    annTab.appendChild(document.createTextNode('Annotations'));
+    if (state.pageHighlights.length) {
+      const badge = el_('span', 'tab__badge', String(state.pageHighlights.length));
+      annTab.appendChild(badge);
     }
+    annTab.addEventListener('click', () => { state.activeTab = 'annotations'; render_(); });
+    tabs.appendChild(srcTab);
+    tabs.appendChild(annTab);
+    state.panelEl.appendChild(tabs);
+
+    if (state.activeTab === 'source') {
+      state.panelEl.appendChild(renderSourceTab_());
+      return;
+    }
+
+    // ----- Annotations tab -----
+    if (state.bundle) state.panelEl.appendChild(renderFacetList_());
 
     // List
     state.listEl = el_('div', 'list');
@@ -596,22 +719,228 @@ const OpsSidebar = (function () {
     state.panelEl.appendChild(state.listEl);
   }
 
-  function makeFilterChip_(value, label, color, count) {
-    const chip = el_('button', 'filter-chip');
-    chip.type = 'button';
-    if (state.filter === value) chip.classList.add('filter-chip--active');
-    const dot = el_('span', 'filter-chip__dot');
-    dot.style.backgroundColor = color;
-    chip.appendChild(dot);
-    chip.appendChild(document.createTextNode(label));
-    const c = el_('span', 'filter-chip__count');
-    c.textContent = String(count);
-    chip.appendChild(c);
-    chip.addEventListener('click', () => {
-      state.filter = state.filter === value ? null : value;
-      render_();
+  const SRC_TYPES = ['website', 'article', 'book', 'primary'];
+  const PS_OPTS = ['primary', 'secondary', 'unset'];
+
+  function sourceFieldsFor_(sourceType) {
+    switch (sourceType) {
+      case 'website': return [
+        { key:'title', label:'Title' }, { key:'siteName', label:'Site name' },
+        { key:'author', label:'Author' }, { key:'publishedDate', label:'Published date' },
+        { key:'url', label:'URL' }];
+      case 'article': return [
+        { key:'title', label:'Article title' }, { key:'publication', label:'Publication name' },
+        { key:'author', label:'Author' }, { key:'publishedDate', label:'Published date' },
+        { key:'volume', label:'Volume (opt.)' }, { key:'issue', label:'Issue (opt.)' },
+        { key:'pages', label:'Pages (opt.)' }, { key:'url', label:'URL' }];
+      case 'book': return [
+        { key:'title', label:'Book title' }, { key:'author', label:'Author' },
+        { key:'publisher', label:'Publisher' }, { key:'publishedDate', label:'Year' }];
+      case 'primary': return [
+        { key:'title', label:'Title' }, { key:'author', label:'Author / creator' },
+        { key:'publishedDate', label:'Date' }, { key:'archive', label:'Archive / repository' },
+        { key:'url', label:'URL' }];
+      default: return [];
+    }
+  }
+
+  // Effective field values: student-entered citationFields win (including
+  // deliberate empties), then the rich scrape, then defaults. A key that is
+  // present in citationFields — even as an empty string — is taken as-is so
+  // that a student who clears a field is not overridden by a scraped value.
+  // Mirrors source_editor_js.html renderCitationForm.
+  function effectiveFields_(src) {
+    const extra = src.scrapedExtra || {};
+    const cf = src.citationFields || {};
+    const pick = (key, fallback) => (key in cf ? cf[key] : (fallback || ''));
+    const f = {};
+    f.sourceType    = ('sourceType' in cf && cf.sourceType) ? cf.sourceType : (src.sourceType || extra.sourceType || 'website');
+    f.title         = pick('title', src.scrapedTitle);
+    f.siteName      = pick('siteName', src.scrapedSite);
+    f.publishedDate = pick('publishedDate', src.scrapedDate);
+    f.author        = pick('author', src.scrapedAuthor);
+    f.publication   = pick('publication', extra.publication);
+    f.publisher     = pick('publisher', extra.publisher);
+    f.volume        = pick('volume', extra.volume);
+    f.issue         = pick('issue', extra.issue);
+    f.pages         = pick('pages', extra.pages);
+    f.url           = pick('url', src.rawUrl);
+    return f;
+  }
+
+  function renderSourceTab_() {
+    if (!state.pageSource) {
+      return el_('div', 'src__empty', 'Highlight something on this page to start its citation.');
+    }
+    const src = state.pageSource;
+    const fields = effectiveFields_(src);
+
+    const form = el_('div', 'src');
+
+    // Source type
+    const typeWrap = el_('div', 'src__fld');
+    typeWrap.appendChild(el_('label', null, 'Source type'));
+    const sel = document.createElement('select');
+    SRC_TYPES.forEach((t) => {
+      const o = document.createElement('option'); o.value = t; o.textContent = t;
+      if (t === fields.sourceType) o.selected = true; sel.appendChild(o);
     });
-    return chip;
+    sel.addEventListener('change', () => {
+      if (!src.citationFields) src.citationFields = {};
+      src.citationFields.sourceType = sel.value;
+      src.sourceType = sel.value;
+      saveSource_();
+      render_(); // re-render to swap the field set
+    });
+    typeWrap.appendChild(sel);
+    form.appendChild(typeWrap);
+
+    // Per-type fields
+    sourceFieldsFor_(fields.sourceType).forEach((def) => {
+      const wrap = el_('div', 'src__fld');
+      wrap.appendChild(el_('label', null, def.label));
+      const inp = document.createElement('input');
+      inp.type = 'text'; inp.value = fields[def.key] || '';
+      const commit = () => {
+        if (!src.citationFields) src.citationFields = {};
+        src.citationFields[def.key] = inp.value;
+        saveSource_();
+        schedulePreview_();
+      };
+      inp.addEventListener('change', commit);
+      inp.addEventListener('blur', commit);
+      wrap.appendChild(inp);
+      form.appendChild(wrap);
+    });
+
+    // Primary/Secondary segmented control
+    const tagWrap = el_('div', 'src__fld');
+    tagWrap.appendChild(el_('label', null, 'Tag'));
+    const seg = el_('div', 'src__seg');
+    PS_OPTS.forEach((opt) => {
+      const b = el_('button', 'src__seg-btn' + ((src.primarySecondary || 'unset') === opt ? ' src__seg--on' : ''), opt[0].toUpperCase() + opt.slice(1));
+      b.type = 'button';
+      b.addEventListener('click', () => { src.primarySecondary = opt; saveSource_(); render_(); });
+      seg.appendChild(b);
+    });
+    tagWrap.appendChild(seg);
+    form.appendChild(tagWrap);
+
+    // Annotation
+    const annWrap = el_('div', 'src__fld');
+    annWrap.appendChild(el_('label', null, 'Annotation'));
+    const ta = document.createElement('textarea');
+    ta.className = 'src__ta'; ta.value = src.annotation || '';
+    ta.placeholder = '2–3 sentence annotation…';
+    let annTimer;
+    ta.addEventListener('input', () => {
+      clearTimeout(annTimer);
+      src.annotation = ta.value;
+      annTimer = setTimeout(() => saveSource_(), 600);
+    });
+    annWrap.appendChild(ta);
+    form.appendChild(annWrap);
+
+    // Live preview (C4 wires the network call; container + initial paint here)
+    const preview = el_('div', 'src__preview');
+    preview.id = 'ops-src-preview';
+    preview.innerHTML = '<span class="src__preview-lbl">MLA preview</span><em>…</em>';
+    form.appendChild(preview);
+
+    // Save status
+    const status = el_('div', 'src__status' + (state.sourceSaveStatus ? ' src__status--' + state.sourceSaveStatus : ''));
+    status.textContent = { pending: 'saving…', saved: '✓ saved', error: '⚠ save failed' }[state.sourceSaveStatus] || '';
+    form.appendChild(status);
+
+    schedulePreview_();
+    return form;
+  }
+
+  // Debounced autosave of the whole source via the service worker.
+  let _srcSaveTimer = null;
+  function saveSource_() {
+    if (!state.pageSource) return;
+    state.sourceSaveStatus = 'pending';
+    const statusEl = state.shadowRoot && state.shadowRoot.querySelector('.src__status');
+    if (statusEl) { statusEl.textContent = 'saving…'; statusEl.className = 'src__status src__status--pending'; }
+    clearTimeout(_srcSaveTimer);
+    const snapshot = JSON.parse(JSON.stringify(state.pageSource));
+    _srcSaveTimer = setTimeout(() => {
+      chrome.runtime.sendMessage({ type: 'enqueueSourcePatch', source: snapshot })
+        .then(() => { state.sourceSaveStatus = 'saved'; paintSourceStatus_(); })
+        .catch(() => { state.sourceSaveStatus = 'error'; paintSourceStatus_(); });
+    }, 500);
+  }
+  function paintSourceStatus_() {
+    const el = state.shadowRoot && state.shadowRoot.querySelector('.src__status');
+    if (!el) return;
+    el.className = 'src__status' + (state.sourceSaveStatus ? ' src__status--' + state.sourceSaveStatus : '');
+    el.textContent = { pending: 'saving…', saved: '✓ saved', error: '⚠ save failed' }[state.sourceSaveStatus] || '';
+  }
+
+  let _previewTimer = null;
+  function schedulePreview_() {
+    clearTimeout(_previewTimer);
+    _previewTimer = setTimeout(renderPreviewNow_, 350);
+  }
+  function renderPreviewNow_() {
+    if (!state.pageSource) return;
+    const el = state.shadowRoot && state.shadowRoot.querySelector('#ops-src-preview');
+    if (!el) return;
+    const fields = effectiveFields_(state.pageSource);
+    chrome.runtime.sendMessage({ type: 'previewCitation', fields, style: 'mla' })
+      .then((res) => {
+        const cur = state.shadowRoot && state.shadowRoot.querySelector('#ops-src-preview');
+        if (!cur) return;
+        if (!res || !res.ok) {
+          cur.innerHTML = '<span class="src__preview-lbl">MLA preview</span><em>Preview updates when you\'re back online.</em>';
+          return;
+        }
+        cur.innerHTML = '<span class="src__preview-lbl">MLA preview</span>' + previewHtml_(res.text || '', res.italics || []);
+      })
+      .catch(() => {});
+  }
+  function previewHtml_(text, italics) {
+    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    let html = '', cursor = 0;
+    italics.forEach(([s, e]) => {
+      if (s > cursor) html += esc(text.slice(cursor, s));
+      html += '<em>' + esc(text.slice(s, e)) + '</em>';
+      cursor = e;
+    });
+    if (cursor < text.length) html += esc(text.slice(cursor));
+    return html;
+  }
+
+  function renderFacetList_() {
+    const wrap = el_('div', 'facets');
+
+    // "All notes" row.
+    const all = el_('button', 'facet facet--all' + (state.filter === null ? ' facet--active' : ''));
+    all.type = 'button';
+    all.appendChild(el_('span', 'facet__lab', 'All notes'));
+    all.appendChild(el_('span', 'facet__count', String(countByCategory_(null))));
+    all.addEventListener('click', () => { state.filter = null; render_(); });
+    wrap.appendChild(all);
+
+    // One row per category, in bundle (timeline) order; zero-count rows dimmed.
+    for (let i = 1; i <= 5; i++) {
+      const label = state.bundle['label' + i];
+      const color = state.bundle['color' + i];
+      if (!label) continue;
+      const count = countByCategory_(label);
+      const active = state.filter === label;
+      const row = el_('button', 'facet' + (active ? ' facet--active' : '') + (count === 0 ? ' facet--zero' : ''));
+      row.type = 'button';
+      const dot = el_('span', 'facet__dot');
+      dot.style.backgroundColor = color;
+      row.appendChild(dot);
+      row.appendChild(el_('span', 'facet__lab', label));
+      row.appendChild(el_('span', 'facet__count', String(count)));
+      row.addEventListener('click', () => { state.filter = active ? null : label; render_(); });
+      wrap.appendChild(row);
+    }
+    return wrap;
   }
 
   function renderEntry_(h) {
@@ -756,12 +1085,9 @@ const OpsSidebar = (function () {
   }
 
   async function deleteHighlight_(h) {
-    // If no other in-page highlight references this source, ask the server
-    // to cascade-delete the source too — "as if it was never saved".
-    const stillReferenced = state.pageHighlights.some(
-      (x) => x.highlightId !== h.highlightId && x.sourceId && x.sourceId === h.sourceId
+    const wasLastForSource = h.sourceId && !state.pageHighlights.some(
+      (x) => x.highlightId !== h.highlightId && x.sourceId === h.sourceId
     );
-    const cascadeSource = !stillReferenced;
 
     if (self.unwrapMark) self.unwrapMark(h.highlightId);
     const idx = state.pageHighlights.findIndex((x) => x.highlightId === h.highlightId);
@@ -769,22 +1095,52 @@ const OpsSidebar = (function () {
     if (state.editingId === h.highlightId) state.editingId = null;
     if (state.altPickerOpenId === h.highlightId) state.altPickerOpenId = null;
     state.confirmingDeleteId = null;
-    if (state.confirmingDeleteTimer) {
-      clearTimeout(state.confirmingDeleteTimer);
-      state.confirmingDeleteTimer = null;
-    }
+    if (state.confirmingDeleteTimer) { clearTimeout(state.confirmingDeleteTimer); state.confirmingDeleteTimer = null; }
     render_();
 
     try {
+      // Never silently cascade now — the source may hold citation work. Delete
+      // the highlight only; offer source removal via the toast below.
       await chrome.runtime.sendMessage({
         type: 'deleteHighlight',
         highlightId: h.highlightId,
         sourceId: h.sourceId || '',
-        cascadeSource,
+        cascadeSource: false,
       });
     } catch (e) {
       console.warn('[OPS sidebar] delete failed:', e);
     }
+
+    if (wasLastForSource) showOrphanToast_(h.sourceId);
+  }
+
+  let _orphanToastTimer = null;
+  function showOrphanToast_(sourceId) {
+    dismissOrphanToast_();
+    const toast = el_('div', 'toast');
+    toast.appendChild(el_('div', null, 'Last note removed. Keep this source’s citation, or delete the source too?'));
+    const actions = el_('div', 'toast__actions');
+    const keep = el_('button', 'toast__btn toast__btn--keep', 'Keep');
+    keep.type = 'button';
+    keep.addEventListener('click', dismissOrphanToast_);
+    const del = el_('button', 'toast__btn toast__btn--delete', 'Delete source');
+    del.type = 'button';
+    del.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ type: 'deleteSource', sourceId }).catch(() => {});
+      if (state.pageSource && state.pageSource.sourceId === sourceId) state.pageSource = null;
+      dismissOrphanToast_();
+      render_();
+    });
+    actions.appendChild(keep);
+    actions.appendChild(del);
+    toast.appendChild(actions);
+    state.panelEl.appendChild(toast);
+    _orphanToastTimer = setTimeout(dismissOrphanToast_, 7000); // default = keep
+  }
+  function dismissOrphanToast_() {
+    if (_orphanToastTimer) { clearTimeout(_orphanToastTimer); _orphanToastTimer = null; }
+    const t = state.panelEl && state.panelEl.querySelector('.toast');
+    if (t) t.remove();
   }
 
   function setSecondary_(h, label) {
@@ -973,6 +1329,27 @@ const OpsSidebar = (function () {
     }).then(() => markSynced(h.highlightId)).catch((e) => markError(h.highlightId, e.message));
   }
 
+  function normalizeSourceObj_(s) {
+    if (!s) return null;
+    const parse = (v) => { try { return v ? JSON.parse(v) : null; } catch (_) { return null; } };
+    return {
+      sourceId: s.sourceId,
+      projectId: s.projectId,
+      normalizedUrl: s.normalizedUrl || '',
+      rawUrl: s.rawUrl || '',
+      accessDate: s.accessDate || '',
+      scrapedTitle: s.scrapedTitle || '',
+      scrapedSite: s.scrapedSite || '',
+      scrapedDate: s.scrapedDate || '',
+      scrapedAuthor: s.scrapedAuthor || '',
+      scrapedExtra: parse(s.scrapedExtra) || {},
+      sourceType: s.sourceType || '',
+      citationFields: parse(s.citationFields) || {},
+      primarySecondary: s.primarySecondary || 'unset',
+      annotation: s.annotation || '',
+    };
+  }
+
   function el_(tag, className, text) {
     const e = document.createElement(tag);
     if (className) e.className = className;
@@ -986,9 +1363,28 @@ const OpsSidebar = (function () {
 
   // Internal: lets toolbar.js backfill the sourceId once
   // getOrCreateSourceId resolves, so subsequent edits include it.
-  function _setSourceId(highlightId, sourceId) {
+  function _setSourceId(highlightId, sourceId, scrape) {
     const h = state.pageHighlights.find((x) => x.highlightId === highlightId);
     if (h) h.sourceId = sourceId;
+    if (!state.pageSource && sourceId) {
+      const sc = scrape || {};
+      state.pageSource = {
+        sourceId,
+        projectId: state.project ? state.project.projectId : '',
+        normalizedUrl: '',
+        rawUrl: location.href,
+        accessDate: new Date().toISOString(),
+        scrapedTitle: sc.title || '',
+        scrapedSite: sc.site || '',
+        scrapedDate: sc.date || '',
+        scrapedAuthor: sc.author || '',
+        scrapedExtra: { publication: sc.publication, publisher: sc.publisher, volume: sc.volume, issue: sc.issue, pages: sc.pages, sourceType: sc.sourceType },
+        sourceType: sc.sourceType || '',
+        citationFields: {},
+        primarySecondary: 'unset',
+        annotation: '',
+      };
+    }
   }
 
   return { addHighlight, markSynced, markError, focus, show, hide, toggle, _setSourceId, loadForCurrentPage, reanchorIn, whenLoaded };

@@ -75,10 +75,22 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     Empty-state for scanned PDFs ("no extractable text — save manually");
     "Save as source" button = Tier 1 fallback (creates source row, no
     highlights). Popup detects PDF tabs and shows a CTA button.
+  - In-page sidebar refresh — **code-complete on branch `sidebar-refresh`,
+    pending pilot QA** (not yet merged to `main`). Two tabs under the project
+    line: **Source** (citation form mirroring the Docs editor — source-type +
+    per-type fields + primary/secondary segmented control + annotation + live
+    MLA preview; autosaves through the sync queue; reachable only once the page
+    has a source, i.e. after the first highlight) and **Annotations** (the
+    existing highlight list). The bulky wrapping filter pills are replaced by a
+    compact **vertical facet list** (All notes + 5 categories, swatch · label ·
+    count, empty categories dimmed). Deleting the **last** note for a source no
+    longer silently cascades — a confirm **toast** offers Keep (default) /
+    Delete source. See §4 (in-extension citation editing) and the design/plan
+    in [`docs/superpowers/`](docs/superpowers/).
   - **Code-complete.** Still TODO in Phase 2: real-page QA (news sites,
-    databases, PDFs, edge cases like shadow-DOM-heavy pages); force-install
-    setup with the district Admin console; possible polish on roster-not-found
-    UX.
+    databases, PDFs, edge cases like shadow-DOM-heavy pages) — now including the
+    `sidebar-refresh` tabs/filter/toast; force-install setup with the district
+    Admin console; possible polish on roster-not-found UX.
 - **Phase 3 — Google Docs sidebar — CODE COMPLETE.**
   - Editor add-on entry points in
     [`50_docs_addon.js`](apps-script/src/50_docs_addon.js): `onInstall` /
@@ -217,6 +229,24 @@ These supersede or refine the spec — apply them before defaulting to plan text
   visit, so a NEW highlight on a second device merges into the existing source
   instead of duplicating it (the long-claimed-but-unwired `findSource` dedup is
   still NOT wired; this covers the same ground without a save-path round-trip).
+- **Students edit citation fields in the extension, not only the Docs sidebar**
+  (branch `sidebar-refresh`, pending QA). The in-page sidebar's **Source tab**
+  reuses the SAME field set + precedence as
+  [`source_editor_js.html`](apps-script/src/source_editor_js.html) so the two
+  surfaces never drift. Writes go through the existing queue → `upsertSource_`
+  (no new write endpoint): the Source tab sends a full source upsert carrying
+  citation fields; `upsertSource_`'s field-merge makes those win while a scrape
+  re-assert (which omits them) preserves them — the same invariant §"self-healing"
+  relies on, now locked by `devTestCitationSurvivesReassert`. `citationFields`
+  stores only fields the student explicitly set (a deliberately-cleared field is
+  kept as an empty string, distinct from "never set", so a wrong scraped value a
+  student deletes does not reappear). Two small backend additions: a read-only
+  `previewCitation` GET (wraps `formatCitation` — single source of truth, no JS
+  fork) and a `kind:'source'` branch in the `doPost` deletes loop (orphan-safe,
+  via `deleteSourceIfOrphaned_`) backing the last-note "Delete source" toast.
+  The offline queue now **merges** pending same-source writes (sorted by
+  `enqueuedAt`) instead of last-write-wins, so a citation edit can't be dropped
+  by a later scrape re-assert before draining.
 
 ## 5. GAS V8 quirks discovered
 
@@ -302,6 +332,12 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
 - `devProbeUrlConstructor` — diagnostic for the GAS URL quirk
 - `devValidateRoster` — runs roster + staff validation
 - `devTestDeleteSource` — sidebar source/highlight cascade-delete
+- Extension Source tab (branch `sidebar-refresh`): `devTestPreviewCitation`
+  (the `previewCitation` GET wraps `formatCitation` → `{text, italics}`),
+  `devTestSourceDeleteViaPost` (`doPost` `kind:'source'` delete — orphan removed,
+  referenced source refused), `devTestCitationSurvivesReassert` (locks that a
+  citation write survives a later scrape-only re-assert). The Source-tab UI,
+  facet filter, and orphan toast are DOM-side — no GAS test; real-page QA only.
 - Console (Phase 4 A/B): `devTestConsoleAuth`, `devTestConsoleProjectsFilter`,
   `devTestConsoleCreateProject`, `devTestConsoleDashboardEndToEnd`,
   `devTestAggregateStudent`.
