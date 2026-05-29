@@ -749,7 +749,7 @@ const OpsSidebar = (function () {
     tagWrap.appendChild(el_('label', null, 'Tag'));
     const seg = el_('div', 'src__seg');
     PS_OPTS.forEach((opt) => {
-      const b = el_('button', 'src__seg' + ((src.primarySecondary || 'unset') === opt ? ' src__seg--on' : ''), opt[0].toUpperCase() + opt.slice(1));
+      const b = el_('button', 'src__seg-btn' + ((src.primarySecondary || 'unset') === opt ? ' src__seg--on' : ''), opt[0].toUpperCase() + opt.slice(1));
       b.type = 'button';
       b.addEventListener('click', () => { src.primarySecondary = opt; saveSource_(); render_(); });
       seg.appendChild(b);
