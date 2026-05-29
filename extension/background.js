@@ -80,7 +80,12 @@ async function drain() {
             id: b.payload.highlightId,
             cascadeSource: b.payload.cascadeSource,
             sourceId: b.payload.sourceId,
-          }));
+          }))
+          .concat(
+            batch
+              .filter((b) => b.kind === 'deleteSource')
+              .map((b) => ({ kind: 'source', id: b.payload.sourceId }))
+          );
         try {
           const resp = await apiPost({ projectId, sources, highlights, deletes });
           anyOnline = true;
@@ -169,6 +174,8 @@ async function handleMessage(msg, sender) {
       return previewCitation_(msg.fields, msg.style);
     case 'deleteHighlight':
       return deleteHighlightRequest_(msg.highlightId, msg.sourceId, msg.cascadeSource);
+    case 'deleteSource':
+      return deleteSourceRequest_(msg.sourceId);
     default:
       return { ok: false, error: 'unknown message type: ' + msg.type };
   }
@@ -423,6 +430,26 @@ async function deleteHighlightRequest_(highlightId, sourceId, cascadeSource) {
     }
     if (toRemove.length) await chrome.storage.local.remove(toRemove);
   }
+  return { ok: true };
+}
+
+/**
+ * Enqueue a standalone source deletion (the last-note "Delete source" toast).
+ * Orphan-safe on the server. Also clears any pageSource cache entry pointing at
+ * the deleted source so a later highlight on that page mints a fresh source
+ * rather than reusing a server-deleted id.
+ */
+async function deleteSourceRequest_(sourceId) {
+  const projectId = await getActiveProjectId();
+  if (!projectId) throw new Error('No active project.');
+  if (!sourceId) throw new Error('sourceId required');
+  await enqueue('deleteSource', { projectId, sourceId });
+  const all = await chrome.storage.local.get(null);
+  const toRemove = [];
+  for (const k of Object.keys(all)) {
+    if (k.startsWith(PAGE_SOURCE_PREFIX) && all[k] === sourceId) toRemove.push(k);
+  }
+  if (toRemove.length) await chrome.storage.local.remove(toRemove);
   return { ok: true };
 }
 
