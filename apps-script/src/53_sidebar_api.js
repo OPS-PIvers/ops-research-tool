@@ -60,14 +60,30 @@ function sidebarSetActiveProject(projectId) {
 function sidebarGetProjectData(projectId) {
   const actorEmail = getActorEmail_();
   if (!projectId) throw new Error('projectId required');
-  if (!getProject_(projectId)) throw new Error('Unknown project ' + projectId);
-  const sources = readSourcesForActor_(actorEmail, projectId);
-  const highlights = readHighlightsForActor_(actorEmail, projectId);
-  // Pre-parse citationFields + scrapedExtra JSON so the client doesn't
-  // re-parse per render.
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  // Collapse duplicate source rows for the same page (same URL + author) so the
+  // dropdown / evidence list show one source per page (see dedupeSourcesByUrl_).
+  const rawSources = readSourcesForActor_(actorEmail, projectId);
+  const rawHighlights = readHighlightsForActor_(actorEmail, projectId);
+  const deduped = dedupeSourcesByUrl_(rawSources, rawHighlights);
+  // If duplicates existed, physically remove them so they stop bloating every
+  // read. Best-effort + lock-guarded; the data returned below is already
+  // deduped in-memory regardless of whether the cleanup write runs.
+  if (deduped.sources.length !== rawSources.length) {
+    tryPersistDedupe_(actorEmail, project);
+  }
+  const sources = deduped.sources;
+  const highlights = deduped.highlights;
+  const bundle = getBundle_(project.bundleId);
+  const style = (bundle && bundle.style) || 'mla';
   sources.forEach((s) => {
+    // Pre-parse JSON columns so the client doesn't re-parse per render.
     s.citationFieldsParsed = parseJsonColumn_(s.citationFields);
     s.scrapedExtraParsed = parseJsonColumn_(s.scrapedExtra);
+    // Precompute the in-text citation so the sidebar's "Copy citation" button
+    // is instant — no per-click server round-trip.
+    s.inlineCitation = formatInlineCitation(parseCitationFields_(s), style, '');
   });
   return { ok: true, sources, highlights };
 }
@@ -164,9 +180,13 @@ function sidebarPreviewCitation(fields, style) {
   return formatCitation(fields || {}, style || 'mla');
 }
 
-/** The big button — same as insertAnnotatedBibliography but exposed under the sidebar* namespace. */
-function sidebarInsertBibliography(projectId) {
-  return insertAnnotatedBibliography(projectId);
+/**
+ * Insert/replace the bibliography. annotated=true → "Annotated Bibliography",
+ * annotated=false → "Works Cited". Defaults to annotated when the flag is
+ * omitted (back-compat). Exposed under the sidebar* namespace.
+ */
+function sidebarInsertBibliography(projectId, annotated) {
+  return insertBibliography_(projectId, annotated === undefined ? true : !!annotated);
 }
 
 /** Insert an MLA parenthetical citation at the doc cursor for the given source. */
@@ -227,6 +247,62 @@ function deleteAllRowsWhere_(tab, headers, keyCol, keyValue) {
     tab.getRange(2, 1, kept.length, headers.length).setValues(kept);
   }
   return removed;
+}
+
+/**
+ * Physically collapse duplicate source rows (same normalizedUrl + author) in
+ * the student's Sheet: keep the oldest canonical row with both rows' citation
+ * work merged in, repoint the duplicates' highlights onto it, and drop the
+ * duplicate source rows. One batched rewrite per tab. Idempotent — a no-op when
+ * there are no duplicates. Returns the number of source rows removed.
+ */
+function dedupeSourcesPersist_(studentSheet) {
+  const srcTab = getTab_(studentSheet, TABS.SOURCES);
+  const sources = readAllAsObjects_(srcTab, HEADERS.SOURCES);
+  if (sources.length < 2) return 0;
+  const hlTab = getTab_(studentSheet, TABS.HIGHLIGHTS);
+  const highlights = readAllAsObjects_(hlTab, HEADERS.HIGHLIGHTS);
+
+  const deduped = dedupeSourcesByUrl_(sources, highlights);
+  const removed = sources.length - deduped.sources.length;
+  if (removed === 0) return 0;
+
+  rewriteTabRows_(srcTab, HEADERS.SOURCES, deduped.sources);
+  rewriteTabRows_(hlTab, HEADERS.HIGHLIGHTS, deduped.highlights);
+  return removed;
+}
+
+/**
+ * Replace every data row (below the header) of `tab` with `objects` mapped
+ * positionally through `headers`. One batched clear + setValues — mirrors the
+ * filter-rewrite strategy of deleteAllRowsWhere_.
+ */
+function rewriteTabRows_(tab, headers, objects) {
+  const lastRow = tab.getLastRow();
+  if (lastRow >= 2) tab.getRange(2, 1, lastRow - 1, headers.length).clearContent();
+  if (!objects || objects.length === 0) return;
+  const rows = objects.map((obj) =>
+    headers.map((h) => (obj[h] === null || obj[h] === undefined) ? '' : obj[h])
+  );
+  tab.getRange(2, 1, rows.length, headers.length).setValues(rows);
+}
+
+/**
+ * Best-effort physical dedup, serialized with a script lock so two concurrent
+ * sidebar loads don't race on the rewrite. The caller's returned data is
+ * already deduped in-memory, so skipping (lock held by another invocation that
+ * is doing the cleanup) is harmless.
+ */
+function tryPersistDedupe_(actorEmail, project) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) return;
+  try {
+    dedupeSourcesPersist_(findOrCreateStudentSheet_(actorEmail, project));
+  } catch (e) {
+    console.warn('[OPS] dedupe persist failed: ' + (e && e.message || e));
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /**

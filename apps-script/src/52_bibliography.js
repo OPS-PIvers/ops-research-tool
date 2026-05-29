@@ -9,7 +9,29 @@
  * (build plan §2 — "no insert-as-quote button").
  */
 
+// Tags the inserted bibliography block so a later insert can find + replace it
+// rather than stacking a second copy.
+const BIB_NAMED_RANGE = 'opsResearchBibliography';
+
+// Back-compat entry point. The sidebar calls sidebarInsertBibliography, which
+// routes here for the annotated variant.
 function insertAnnotatedBibliography(projectId) {
+  return insertBibliography_(projectId, true);
+}
+
+/**
+ * Insert — or REPLACE — the bibliography at the cursor in the active Doc.
+ *
+ *   annotated=true  → "Annotated Bibliography": citation + indented annotation.
+ *   annotated=false → "Works Cited": citations only, no annotations.
+ *
+ * The inserted block is wrapped in a named range (BIB_NAMED_RANGE). On a
+ * subsequent insert of EITHER type, the previous block is removed and the new
+ * one dropped in its place — so re-clicking updates the single bibliography
+ * instead of appending copies. Sources are de-duplicated by URL first;
+ * unclassified (primary/secondary unset) sources are skipped per build plan §2.
+ */
+function insertBibliography_(projectId, annotated) {
   const doc = DocumentApp.getActiveDocument();
   if (!doc) throw new Error('No active document.');
   const actorEmail = getActorEmail_();
@@ -18,7 +40,7 @@ function insertAnnotatedBibliography(projectId) {
   const bundle = getBundle_(project.bundleId);
   const style = (bundle && bundle.style) || 'mla';
 
-  const sources = readSourcesForActor_(actorEmail, projectId);
+  const sources = dedupeSourcesByUrl_(readSourcesForActor_(actorEmail, projectId), []).sources;
   if (sources.length === 0) throw new Error('No sources saved for this project yet.');
 
   const primary = [];
@@ -34,27 +56,79 @@ function insertAnnotatedBibliography(projectId) {
     };
     if (s.primarySecondary === 'primary') primary.push(entry);
     else if (s.primarySecondary === 'secondary') secondary.push(entry);
-    // unset → skipped from bibliography per build plan §2 ("hard validation —
-    // you must classify this source before it counts as complete")
+    // unset → skipped per build plan §2 ("you must classify this source before
+    // it counts as complete")
   });
   primary.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
   secondary.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
-  const cursor = doc.getCursor();
   const body = doc.getBody();
-  const insertIndex = cursor ? indexOfCursor_(body, cursor) : body.getNumChildren();
+  // Replace an existing OPS bibliography in place, if there is one; otherwise
+  // insert at the cursor (or the end).
+  let insertIndex = removeExistingBibliography_(doc, body);
+  if (insertIndex < 0) {
+    const cursor = doc.getCursor();
+    insertIndex = cursor ? indexOfCursor_(body, cursor) : body.getNumChildren();
+  }
 
+  const startIndex = insertIndex;
   let idx = insertIndex;
-  idx = appendHeading_(body, idx, 'Annotated Bibliography');
+  idx = appendHeading_(body, idx, annotated ? 'Annotated Bibliography' : 'Works Cited');
   if (primary.length > 0) {
     idx = appendSectionHeading_(body, idx, 'Primary Sources');
-    primary.forEach((e) => { idx = appendBibEntry_(body, idx, e); });
+    primary.forEach((e) => { idx = appendBibEntry_(body, idx, e, annotated); });
   }
   if (secondary.length > 0) {
     idx = appendSectionHeading_(body, idx, 'Secondary Sources');
-    secondary.forEach((e) => { idx = appendBibEntry_(body, idx, e); });
+    secondary.forEach((e) => { idx = appendBibEntry_(body, idx, e, annotated); });
   }
-  return { ok: true, inserted: { primary: primary.length, secondary: secondary.length } };
+  wrapBibliographyRange_(doc, body, startIndex, idx);
+  return { ok: true, annotated: !!annotated, inserted: { primary: primary.length, secondary: secondary.length } };
+}
+
+/**
+ * Remove a previously-inserted OPS bibliography (the paragraphs covered by the
+ * BIB_NAMED_RANGE) and the named range itself. Returns the body child index
+ * where the block started so the replacement lands in the same spot, or -1 if
+ * none was found.
+ */
+function removeExistingBibliography_(doc, body) {
+  const ranges = doc.getNamedRanges(BIB_NAMED_RANGE);
+  if (!ranges || ranges.length === 0) return -1;
+  const elsByIndex = {};
+  ranges.forEach((nr) => {
+    nr.getRange().getRangeElements().forEach((re) => {
+      let el = re.getElement();
+      while (el && el.getParent && el.getParent() !== body) el = el.getParent();
+      if (el && el.getParent && el.getParent() === body) {
+        elsByIndex[body.getChildIndex(el)] = el;
+      }
+    });
+    nr.remove();
+  });
+  const indices = Object.keys(elsByIndex).map(Number);
+  if (indices.length === 0) return -1;
+  const firstIndex = Math.min.apply(null, indices);
+  // Remove by element reference (index-independent). try/catch covers the rare
+  // edge where the bibliography is the doc's only content — Docs forbids
+  // removing the last paragraph, so it's left in place harmlessly.
+  indices.forEach((i) => {
+    try { elsByIndex[i].removeFromParent(); } catch (e) { /* last paragraph — leave it */ }
+  });
+  return firstIndex;
+}
+
+/** Wrap the just-inserted bibliography paragraphs [startIndex, endIndex) in a
+ *  named range so the next insert can find and replace them. */
+function wrapBibliographyRange_(doc, body, startIndex, endIndex) {
+  if (endIndex <= startIndex) return;
+  const rb = doc.newRange();
+  const n = body.getNumChildren();
+  for (let i = startIndex; i < endIndex && i < n; i++) {
+    try { rb.addElement(body.getChild(i)); } catch (e) { /* unsupported element type; skip */ }
+  }
+  try { doc.addNamedRange(BIB_NAMED_RANGE, rb.build()); }
+  catch (e) { /* nothing addable — skip tagging */ }
 }
 
 function parseCitationFields_(source) {
@@ -108,7 +182,7 @@ function appendSectionHeading_(body, idx, text) {
   return idx + 1;
 }
 
-function appendBibEntry_(body, idx, entry) {
+function appendBibEntry_(body, idx, entry, includeAnnotation) {
   // Citation paragraph with italics applied to the ranges from
   // formatCitation. MLA hanging indent: insert as a Normal paragraph with
   // a left indent on subsequent lines via setIndentFirstLine(0)/setIndentStart(36).
@@ -118,7 +192,7 @@ function appendBibEntry_(body, idx, entry) {
   cite.setIndentStart(36); // 0.5 inch in points
   applyItalicsRanges_(cite, entry.italics);
   let next = idx + 1;
-  if (entry.annotation && entry.annotation.trim()) {
+  if (includeAnnotation && entry.annotation && entry.annotation.trim()) {
     const ann = body.insertParagraph(next, entry.annotation.trim());
     ann.setHeading(DocumentApp.ParagraphHeading.NORMAL);
     ann.setIndentStart(72); // 1.0 inch — nested under the citation

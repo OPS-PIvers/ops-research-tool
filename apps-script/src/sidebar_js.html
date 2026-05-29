@@ -32,6 +32,7 @@ const els = {
   fltUnset: document.getElementById('sb-flt-unset'),
   main: document.getElementById('sb-main'),
   insert: document.getElementById('sb-insert'),
+  insertWorks: document.getElementById('sb-insert-works'),
   openEditor: document.getElementById('sb-open-editor'),
   status: document.getElementById('sb-status'),
 };
@@ -56,7 +57,8 @@ function bootstrap() {
   els.fltUnset.addEventListener('change', () => { state.filterPS.unset = els.fltUnset.checked; render(); });
   els.vmEvidence.addEventListener('click', () => setViewMode_('evidence'));
   els.vmSource.addEventListener('click', () => setViewMode_('source'));
-  els.insert.addEventListener('click', insertBibliography);
+  els.insert.addEventListener('click', () => insertBibliography(true));
+  els.insertWorks.addEventListener('click', () => insertBibliography(false));
   els.openEditor.addEventListener('click', openEditorFromFooter_);
 }
 
@@ -141,6 +143,7 @@ function onProjectData(resp) {
   state.sources = resp.sources || [];
   state.highlights = resp.highlights || [];
   els.insert.disabled = state.sources.length === 0;
+  els.insertWorks.disabled = state.sources.length === 0;
   els.openEditor.disabled = state.sources.length === 0;
   setStatus('');
   renderFilter();
@@ -395,7 +398,7 @@ function renderSource(source) {
     }
   }
 
-  // Action row: highlight count + Edit citation + Insert in-text.
+  // Action row: highlight count + Edit citation + Copy citation.
   const meta = document.createElement('div');
   meta.className = 'sb-source__meta';
   const countSpan = document.createElement('span');
@@ -407,9 +410,9 @@ function renderSource(source) {
   const inlineBtn = document.createElement('button');
   inlineBtn.type = 'button';
   inlineBtn.className = 'sb-source__action';
-  inlineBtn.textContent = 'Insert in-text';
-  inlineBtn.title = 'Insert MLA in-text citation at the cursor';
-  inlineBtn.addEventListener('click', (e) => { e.stopPropagation(); insertInlineForSource(source); });
+  inlineBtn.textContent = 'Copy citation';
+  inlineBtn.title = 'Copy the MLA in-text citation to your clipboard, then paste it into your doc';
+  inlineBtn.addEventListener('click', (e) => { e.stopPropagation(); copyInlineForSource(source, inlineBtn); });
   meta.appendChild(inlineBtn);
   card.appendChild(meta);
 
@@ -464,15 +467,49 @@ function makeSourceFilterChip_(source, value, label, color, count, active) {
   return chip;
 }
 
-function insertInlineForSource(source) {
-  setStatus('Inserting in-text citation…');
-  google.script.run
-    .withSuccessHandler((res) => {
-      if (res && res.ok) setStatus('Inserted ' + (res.text || 'citation') + '.', 'good', 2500);
-      else setStatus('Insert failed.', 'bad');
-    })
-    .withFailureHandler((e) => setStatus(String(e && e.message || e), 'bad'))
-    .sidebarInsertInlineCitation(state.projectId, source.sourceId, '');
+// Click-to-copy the in-text citation. The text is precomputed server-side
+// (source.inlineCitation from sidebarGetProjectData), so this is instant — no
+// round-trip. The student pastes it where they want and adds a page number.
+function copyInlineForSource(source, btn) {
+  const text = (source && source.inlineCitation) || '';
+  if (!text) {
+    setStatus('No author or title yet — edit the citation first.', 'bad', 4000);
+    return;
+  }
+  if (copyToClipboard_(text)) {
+    setStatus('Copied ' + text + ' — paste it into your doc.', 'good', 3000);
+    if (btn) {
+      const prev = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = prev; }, 1200);
+    }
+  } else {
+    setStatus('Could not copy automatically. Citation: ' + text, 'bad', 6000);
+  }
+}
+
+/**
+ * Copy text to the clipboard from inside the GAS sidebar iframe. navigator.
+ * clipboard is usually blocked by the iframe sandbox, so use the hidden-
+ * textarea + execCommand('copy') approach, which works on a user gesture.
+ */
+function copyToClipboard_(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
 }
 
 // ---------- highlight render ----------
@@ -611,6 +648,7 @@ function onPollResponse_(resp) {
   state.sources = resp.sources || [];
   state.highlights = resp.highlights || [];
   els.insert.disabled = state.sources.length === 0;
+  els.insertWorks.disabled = state.sources.length === 0;
   els.openEditor.disabled = state.sources.length === 0;
   renderFilter();
   render();
@@ -622,33 +660,48 @@ function onPollResponse_(resp) {
 }
 
 
-const INSERT_BTN_LABEL = 'Insert Annotated Bibliography';
+const INSERT_BTN_LABELS = {
+  annotated: 'Insert Annotated Bibliography',
+  works: 'Insert Works Cited',
+};
 
-function insertBibliography() {
+// annotated=true → Annotated Bibliography button; false → Works Cited button.
+// Both replace whatever bibliography is already in the doc (server-side, via
+// the named-range tag), so re-clicking either updates the one block.
+function insertBibliography(annotated) {
+  const btn = annotated ? els.insert : els.insertWorks;
   els.insert.disabled = true;
-  els.insert.innerHTML =
-    '<span class="sb-loading__spinner sb-loading__spinner--sm sb-loading__spinner--on-accent"></span>' +
-    'Inserting…';
+  els.insertWorks.disabled = true;
+  if (annotated) {
+    btn.innerHTML =
+      '<span class="sb-loading__spinner sb-loading__spinner--sm sb-loading__spinner--on-accent"></span>Inserting…';
+  } else {
+    btn.textContent = 'Inserting…';
+  }
   setStatus('');
-  const restoreButton = () => {
+  const restore = () => {
     els.insert.disabled = state.sources.length === 0;
-  els.openEditor.disabled = state.sources.length === 0;
-    els.insert.textContent = INSERT_BTN_LABEL;
+    els.insertWorks.disabled = state.sources.length === 0;
+    els.openEditor.disabled = state.sources.length === 0;
+    els.insert.textContent = INSERT_BTN_LABELS.annotated;
+    els.insertWorks.textContent = INSERT_BTN_LABELS.works;
   };
   google.script.run
     .withSuccessHandler((res) => {
-      restoreButton();
+      restore();
       if (res && res.ok) {
-        setStatus('Inserted ' + (res.inserted.primary + res.inserted.secondary) + ' source(s).', 'good', 3000);
+        const n = res.inserted.primary + res.inserted.secondary;
+        const what = res.annotated ? 'annotated bibliography' : 'works cited';
+        setStatus('Inserted ' + what + ' (' + n + ' source(s)).', 'good', 3000);
       } else {
         setStatus('Insert failed.', 'bad');
       }
     })
     .withFailureHandler((e) => {
-      restoreButton();
+      restore();
       setStatus(String(e && e.message || e), 'bad');
     })
-    .sidebarInsertBibliography(state.projectId);
+    .sidebarInsertBibliography(state.projectId, annotated);
 }
 
 function setStatus(text, kind, autoClearMs) {
