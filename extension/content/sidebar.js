@@ -468,15 +468,79 @@ const OpsSidebar = (function () {
     // page as it comes on screen. Without this we'd mark every highlight
     // as "page changed" on first load, since no pages are in the DOM yet.
     if (self.reAnchorHighlights && !self.OPS_DEFER_REANCHOR) {
-      const colorWithFallback = (label) => colorForLabel_(label) || '#fff8c4';
-      const { failed } = self.reAnchorHighlights(resp.highlights, colorWithFallback);
-      const failedSet = new Set(failed);
-      state.pageHighlights.forEach((h) => {
-        if (failedSet.has(h.highlightId)) h.notFoundOnPage = true;
-      });
+      scheduleReanchorRetries_(resp.highlights);
     }
 
     render_();
+  }
+
+  // Re-anchoring can run before late-rendered / hydrated / lazy-loaded body
+  // text is in the DOM, so a first miss usually means "not ready yet", not
+  // "page changed". Retry the still-unanchored set as the page settles — driven
+  // by a debounced MutationObserver plus a few backstop timers — and clear the
+  // per-entry "page changed" flag as marks land. Give up after a bounded window
+  // so a genuinely changed page does eventually surface the flag. reAnchor is
+  // idempotent (skips IDs already marked in the DOM), so re-passing the full
+  // set only re-attempts the ones still missing.
+  let _reanchorObserver = null;
+  let _reanchorTimers = [];
+
+  function scheduleReanchorRetries_(serverHighlights) {
+    cleanupReanchorRetries_();            // reset any prior run (e.g. re-enable)
+    runReanchorPass_(serverHighlights);   // initial attempt + flag misses
+    if (!anyPendingReanchor_()) return;
+
+    let queued = false;
+    const retry = () => {
+      runReanchorPass_(serverHighlights);
+      if (!anyPendingReanchor_()) cleanupReanchorRetries_();
+    };
+    const kick = () => {                  // debounce a burst of mutations
+      if (queued) return;
+      queued = true;
+      setTimeout(() => { queued = false; retry(); }, 250);
+    };
+
+    try {
+      _reanchorObserver = new MutationObserver(kick);
+      _reanchorObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+    } catch (e) { /* no body yet — the timers below still cover it */ }
+
+    // Backstop for content that settles without further mutations, and a hard
+    // stop so the observer can't linger for the life of the tab.
+    [600, 1500, 4000, 9000].forEach((ms) => _reanchorTimers.push(setTimeout(retry, ms)));
+    _reanchorTimers.push(setTimeout(cleanupReanchorRetries_, 30000));
+  }
+
+  function runReanchorPass_(serverHighlights) {
+    if (!self.reAnchorHighlights) return;
+    const colorWithFallback = (label) => colorForLabel_(label) || '#fff8c4';
+    const { failed } = self.reAnchorHighlights(serverHighlights, colorWithFallback);
+    const failedSet = new Set(failed);
+    let changed = false;
+    state.pageHighlights.forEach((h) => {
+      const missing = failedSet.has(h.highlightId);
+      if (!!h.notFoundOnPage !== missing) { h.notFoundOnPage = missing; changed = true; }
+    });
+    // Marks are applied to the page regardless; only skip the sidebar re-render
+    // (which would steal focus / cursor) while the student is editing a field.
+    if (changed && !isEditingInPanel_()) render_();
+  }
+
+  function anyPendingReanchor_() {
+    return state.pageHighlights.some((h) => h.notFoundOnPage);
+  }
+
+  function cleanupReanchorRetries_() {
+    if (_reanchorObserver) { _reanchorObserver.disconnect(); _reanchorObserver = null; }
+    _reanchorTimers.forEach((t) => clearTimeout(t));
+    _reanchorTimers = [];
+  }
+
+  function isEditingInPanel_() {
+    if (!state.shadowRoot) return false;
+    const a = state.shadowRoot.activeElement;
+    return !!a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT' || a.tagName === 'SELECT');
   }
 
   /**
