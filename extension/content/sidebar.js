@@ -67,19 +67,37 @@ const SIDEBAR_CSS = `
   box-shadow: -4px 0 16px rgba(0,0,0,0.08);
   display: flex; flex-direction: column;
 }
+/* Branded header — OPS Primary Blue, Lexend; mirrors the edge launcher tab so
+   the panel reads as the same on-brand surface. */
 .panel__header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px; border-bottom: 1px solid #dadce0;
+  padding: 11px 14px; background: #2d3f89; color: #fff;
 }
-.panel__title { font-weight: 600; font-size: 14px; }
-.panel__close {
-  background: none; border: none; color: #5f6368;
-  font-size: 18px; line-height: 1; padding: 4px 8px; border-radius: 4px;
+.panel__brand {
+  font-family: "Lexend", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-weight: 600; font-size: 14px; letter-spacing: 0.01em; color: #fff;
 }
-.panel__close:hover { background: #f1f3f4; }
-.panel__sub {
+/* Right-pointing control = collapse the panel back into the edge tab (not a
+   destructive close). */
+.panel__collapse {
+  background: rgba(255,255,255,0.14); border: none; color: #fff;
+  font-size: 16px; line-height: 1; width: 26px; height: 26px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s ease;
+}
+.panel__collapse:hover { background: rgba(255,255,255,0.28); }
+.panel__collapse:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(255,255,255,0.75); }
+.panel__project {
+  display: flex; align-items: center; gap: 8px;
   padding: 8px 14px; border-bottom: 1px solid #dadce0;
-  font-size: 11px; color: #5f6368;
+}
+.panel__project-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: #5f6368; flex: none;
+}
+.panel__project-select {
+  flex: 1; min-width: 0; border: 1px solid #dadce0; border-radius: 6px;
+  padding: 5px 8px; font: inherit; font-size: 12px; color: #202124; background: #fff;
 }
 
 .list { flex: 1; overflow-y: auto; padding: 8px 0; min-height: 0; }
@@ -309,6 +327,7 @@ const OpsSidebar = (function () {
     listEl: null,
     launcherEl: null,
     project: null,
+    projects: [],         // all active projects the student belongs to (drives the picker)
     bundle: null,
     filter: null,         // null | category label
     editingId: null,      // highlightId currently being edited
@@ -591,10 +610,35 @@ const OpsSidebar = (function () {
       if (ctx && ctx.ok) {
         state.project = ctx.project;
         state.bundle = ctx.bundle;
+        state.projects = ctx.projects || [];
       }
     } catch (e) {
       console.warn('[OPS sidebar] could not load active project:', e);
     }
+  }
+
+  // Switch the active project from the sidebar's picker. Persists + server-syncs
+  // through the service worker, then resets this page's state and reloads the
+  // newly-selected project's saved work for the current URL.
+  async function switchProject_(projectId) {
+    if (!projectId || (state.project && state.project.projectId === projectId)) return;
+    // Drop the previous project's on-page marks before we discard its highlights.
+    state.pageHighlights.forEach((h) => { if (self.unwrapMark) self.unwrapMark(h.highlightId); });
+    cleanupReanchorRetries_();
+    state.pageHighlights = [];
+    state.pageSource = null;
+    state.filter = null;
+    state.editingId = null;
+    state.altPickerOpenId = null;
+    state.sourceSaveStatus = null;
+    try {
+      await chrome.runtime.sendMessage({ type: 'setActiveProject', projectId });
+    } catch (e) {
+      console.warn('[OPS sidebar] setActiveProject failed:', e);
+    }
+    await loadContext_();   // new project + bundle + refreshed projects list
+    render_();
+    loadForCurrentPage();   // fetch this page's work for the newly active project
   }
 
   async function buildHost_() {
@@ -660,24 +704,41 @@ const OpsSidebar = (function () {
   function renderPanel_() {
     state.panelEl.innerHTML = '';
 
-    // Header
+    // Branded header — OPS wordmark + a right-arrow that collapses the panel
+    // back into the edge launcher tab.
     const hdr = el_('div', 'panel__header');
-    const title = el_('div', 'panel__title', 'Research notes');
-    const close = el_('button', 'panel__close');
-    close.type = 'button';
-    close.textContent = '×';
-    close.title = 'Close';
-    close.addEventListener('click', () => hide());
-    hdr.appendChild(title);
-    hdr.appendChild(close);
+    hdr.appendChild(el_('span', 'panel__brand', 'OPS Research Tool'));
+    const collapse = el_('button', 'panel__collapse');
+    collapse.type = 'button';
+    collapse.textContent = '→'; // → collapse
+    collapse.title = 'Collapse panel';
+    collapse.setAttribute('aria-label', 'Collapse panel');
+    collapse.addEventListener('click', () => hide());
+    hdr.appendChild(collapse);
     state.panelEl.appendChild(hdr);
 
-    // Subheader (project info)
-    const sub = el_('div', 'panel__sub');
-    sub.textContent = state.project
-      ? 'Saving to: ' + state.project.name
-      : 'No active project — pick one from the extension toolbar.';
-    state.panelEl.appendChild(sub);
+    // Project selector (the active project this page's work saves to).
+    const projWrap = el_('div', 'panel__project');
+    projWrap.appendChild(el_('span', 'panel__project-label', 'Project'));
+    const projSel = document.createElement('select');
+    projSel.className = 'panel__project-select';
+    if (!state.projects || state.projects.length === 0) {
+      const opt = document.createElement('option');
+      opt.textContent = state.project ? state.project.name : 'No projects available';
+      projSel.appendChild(opt);
+      projSel.disabled = true;
+    } else {
+      state.projects.forEach((p) => {
+        const opt = document.createElement('option');
+        opt.value = p.projectId;
+        opt.textContent = p.name + (p.schoolYear ? ' (' + p.schoolYear + ')' : '');
+        if (state.project && p.projectId === state.project.projectId) opt.selected = true;
+        projSel.appendChild(opt);
+      });
+      projSel.addEventListener('change', () => switchProject_(projSel.value));
+    }
+    projWrap.appendChild(projSel);
+    state.panelEl.appendChild(projWrap);
 
     // Tab bar
     const tabs = el_('div', 'tabs');

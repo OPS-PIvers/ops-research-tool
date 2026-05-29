@@ -1,10 +1,11 @@
 /**
- * Toolbar popup. Owns:
+ * Toolbar popup. Deliberately minimal — three things only:
+ *   - Master on/off switch
  *   - Identity surface (name + email from cached 'me')
- *   - Project picker (lists open projects the student belongs to)
- *   - Sync status indicator
- *   - Bundle preview (5 swatches + labels of the active project)
+ *   - Sync status + "Sync now"
  *
+ * Project selection and the category key now live in the in-page sidebar; PDF
+ * capture is offered by the in-page banner (content/pdf_helper.js) on PDF tabs.
  * All API calls go through the background service worker.
  */
 
@@ -12,20 +13,14 @@ const els = {
   status: document.getElementById('sync-status'),
   name: document.getElementById('identity-name'),
   email: document.getElementById('identity-email'),
-  select: document.getElementById('project-select'),
-  bundleSection: document.getElementById('bundle-preview'),
-  bundleRow: document.getElementById('bundle-preview-row'),
   error: document.getElementById('error'),
   forceDrain: document.getElementById('force-drain'),
   lastSync: document.getElementById('last-sync'),
-  pdfCta: document.getElementById('pdf-cta'),
-  openPdfPanel: document.getElementById('open-pdf-panel'),
   enabledToggle: document.getElementById('enabled-toggle'),
   enabledLabel: document.getElementById('enabled-label'),
 };
 
 initEnabledToggle_();
-maybeShowPdfCta_();
 bootstrapFromCache_().then(() => bootstrapFromNetwork_());
 
 // Master on/off switch. Single global flag in chrome.storage.local; the
@@ -46,92 +41,16 @@ function reflectEnabled_(on) {
   els.enabledLabel.textContent = on ? 'Extension on' : 'Extension off';
 }
 
-async function maybeShowPdfCta_() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.url) return;
-    if (!isPdfUrl_(tab.url)) return;
-    els.pdfCta.hidden = false;
-    els.openPdfPanel.addEventListener('click', () => openPdfPanelFromPopup_(tab.url));
-  } catch (e) {
-    // Tab query can fail for restricted pages; just suppress CTA.
-  }
-}
-
-async function openPdfPanelFromPopup_(pdfUrl) {
-  // Open the panel tab directly. Going through the background SW added a
-  // round-trip and a silent failure mode (if the SW was asleep and the
-  // message dropped, the click did nothing). chrome.tabs.create is
-  // available to popups without the `tabs` permission.
-  els.openPdfPanel.disabled = true;
-  els.openPdfPanel.textContent = 'Opening…';
-  try {
-    const panelUrl = chrome.runtime.getURL('pdf/panel.html') + '?src=' + encodeURIComponent(pdfUrl);
-    await chrome.tabs.create({ url: panelUrl });
-    window.close();
-  } catch (e) {
-    // Surface the failure inline so the next round of debugging has something
-    // to look at, instead of silently leaving the button disabled.
-    els.openPdfPanel.disabled = false;
-    els.openPdfPanel.textContent = 'Open this PDF in the research panel';
-    showError('Could not open the PDF panel: ' + (e && e.message || e));
-  }
-}
-
-/**
- * Best-effort PDF tab detection. Chrome doesn't expose tab.contentType, so
- * we sniff the URL. Strict `.pdf` suffix is too narrow — arxiv, jstor, ssrn,
- * Google Scholar's PDF mirror, etc. all serve PDFs under paths like
- * `/pdf/<id>` without an extension. Match those by path prefix.
- */
-function isPdfUrl_(url) {
-  if (!url) return false;
-  if (url.startsWith('file:') && url.toLowerCase().endsWith('.pdf')) return true;
-  let u;
-  try { u = new URL(url); }
-  catch (e) { return false; }
-  const path = u.pathname.toLowerCase();
-  if (path.endsWith('.pdf')) return true;
-  // Known PDF-serving path patterns. Keep this list narrow — false positives
-  // here mean the CTA shows on non-PDF pages.
-  const PDF_PATH_PATTERNS = [
-    /^\/pdf\//,                 // arxiv.org/pdf/<id>, eric.ed.gov/?id=ED... wait, eric uses query
-    /^\/doi\/pdf\//,            // many journal hosts
-    /^\/stable\/pdf\//,         // jstor
-    /\/fulltext\.pdf$/,         // some article hosts
-  ];
-  return PDF_PATH_PATTERNS.some((re) => re.test(path));
-}
-
-// Cache-first: paint whatever we have in chrome.storage immediately so the
-// popup feels snappy and doesn't appear to "reload" every time. This also
-// guarantees that the activeProjectId auto-set persists even if the user
-// closes the popup the instant they open it.
+// Cache-first: paint identity + sync status from chrome.storage immediately so
+// the popup feels snappy and doesn't appear to reload on every open.
 async function bootstrapFromCache_() {
-  const cached = await chrome.storage.local.get([
-    'cachedMe', 'cachedProjects', 'cachedBundles', 'activeProjectId',
-    'syncStatus', 'lastSyncAt',
-  ]);
+  const cached = await chrome.storage.local.get(['cachedMe', 'syncStatus', 'lastSyncAt']);
   renderSyncStatus({ status: cached.syncStatus || 'idle', lastSyncAt: cached.lastSyncAt || null });
-  const me = cached.cachedMe || null;
-  const projects = cached.cachedProjects || [];
-  const bundles = cached.cachedBundles || [];
-  renderIdentity(me);
-  let activeProjectId = cached.activeProjectId || null;
-  if (!activeProjectId && projects.length > 0) {
-    activeProjectId = projects[0].projectId;
-    // Persist BEFORE doing anything async, so even if the popup closes a
-    // millisecond later, the value survives.
-    await chrome.storage.local.set({ activeProjectId });
-    // Sync to server (best-effort) so the Docs sidebar sees the same pick.
-    sendMessage({ type: 'setActiveProject', projectId: activeProjectId }).catch(() => {});
-  }
-  renderProjectPicker(projects, activeProjectId);
-  renderBundleForActive(projects, bundles, activeProjectId);
+  renderIdentity(cached.cachedMe || null);
 }
 
-// Then refresh from the network in the background. Updates the UI in place
-// if anything changed.
+// Then refresh from the network. This also re-warms the projects/bundles caches
+// the sidebar relies on, even though the popup no longer renders them.
 async function bootstrapFromNetwork_() {
   let refresh;
   try {
@@ -141,21 +60,7 @@ async function bootstrapFromNetwork_() {
     return;
   }
   if (!refresh || !refresh.ok) return;
-  const me = refresh.me || null;
-  const projects = (refresh.projects && refresh.projects.projects) || [];
-  const bundles = (refresh.bundles && refresh.bundles.bundles) || [];
-  renderIdentity(me);
-  let activeProjectId = (await chrome.storage.local.get('activeProjectId')).activeProjectId || null;
-  // Auto-set after network refresh too. The cache-first bootstrap can't do
-  // this on a fresh install because cachedProjects is still empty; the
-  // network is what first delivers the project list.
-  if (!activeProjectId && projects.length > 0) {
-    activeProjectId = projects[0].projectId;
-    await chrome.storage.local.set({ activeProjectId });
-    sendMessage({ type: 'setActiveProject', projectId: activeProjectId }).catch(() => {});
-  }
-  renderProjectPicker(projects, activeProjectId);
-  renderBundleForActive(projects, bundles, activeProjectId);
+  renderIdentity(refresh.me || null);
 }
 
 function renderSyncStatus(s) {
@@ -190,69 +95,9 @@ function renderIdentity(meResp) {
   }
 }
 
-function renderProjectPicker(projects, activeProjectId) {
-  els.select.innerHTML = '';
-  if (!projects || projects.length === 0) {
-    const opt = document.createElement('option');
-    opt.textContent = 'no projects available';
-    els.select.appendChild(opt);
-    els.select.disabled = true;
-    return;
-  }
-  projects.forEach((p) => {
-    const opt = document.createElement('option');
-    opt.value = p.projectId;
-    opt.textContent = p.name + (p.schoolYear ? ' (' + p.schoolYear + ')' : '');
-    if (p.projectId === activeProjectId) opt.selected = true;
-    els.select.appendChild(opt);
-  });
-  els.select.disabled = false;
-  // bootstrapFromCache_ already persisted the auto-select, so we don't need
-  // to send setActiveProject again here.
-  els.select.addEventListener('change', async () => {
-    const id = els.select.value;
-    // Write directly to storage so the value survives even if the popup
-    // closes before the round-trip to the service worker completes.
-    await chrome.storage.local.set({ activeProjectId: id });
-    // Server sync so the Docs sidebar's pick matches the extension's.
-    sendMessage({ type: 'setActiveProject', projectId: id }).catch(() => {});
-    const cached = await chrome.storage.local.get(['cachedProjects', 'cachedBundles']);
-    renderBundleForActive(cached.cachedProjects || [], cached.cachedBundles || [], id);
-  });
-}
-
-function renderBundleForActive(projects, bundles, activeProjectId) {
-  const project = projects.find((p) => p.projectId === activeProjectId);
-  if (!project) { els.bundleSection.hidden = true; return; }
-  const bundle = bundles.find((b) => b.bundleId === project.bundleId);
-  if (!bundle) { els.bundleSection.hidden = true; return; }
-  els.bundleSection.hidden = false;
-  els.bundleRow.innerHTML = '';
-  for (let i = 1; i <= 5; i++) {
-    const label = bundle['label' + i];
-    const color = bundle['color' + i];
-    if (!label) continue;
-    const wrap = document.createElement('div');
-    wrap.className = 'swatch';
-    const c = document.createElement('div');
-    c.className = 'swatch__color';
-    c.style.backgroundColor = color;
-    const l = document.createElement('div');
-    l.textContent = label;
-    wrap.appendChild(c);
-    wrap.appendChild(l);
-    els.bundleRow.appendChild(wrap);
-  }
-}
-
 function showError(msg) {
   els.error.hidden = false;
   els.error.textContent = msg;
-}
-
-async function getActiveProjectIdFromBg_() {
-  const resp = await sendMessage({ type: 'getActiveProject' }).catch(() => null);
-  return resp && resp.activeProjectId || null;
 }
 
 function sendMessage(msg) {

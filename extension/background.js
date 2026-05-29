@@ -485,19 +485,17 @@ async function enqueueHighlight(h) {
   return { ok: true, highlightId };
 }
 
-/** Returns { activeProjectId, project, bundle } using cache; refreshes if absent. */
+/** Returns { activeProjectId, project, bundle, projects } using cache; refreshes if absent. */
 async function getActiveProjectInfo() {
-  const activeProjectId = await getActiveProjectId();
+  let activeProjectId = await getActiveProjectId();
   let projects = (await getCache('cachedProjects')) || [];
   let bundles = (await getCache('cachedBundles')) || [];
   let project = projects.find((p) => p.projectId === activeProjectId) || null;
-  // Cold/stale cache: the projects/bundles caches are only warmed when the
-  // popup is opened (it calls refreshContext). On a fresh page the content
-  // script's sidebar calls this before any popup has run, so an active project
-  // id can't be resolved to its object and the sidebar falsely shows "No active
-  // project" — even though saves are correctly targeted at activeProjectId.
-  // Self-heal: if we have an id but no object, refresh from the server once.
-  if (activeProjectId && !project) {
+  // Cold/stale cache: the projects/bundles caches were historically only warmed
+  // when the popup opened. The sidebar now owns project selection and runs on
+  // every page, so refresh from the server when we have no project list at all,
+  // or an active id we can't resolve. Once warmed, this never re-fetches.
+  if (projects.length === 0 || (activeProjectId && !project)) {
     try {
       await refreshContext();
       projects = (await getCache('cachedProjects')) || [];
@@ -507,8 +505,19 @@ async function getActiveProjectInfo() {
       console.debug('[OPS] getActiveProjectInfo refresh failed (offline?):', e.message || e);
     }
   }
+  // Auto-pick the first project when none is active yet, so a single-project
+  // student never has to choose and highlighting always has a target. This used
+  // to live in the popup; it's centralized here now that the sidebar owns the
+  // project dropdown. Persist + best-effort server sync (so the Docs sidebar
+  // matches), exactly as the popup did.
+  if (!activeProjectId && projects.length > 0) {
+    activeProjectId = projects[0].projectId;
+    await setActiveProjectId(activeProjectId);
+    apiPost({ action: 'setActiveProject', projectId: activeProjectId }).catch(() => {});
+    project = projects.find((p) => p.projectId === activeProjectId) || null;
+  }
   const bundle = project ? bundles.find((b) => b.bundleId === project.bundleId) || null : null;
-  return { ok: true, activeProjectId, project, bundle, projectsKnown: projects.length > 0 };
+  return { ok: true, activeProjectId, project, bundle, projects, projectsKnown: projects.length > 0 };
 }
 
 /** Refresh roster + projects + bundles caches from GAS. Called by popup on open. */
