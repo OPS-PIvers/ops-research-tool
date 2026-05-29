@@ -165,6 +165,8 @@ async function handleMessage(msg, sender) {
       return openPdfPanel_(msg.url);
     case 'loadPageHighlights':
       return loadPageHighlights_(msg.rawUrl);
+    case 'previewCitation':
+      return previewCitation_(msg.fields, msg.style);
     case 'deleteHighlight':
       return deleteHighlightRequest_(msg.highlightId, msg.sourceId, msg.cascadeSource);
     default:
@@ -256,6 +258,19 @@ async function loadPageHighlights_(rawUrl) {
     return { ok: true, highlights, sourceCount: matchingSourceIds.size, source: canonicalSource };
   } catch (e) {
     console.warn('[OPS] loadPageHighlights threw:', e);
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+/**
+ * Proxy the read-only MLA preview to GAS. Content scripts can't call the API
+ * directly (chrome.identity lives here). Returns { ok:false, error } on
+ * network failure so the Source tab can fall back to "preview offline".
+ */
+async function previewCitation_(fields, style) {
+  try {
+    return await apiGet({ action: 'previewCitation', fields: JSON.stringify(fields || {}), style: style || 'mla' });
+  } catch (e) {
     return { ok: false, error: e.message || String(e) };
   }
 }
