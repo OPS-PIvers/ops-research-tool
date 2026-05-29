@@ -1592,3 +1592,50 @@ function devTestEnsureHeadersAppend() {
   console.log(pass + '/' + (pass + fail) + ' passed');
   return { pass, fail };
 }
+
+/**
+ * dedupeSourcesByUrl_ collapses same-normalizedUrl source rows: keeps the
+ * OLDEST as canonical, folds duplicates' citation work in (canonical wins,
+ * blanks filled from a duplicate), repoints duplicates' highlights onto the
+ * canonical, and passes blank-url sources through. Pure — no Sheet I/O.
+ * Backs the "duplicate sources in the dropdown" fix.
+ */
+function devTestDedupeSourcesByUrl() {
+  const sources = [
+    { sourceId: 'A', normalizedUrl: 'ex.com/p', createdAt: '2026-01-02',
+      scrapedTitle: 'T', citationFields: JSON.stringify({ title: 'Edited' }),
+      primarySecondary: 'unset', annotation: '' },
+    { sourceId: 'B', normalizedUrl: 'ex.com/p', createdAt: '2026-01-01',
+      scrapedTitle: 'T', citationFields: JSON.stringify({ author: 'Doe, Jane' }),
+      primarySecondary: 'primary', annotation: 'My note.' },
+    { sourceId: 'C', normalizedUrl: 'ex.com/other', createdAt: '2026-01-03',
+      scrapedTitle: 'Other', citationFields: '', primarySecondary: 'secondary', annotation: '' },
+    { sourceId: 'D', normalizedUrl: '', createdAt: '2026-01-04',
+      scrapedTitle: 'NoUrl', citationFields: '', primarySecondary: 'unset', annotation: '' },
+  ];
+  const highlights = [
+    { highlightId: 'h1', sourceId: 'A' },
+    { highlightId: 'h2', sourceId: 'B' },
+    { highlightId: 'h3', sourceId: 'C' },
+  ];
+  const out = dedupeSourcesByUrl_(sources, highlights);
+
+  let pass = 0, fail = 0;
+  const check = (label, cond) => { if (cond) { pass++; console.log('PASS ' + label); } else { fail++; console.log('FAIL ' + label); } };
+
+  check('3 sources after dedup', out.sources.length === 3);
+  const canon = out.sources.find((s) => s.normalizedUrl === 'ex.com/p');
+  check('canonical is the oldest (B)', canon && canon.sourceId === 'B');
+  check('canonical keeps its primarySecondary', canon && canon.primarySecondary === 'primary');
+  check('canonical keeps its annotation', canon && canon.annotation === 'My note.');
+  const cf = canon ? (parseJsonColumn_(canon.citationFields) || {}) : {};
+  check('canonical keeps its own field (author)', cf.author === 'Doe, Jane');
+  check('canonical fills missing field from dup (title)', cf.title === 'Edited');
+  check('h1 repointed A->B', out.highlights.find((h) => h.highlightId === 'h1').sourceId === 'B');
+  check('h2 still on B', out.highlights.find((h) => h.highlightId === 'h2').sourceId === 'B');
+  check('h3 still on C', out.highlights.find((h) => h.highlightId === 'h3').sourceId === 'C');
+  check('blank-url source passes through', !!out.sources.find((s) => s.sourceId === 'D'));
+
+  console.log(fail === 0 ? 'devTestDedupeSourcesByUrl: ALL GREEN' : 'devTestDedupeSourcesByUrl: NOT GREEN (' + fail + ' fail)');
+  return { pass, fail };
+}

@@ -316,6 +316,14 @@ select, input, textarea { font: inherit; }
   font-weight: 500;
 }
 #sb-insert:disabled { background: #9aa0a6; }
+/* Secondary, lighter-weight sibling: plain Works Cited (no annotations). */
+#sb-insert-works {
+  width: 100%; padding: 7px 12px; margin-top: 6px;
+  background: #fff; color: var(--c-accent);
+  border: 1px solid var(--c-accent); border-radius: 4px; font-weight: 500;
+}
+#sb-insert-works:hover:not(:disabled) { background: #e8f0fe; }
+#sb-insert-works:disabled { color: var(--c-muted); border-color: var(--c-line); cursor: not-allowed; }
 #sb-open-editor {
   width: 100%; padding: 7px 12px;
   background: #fff; color: var(--c-accent);

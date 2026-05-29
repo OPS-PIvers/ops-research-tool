@@ -60,14 +60,25 @@ function sidebarSetActiveProject(projectId) {
 function sidebarGetProjectData(projectId) {
   const actorEmail = getActorEmail_();
   if (!projectId) throw new Error('projectId required');
-  if (!getProject_(projectId)) throw new Error('Unknown project ' + projectId);
-  const sources = readSourcesForActor_(actorEmail, projectId);
-  const highlights = readHighlightsForActor_(actorEmail, projectId);
-  // Pre-parse citationFields + scrapedExtra JSON so the client doesn't
-  // re-parse per render.
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  // Collapse duplicate source rows for the same page so the dropdown / evidence
+  // list show one source per URL (see dedupeSourcesByUrl_).
+  const deduped = dedupeSourcesByUrl_(
+    readSourcesForActor_(actorEmail, projectId),
+    readHighlightsForActor_(actorEmail, projectId)
+  );
+  const sources = deduped.sources;
+  const highlights = deduped.highlights;
+  const bundle = getBundle_(project.bundleId);
+  const style = (bundle && bundle.style) || 'mla';
   sources.forEach((s) => {
+    // Pre-parse JSON columns so the client doesn't re-parse per render.
     s.citationFieldsParsed = parseJsonColumn_(s.citationFields);
     s.scrapedExtraParsed = parseJsonColumn_(s.scrapedExtra);
+    // Precompute the in-text citation so the sidebar's "Copy citation" button
+    // is instant — no per-click server round-trip.
+    s.inlineCitation = formatInlineCitation(parseCitationFields_(s), style, '');
   });
   return { ok: true, sources, highlights };
 }
@@ -164,9 +175,13 @@ function sidebarPreviewCitation(fields, style) {
   return formatCitation(fields || {}, style || 'mla');
 }
 
-/** The big button — same as insertAnnotatedBibliography but exposed under the sidebar* namespace. */
-function sidebarInsertBibliography(projectId) {
-  return insertAnnotatedBibliography(projectId);
+/**
+ * Insert/replace the bibliography. annotated=true → "Annotated Bibliography",
+ * annotated=false → "Works Cited". Defaults to annotated when the flag is
+ * omitted (back-compat). Exposed under the sidebar* namespace.
+ */
+function sidebarInsertBibliography(projectId, annotated) {
+  return insertBibliography_(projectId, annotated === undefined ? true : !!annotated);
 }
 
 /** Insert an MLA parenthetical citation at the doc cursor for the given source. */
