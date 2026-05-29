@@ -82,25 +82,6 @@ const SIDEBAR_CSS = `
   font-size: 11px; color: #5f6368;
 }
 
-.filter-row {
-  display: flex; gap: 4px; padding: 8px 12px;
-  border-bottom: 1px solid #dadce0; flex-wrap: wrap;
-}
-.filter-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: #f1f3f4; border: 1px solid transparent;
-  border-radius: 999px; padding: 4px 10px 4px 6px;
-  font-size: 11px; color: #5f6368; white-space: nowrap;
-}
-.filter-chip:hover { border-color: #dadce0; }
-.filter-chip--active {
-  background: #fff; border-color: #1a73e8; color: #1a73e8; font-weight: 500;
-}
-.filter-chip__dot { width: 10px; height: 10px; border-radius: 50%; }
-.filter-chip__count {
-  background: rgba(0,0,0,0.05); border-radius: 999px; padding: 0 6px; font-size: 10px;
-}
-
 .list { flex: 1; overflow-y: auto; padding: 8px 0; min-height: 0; }
 .list__empty {
   padding: 24px 14px; text-align: center;
@@ -277,6 +258,19 @@ const SIDEBAR_CSS = `
   font-weight:700; line-height:16px; border-radius:999px; background:#eceff1; color:#5f6368;
 }
 .tab--active .tab__badge { background:#e8f0fe; color:#1a73e8; }
+.facets { padding:6px 8px 8px; border-bottom:1px solid #f1f3f4; }
+.facet {
+  display:flex; align-items:center; gap:9px; width:100%; padding:5px 8px; border:none;
+  background:none; border-radius:6px; font-size:12px; color:#3c4043; text-align:left;
+}
+.facet:hover { background:#f8f9fa; }
+.facet--all { font-weight:600; margin-bottom:2px; }
+.facet--active { background:#e8f0fe; color:#1a73e8; font-weight:600; }
+.facet--zero { opacity:0.42; }
+.facet__dot { width:11px; height:11px; border-radius:3px; flex:0 0 auto; }
+.facet__lab { flex:1; }
+.facet__count { color:#9aa0a6; font-variant-numeric:tabular-nums; }
+.facet--active .facet__count { color:#1a73e8; }
 `;
 
 const OpsSidebar = (function () {
@@ -602,19 +596,7 @@ const OpsSidebar = (function () {
     }
 
     // ----- Annotations tab -----
-    // Filter row
-    if (state.bundle) {
-      const filterRow = el_('div', 'filter-row');
-      const allChip = makeFilterChip_(null, 'All', '#dadce0', countByCategory_(null));
-      filterRow.appendChild(allChip);
-      for (let i = 1; i <= 5; i++) {
-        const label = state.bundle['label' + i];
-        const color = state.bundle['color' + i];
-        if (!label) continue;
-        filterRow.appendChild(makeFilterChip_(label, label, color, countByCategory_(label)));
-      }
-      state.panelEl.appendChild(filterRow);
-    }
+    if (state.bundle) state.panelEl.appendChild(renderFacetList_());
 
     // List
     state.listEl = el_('div', 'list');
@@ -635,22 +617,35 @@ const OpsSidebar = (function () {
     return el_('div', 'list__empty', 'Source tab coming soon.');
   }
 
-  function makeFilterChip_(value, label, color, count) {
-    const chip = el_('button', 'filter-chip');
-    chip.type = 'button';
-    if (state.filter === value) chip.classList.add('filter-chip--active');
-    const dot = el_('span', 'filter-chip__dot');
-    dot.style.backgroundColor = color;
-    chip.appendChild(dot);
-    chip.appendChild(document.createTextNode(label));
-    const c = el_('span', 'filter-chip__count');
-    c.textContent = String(count);
-    chip.appendChild(c);
-    chip.addEventListener('click', () => {
-      state.filter = state.filter === value ? null : value;
-      render_();
-    });
-    return chip;
+  function renderFacetList_() {
+    const wrap = el_('div', 'facets');
+
+    // "All notes" row.
+    const all = el_('button', 'facet facet--all' + (state.filter === null ? ' facet--active' : ''));
+    all.type = 'button';
+    all.appendChild(el_('span', 'facet__lab', 'All notes'));
+    all.appendChild(el_('span', 'facet__count', String(countByCategory_(null))));
+    all.addEventListener('click', () => { state.filter = null; render_(); });
+    wrap.appendChild(all);
+
+    // One row per category, in bundle (timeline) order; zero-count rows dimmed.
+    for (let i = 1; i <= 5; i++) {
+      const label = state.bundle['label' + i];
+      const color = state.bundle['color' + i];
+      if (!label) continue;
+      const count = countByCategory_(label);
+      const active = state.filter === label;
+      const row = el_('button', 'facet' + (active ? ' facet--active' : '') + (count === 0 ? ' facet--zero' : ''));
+      row.type = 'button';
+      const dot = el_('span', 'facet__dot');
+      dot.style.backgroundColor = color;
+      row.appendChild(dot);
+      row.appendChild(el_('span', 'facet__lab', label));
+      row.appendChild(el_('span', 'facet__count', String(count)));
+      row.addEventListener('click', () => { state.filter = active ? null : label; render_(); });
+      wrap.appendChild(row);
+    }
+    return wrap;
   }
 
   function renderEntry_(h) {
