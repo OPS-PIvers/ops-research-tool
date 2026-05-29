@@ -279,7 +279,7 @@ const SIDEBAR_CSS = `
   width:100%; border:1px solid #dadce0; border-radius:6px; padding:6px 8px; font:inherit; font-size:12.5px; color:#202124; background:#fff;
 }
 .src__seg { display:flex; border:1px solid #dadce0; border-radius:7px; overflow:hidden; }
-.src__seg button { flex:1; border:none; border-right:1px solid #eceff1; background:#fff; padding:7px 4px; font-size:12px; color:#5f6368; }
+.src__seg button { flex:1; border:none; border-right:1px solid #eceff1; background:#fff; padding:7px 4px; font-size:12px; color:#5f6368; text-align:center; }
 .src__seg button:last-child { border-right:none; }
 .src__seg button.src__seg--on { background:#e8f0fe; color:#1a73e8; font-weight:600; }
 .src__ta { width:100%; border:1px solid #dadce0; border-radius:6px; padding:6px 8px; font:inherit; font-size:12.5px; min-height:48px; resize:vertical; }
