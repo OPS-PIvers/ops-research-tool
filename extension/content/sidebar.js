@@ -266,6 +266,17 @@ const SIDEBAR_CSS = `
 .editor__btn--primary {
   background: #1a73e8; border-color: #1a73e8; color: #fff;
 }
+.tabs { display:flex; border-bottom:1px solid #e8eaed; padding:0 8px; gap:2px; }
+.tab {
+  flex:1; text-align:center; padding:10px 6px 8px; font-size:12.5px; font-weight:600;
+  color:#80868b; background:none; border:none; border-bottom:2.5px solid transparent;
+}
+.tab--active { color:#1a73e8; border-bottom-color:#1a73e8; }
+.tab__badge {
+  display:inline-block; min-width:16px; padding:0 5px; margin-left:5px; font-size:10px;
+  font-weight:700; line-height:16px; border-radius:999px; background:#eceff1; color:#5f6368;
+}
+.tab--active .tab__badge { background:#e8f0fe; color:#1a73e8; }
 `;
 
 const OpsSidebar = (function () {
@@ -284,6 +295,7 @@ const OpsSidebar = (function () {
     confirmingDeleteId: null, // highlightId whose Delete button is showing "Confirm?"
     confirmingDeleteTimer: null,
     initialized: false,
+    activeTab: 'annotations', // 'source' | 'annotations'
   };
 
   // ---------- public API ----------
@@ -567,6 +579,29 @@ const OpsSidebar = (function () {
       : 'No active project — pick one from the extension toolbar.';
     state.panelEl.appendChild(sub);
 
+    // Tab bar
+    const tabs = el_('div', 'tabs');
+    const srcTab = el_('button', 'tab' + (state.activeTab === 'source' ? ' tab--active' : ''), 'Source');
+    srcTab.type = 'button';
+    srcTab.addEventListener('click', () => { state.activeTab = 'source'; render_(); });
+    const annTab = el_('button', 'tab' + (state.activeTab === 'annotations' ? ' tab--active' : ''));
+    annTab.type = 'button';
+    annTab.appendChild(document.createTextNode('Annotations'));
+    if (state.pageHighlights.length) {
+      const badge = el_('span', 'tab__badge', String(state.pageHighlights.length));
+      annTab.appendChild(badge);
+    }
+    annTab.addEventListener('click', () => { state.activeTab = 'annotations'; render_(); });
+    tabs.appendChild(srcTab);
+    tabs.appendChild(annTab);
+    state.panelEl.appendChild(tabs);
+
+    if (state.activeTab === 'source') {
+      state.panelEl.appendChild(renderSourceTab_());
+      return;
+    }
+
+    // ----- Annotations tab -----
     // Filter row
     if (state.bundle) {
       const filterRow = el_('div', 'filter-row');
@@ -594,6 +629,10 @@ const OpsSidebar = (function () {
       filtered.forEach((h) => state.listEl.appendChild(renderEntry_(h)));
     }
     state.panelEl.appendChild(state.listEl);
+  }
+
+  function renderSourceTab_() {
+    return el_('div', 'list__empty', 'Source tab coming soon.');
   }
 
   function makeFilterChip_(value, label, color, count) {
