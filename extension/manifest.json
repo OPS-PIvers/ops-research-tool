@@ -3,6 +3,7 @@
   "name": "OPS Research Tool",
   "version": "0.1.0",
   "description": "Highlight web sources, categorize by NHD phase, and capture citations. Internal to Orono Public Schools.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5YwpG8sXfcmmnXs1yiKgI7P9avDdVGz3IMY+s2uvXbYsXpmP+aEyXbSkBGAaVfe3evRqQKrijZtUA5EPQQGag3+z6/sRRnqzu/Ln7ag9+N2ipQx5JbAjp/t2IUXWUhXqXU5FxZEXO0IuenU/MFlllnaQKrmFxhd/ITRm/URVXvxA8SOFKxClWQMNBnvMv8M6gtZMJLZaTU9Y19kkaCLHEMy9aRmiSXLwaufjzv6kyTeRnew5TSOivtuZSGO8/Ya2p6NKBxBUUWHinB1XKJoWs8vJG3Y55FGXW6ETufDgwkqce5ecI5JT4A9rpVhxqQrO5dXq+sZT8WZSF9tUGySY/QIDAQAB",
   "permissions": [
     "storage",
     "alarms",

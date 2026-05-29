@@ -29,6 +29,8 @@ Education agreement — no Firebase, no non-core services.
 | Bundles config | `1Ht6ggmLyqD-VhepLr10bE8lO28zLX9-1NcfXirxHIYk` |
 | GAS owner | `paul.ivers@orono.k12.mn.us` (district account, not personal) |
 | GitHub user | `OPS-PIvers` |
+| Chrome extension ID (fixed) | `nmelakoijagkfanhilcnagkochhfmacn` — pinned by the `key` in [`extension/manifest.json`](extension/manifest.json) |
+| Extension signing key (private) | `C:\Users\paul.ivers\Desktop\ops-research-tool-extension-key.pem` — **outside the repo, never commit.** Back it up (password manager / Drive). |
 
 All IDs are also hardcoded into [`apps-script/src/00_config.js`](apps-script/src/00_config.js).
 Moving the project = edit that one file, `clasp push`, redeploy.
@@ -224,8 +226,12 @@ These supersede or refine the spec — apply them before defaulting to plan text
 1. **Install the Docs editor add-on** (Phase 3). Dev: Editor → **Deploy →
    Test deployments → install as Editor Add-on**. Prod: publish via the GCP
    project's Marketplace SDK, domain-restricted to `orono.k12.mn.us`.
-2. **Force-install the extension** via the district Admin console for the
-   pilot section.
+2. **Distribute the Chrome extension** (see §13 for the full recipe). Short
+   version: do NOT "Pack extension" (self-hosted `.crx` is a dead path);
+   publish privately to the Chrome Web Store and force-install via the Google
+   Admin console. The extension ID is now pinned to
+   `nmelakoijagkfanhilcnagkochhfmacn` via the manifest `key`, so the existing
+   OAuth client must have its Application ID set to that ID.
 3. **Verify CI secrets** are set so the deploy workflow runs — `CLASPRC_JSON`
    secret + `GAS_DEPLOYMENT_ID` variable (see §11). Confirm a push to `main`
    touching `apps-script/**` actually redeploys.
@@ -357,3 +363,57 @@ don't over-explain GAS-side things. Comfortable delegating environment setup
 (clasp, gh, OAuth flows). Likes terse responses; avoid trailing summaries.
 Knows the OPS brand guidelines — use the `anthropic-skills:ops-brand-guidelines`
 skill for any district-facing UI (Teacher Console in Phase 4).
+
+## 13. Distributing the Chrome extension
+
+**Do NOT use "Pack extension."** The self-hosted `.crx` it produces is blocked
+by Chrome on normal/managed profiles — it's a dead path. Distribution goes
+through the Chrome Web Store (private) + Google Admin console force-install.
+
+### The fixed extension ID
+
+The extension ID is pinned to **`nmelakoijagkfanhilcnagkochhfmacn`** by the
+`key` field in [`extension/manifest.json`](extension/manifest.json). This makes
+the **unpacked-dev ID and the published ID identical**, so a single OAuth
+client works for both. The matching private key is at
+`C:\Users\paul.ivers\Desktop\ops-research-tool-extension-key.pem` (outside the
+repo — back it up; you only need it if you ever re-pack manually, the Web Store
+re-signs with its own key but the `key` field keeps the ID stable regardless).
+
+### One-time: point the OAuth client at the fixed ID
+
+The OAuth client in the GCP project (APIs & Services → Credentials, the
+Chrome-Extension-type client whose ID is in `manifest.json`'s `oauth2` block)
+was originally keyed to the path-derived unpacked ID. Set its **Application ID**
+to `nmelakoijagkfanhilcnagkochhfmacn`. Until this is done,
+`chrome.identity.getAuthToken` will fail with a redirect/clientid mismatch on
+**both** the reloaded unpacked extension and the published one. Also set the
+**OAuth consent screen to "Internal"** (Workspace-only) so domain users skip
+the unverified-app warning — the only scopes are `userinfo.email` + `openid`.
+
+### Publish to the Chrome Web Store (private)
+
+1. Zip the **contents** of `extension/` (manifest.json at the zip root, not a
+   nested `extension/` folder).
+2. [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole)
+   → upload the zip ($5 one-time dev-account fee if not already paid). Use the
+   district account.
+3. **Visibility → Private**, restricted to the `orono.k12.mn.us` org, so it's
+   not publicly discoverable.
+4. Submit. Private items still get a review but it's fast.
+5. For updates: bump `version` in `manifest.json`, re-zip, re-upload.
+
+### Force-install via Google Admin console
+
+**Admin console → Devices → Chrome → Apps & extensions → Users & browsers.**
+Scope to the student OU, add the extension by ID
+(`nmelakoijagkfanhilcnagkochhfmacn`), set **Force install** (auto-installs,
+students can't disable). Optionally pin it to the toolbar there too.
+
+### Pilot shortcut (no Web Store needed yet)
+
+For one section before the real rollout, **Load unpacked** from
+`extension/` on the pilot machines. With the `key` now in the manifest, the
+unpacked ID is already `nmelakoijagkfanhilcnagkochhfmacn`, so once the OAuth
+client's Application ID is updated (above), auth works locally with no further
+setup.

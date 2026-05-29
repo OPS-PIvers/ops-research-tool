@@ -42,6 +42,33 @@ function devSeedDevProject() {
   return project;
 }
 
+/**
+ * Diagnostic for an empty extension project picker. Read-only; mutates nothing.
+ * Logs every project (status + memberClasses), the active subset, the caller's
+ * student roster entry, what the extension `projects` endpoint would return for
+ * the caller, and the full roster's Email|Class so a class-string mismatch is
+ * obvious. Run from the editor, then read the execution log.
+ */
+function devDiagnoseProjects() {
+  const me = Session.getEffectiveUser().getEmail();
+  const projects = listProjects_();
+  console.log('=== Projects (' + projects.length + ') ===');
+  projects.forEach((p) => console.log(
+    [p.name, 'status=' + p.status, 'classes=[' + p.memberClasses + ']', p.schoolYear].join(' | ')
+  ));
+  console.log('=== Active projects: ' + listActiveProjects_().length + ' ===');
+
+  console.log('Caller: ' + me);
+  console.log('My student roster entry: ' + JSON.stringify(getStudentRosterEntry_(me)));
+  console.log('Extension projects endpoint would return for me: ' +
+    JSON.stringify(listActiveProjectsForStudent_(me).map((p) => p.name)));
+
+  const roster = readAllAsObjects_(
+    getTab_(SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID), TABS.ROSTER), HEADERS.ROSTER);
+  console.log('=== Roster (' + roster.length + ') — Email | Class ===');
+  roster.forEach((r) => console.log((r.Email || '(blank)') + ' | [' + (r.Class || '(blank)') + ']'));
+}
+
 /** Round-trip: simulate a doPost batch as the current user against the Dev Project. */
 function devTestRoundTrip() {
   const project = devSeedDevProject();
