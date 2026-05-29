@@ -70,6 +70,10 @@ function handlePost_(e) {
           if (d.cascadeSource && removedSourceId) {
             if (deleteSourceIfOrphaned_(studentSheet, removedSourceId)) deletedSources++;
           }
+        } else if (d.kind === 'source') {
+          // Orphan-safe: deleteSourceIfOrphaned_ refuses if highlights still
+          // reference it. Backs the extension's last-note "Delete source" toast.
+          if (deleteSourceIfOrphaned_(studentSheet, d.id)) deletedSources++;
         }
       } catch (err) {
         errors.push({ kind: 'delete', id: d.id, error: String(err) });
