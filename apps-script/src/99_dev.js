@@ -1602,30 +1602,40 @@ function devTestEnsureHeadersAppend() {
  */
 function devTestDedupeSourcesByUrl() {
   const sources = [
-    { sourceId: 'A', normalizedUrl: 'ex.com/p', createdAt: '2026-01-02',
+    { sourceId: 'A', normalizedUrl: 'ex.com/p', createdAt: '2026-01-02', createdByEmail: 'stu@x',
       scrapedTitle: 'T', citationFields: JSON.stringify({ title: 'Edited' }),
       primarySecondary: 'unset', annotation: '' },
-    { sourceId: 'B', normalizedUrl: 'ex.com/p', createdAt: '2026-01-01',
+    { sourceId: 'B', normalizedUrl: 'ex.com/p', createdAt: '2026-01-01', createdByEmail: 'stu@x',
       scrapedTitle: 'T', citationFields: JSON.stringify({ author: 'Doe, Jane' }),
       primarySecondary: 'primary', annotation: 'My note.' },
-    { sourceId: 'C', normalizedUrl: 'ex.com/other', createdAt: '2026-01-03',
+    { sourceId: 'C', normalizedUrl: 'ex.com/other', createdAt: '2026-01-03', createdByEmail: 'stu@x',
       scrapedTitle: 'Other', citationFields: '', primarySecondary: 'secondary', annotation: '' },
-    { sourceId: 'D', normalizedUrl: '', createdAt: '2026-01-04',
+    { sourceId: 'D', normalizedUrl: '', createdAt: '2026-01-04', createdByEmail: 'stu@x',
       scrapedTitle: 'NoUrl', citationFields: '', primarySecondary: 'unset', annotation: '' },
+    // Same URL as E but a DIFFERENT author → must NOT merge (group attribution).
+    { sourceId: 'E', normalizedUrl: 'ex.com/shared', createdAt: '2026-01-05', createdByEmail: 'm1@x',
+      scrapedTitle: 'Sh', citationFields: '', primarySecondary: 'unset', annotation: '' },
+    { sourceId: 'F', normalizedUrl: 'ex.com/shared', createdAt: '2026-01-06', createdByEmail: 'm2@x',
+      scrapedTitle: 'Sh', citationFields: '', primarySecondary: 'unset', annotation: '' },
   ];
   const highlights = [
     { highlightId: 'h1', sourceId: 'A' },
     { highlightId: 'h2', sourceId: 'B' },
     { highlightId: 'h3', sourceId: 'C' },
+    { highlightId: 'h4', sourceId: 'E' },
+    { highlightId: 'h5', sourceId: 'F' },
   ];
   const out = dedupeSourcesByUrl_(sources, highlights);
 
   let pass = 0, fail = 0;
   const check = (label, cond) => { if (cond) { pass++; console.log('PASS ' + label); } else { fail++; console.log('FAIL ' + label); } };
 
-  check('3 sources after dedup', out.sources.length === 3);
-  const canon = out.sources.find((s) => s.normalizedUrl === 'ex.com/p');
-  check('canonical is the oldest (B)', canon && canon.sourceId === 'B');
+  // A+B (same author) collapse to B; C, D pass through; E & F are different
+  // authors so both survive → 5 total.
+  check('5 sources after dedup', out.sources.length === 5);
+  const canon = out.sources.find((s) => s.sourceId === 'B');
+  check('canonical is the oldest (B)', !!canon);
+  check('A removed (merged into B)', !out.sources.find((s) => s.sourceId === 'A'));
   check('canonical keeps its primarySecondary', canon && canon.primarySecondary === 'primary');
   check('canonical keeps its annotation', canon && canon.annotation === 'My note.');
   const cf = canon ? (parseJsonColumn_(canon.citationFields) || {}) : {};
@@ -1635,7 +1645,63 @@ function devTestDedupeSourcesByUrl() {
   check('h2 still on B', out.highlights.find((h) => h.highlightId === 'h2').sourceId === 'B');
   check('h3 still on C', out.highlights.find((h) => h.highlightId === 'h3').sourceId === 'C');
   check('blank-url source passes through', !!out.sources.find((s) => s.sourceId === 'D'));
+  check('different-author same-URL NOT merged (E kept)', !!out.sources.find((s) => s.sourceId === 'E'));
+  check('different-author same-URL NOT merged (F kept)', !!out.sources.find((s) => s.sourceId === 'F'));
 
   console.log(fail === 0 ? 'devTestDedupeSourcesByUrl: ALL GREEN' : 'devTestDedupeSourcesByUrl: NOT GREEN (' + fail + ' fail)');
+  return { pass, fail };
+}
+
+/**
+ * Integration: dedupeSourcesPersist_ physically removes duplicate source rows
+ * from the student's Sheet (and repoints highlights), is idempotent, and leaves
+ * unrelated rows alone. Seeds the DEV-class fixture and cleans up after itself.
+ */
+function devTestDedupeSourcesPersist() {
+  const project = devSeedDevProject();
+  const me = Session.getEffectiveUser().getEmail();
+  const ss = findOrCreateStudentSheet_(me, project);
+
+  const url = 'https://dedup.example.com/p';
+  const norm = normalizeUrl_(url);
+  const oldId = uuid_(), newId = uuid_(), ctrlId = uuid_();
+  const h1 = uuid_(), h2 = uuid_(), hc = uuid_();
+  // Two rows for the same page (same author): oldest = canonical.
+  upsertSource_(ss, { sourceId: oldId, projectId: project.projectId, rawUrl: url, normalizedUrl: norm,
+    createdAt: '2026-01-01T00:00:00.000Z', scrapedTitle: 'Dedup', primarySecondary: 'primary',
+    citationFields: { author: 'Doe, Jane' }, createdByEmail: me });
+  upsertSource_(ss, { sourceId: newId, projectId: project.projectId, rawUrl: url, normalizedUrl: norm,
+    createdAt: '2026-01-02T00:00:00.000Z', scrapedTitle: 'Dedup', annotation: 'Newer note.', createdByEmail: me });
+  upsertSource_(ss, { sourceId: ctrlId, projectId: project.projectId, rawUrl: 'https://other.example.com/x',
+    scrapedTitle: 'Ctrl', createdByEmail: me });
+  upsertHighlight_(ss, { highlightId: h1, sourceId: oldId, projectId: project.projectId, primaryCategory: 'Background', highlightedText: 'a', createdByEmail: me });
+  upsertHighlight_(ss, { highlightId: h2, sourceId: newId, projectId: project.projectId, primaryCategory: 'Background', highlightedText: 'b', createdByEmail: me });
+  upsertHighlight_(ss, { highlightId: hc, sourceId: ctrlId, projectId: project.projectId, primaryCategory: 'Background', highlightedText: 'c', createdByEmail: me });
+
+  const removed = dedupeSourcesPersist_(ss);
+  const sources = readSourcesForActor_(me, project.projectId);
+  const highlights = readHighlightsForActor_(me, project.projectId);
+
+  let pass = 0, fail = 0;
+  const check = (label, cond) => { if (cond) { pass++; console.log('PASS ' + label); } else { fail++; console.log('FAIL ' + label); } };
+  check('removed === 1', removed === 1);
+  check('duplicate (newId) row gone', !sources.find((s) => s.sourceId === newId));
+  check('canonical (oldId) kept', !!sources.find((s) => s.sourceId === oldId));
+  check('control source kept', !!sources.find((s) => s.sourceId === ctrlId));
+  const canon = sources.find((s) => s.sourceId === oldId) || {};
+  check('canonical kept its own author', (parseJsonColumn_(canon.citationFields) || {}).author === 'Doe, Jane');
+  check('canonical filled annotation from dup', canon.annotation === 'Newer note.');
+  check('h2 repointed newId->oldId', (highlights.find((h) => h.highlightId === h2) || {}).sourceId === oldId);
+  check('h1 still on oldId', (highlights.find((h) => h.highlightId === h1) || {}).sourceId === oldId);
+  check('control highlight intact', (highlights.find((h) => h.highlightId === hc) || {}).sourceId === ctrlId);
+  check('second run is a no-op (idempotent)', dedupeSourcesPersist_(ss) === 0);
+
+  // Cleanup.
+  deleteAllRowsWhere_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS, 'sourceId', oldId);
+  deleteAllRowsWhere_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS, 'sourceId', ctrlId);
+  deleteAllRowsWhere_(getTab_(ss, TABS.SOURCES), HEADERS.SOURCES, 'sourceId', oldId);
+  deleteAllRowsWhere_(getTab_(ss, TABS.SOURCES), HEADERS.SOURCES, 'sourceId', ctrlId);
+
+  console.log(fail === 0 ? 'devTestDedupeSourcesPersist: ALL GREEN' : 'devTestDedupeSourcesPersist: NOT GREEN (' + fail + ' fail)');
   return { pass, fail };
 }
