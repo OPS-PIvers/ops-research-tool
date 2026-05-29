@@ -354,13 +354,21 @@ async function enqueueSourcePatch_(source) {
  */
 async function enqueueSourceUpsert_(payload) {
   const all = await chrome.storage.local.get(null);
-  const stale = Object.keys(all).filter((k) =>
+  const staleKeys = Object.keys(all).filter((k) =>
     k.startsWith(QUEUE_PREFIX) &&
     all[k] && all[k].kind === 'source' &&
     all[k].payload && all[k].payload.sourceId === payload.sourceId
   );
-  if (stale.length) await chrome.storage.local.remove(stale);
-  await enqueue('source', payload);
+  // Merge any pending writes for this source, newest winning per key it
+  // provides; keys it omits keep the prior pending value. Without this, a
+  // scrape re-assert (no citation keys) would drop a not-yet-synced citation
+  // edit, or vice-versa. In practice staleKeys.length is 0 or 1 because each
+  // enqueue already coalesces.
+  let merged = {};
+  staleKeys.forEach((k) => { merged = Object.assign(merged, all[k].payload); });
+  merged = Object.assign(merged, payload);
+  if (staleKeys.length) await chrome.storage.local.remove(staleKeys);
+  await enqueue('source', merged);
 }
 
 // The richer scrape fields beyond the four discrete scraped* columns. Only
