@@ -15,9 +15,18 @@ const els = {
   email: document.getElementById('identity-email'),
   error: document.getElementById('error'),
   forceDrain: document.getElementById('force-drain'),
+  reconnect: document.getElementById('reconnect'),
   lastSync: document.getElementById('last-sync'),
   enabledToggle: document.getElementById('enabled-toggle'),
   enabledLabel: document.getElementById('enabled-label'),
+};
+
+const SYNC_STATUS_TEXT = {
+  idle: 'All saved',
+  syncing: 'Saving…',
+  error: 'Save error — retrying',
+  offline: 'Offline — saved on this device',
+  needsAuth: 'Sign-in needed',
 };
 
 initEnabledToggle_();
@@ -59,19 +68,23 @@ async function bootstrapFromNetwork_() {
     showError('Could not reach the backend: ' + (e.message || e));
     return;
   }
-  if (!refresh || !refresh.ok) return;
+  if (!refresh || !refresh.ok) {
+    // A failed context refresh whose error is an auth wall means the cached
+    // token is dead and can't be silently refreshed — surface Reconnect.
+    if (refresh && /AUTH_REQUIRED/.test(refresh.error || '')) {
+      renderSyncStatus({ status: 'needsAuth' });
+    }
+    return;
+  }
   renderIdentity(refresh.me || null);
 }
 
 function renderSyncStatus(s) {
   if (!s || !s.status) return;
   els.status.className = 'sync-status sync-status--' + s.status;
-  els.status.textContent = ({
-    idle: 'All saved',
-    syncing: 'Saving…',
-    error: 'Save error — retrying',
-    offline: 'Offline — saved on this device',
-  })[s.status] || s.status;
+  els.status.textContent = SYNC_STATUS_TEXT[s.status] || s.status;
+  // Offer the interactive reconnect whenever syncing isn't cleanly healthy.
+  els.reconnect.hidden = !['needsAuth', 'error', 'offline'].includes(s.status);
   if (s.lastSyncAt) {
     const d = new Date(s.lastSyncAt);
     els.lastSync.textContent = 'last sync ' + d.toLocaleTimeString();
@@ -119,3 +132,53 @@ els.forceDrain.addEventListener('click', async () => {
   renderSyncStatus(s);
   setTimeout(() => { els.forceDrain.disabled = false; }, 1000);
 });
+
+// Interactive re-auth. The background drain only ever fetches tokens silently
+// (an alarm has no window to show a sign-in prompt), so when the account needs
+// re-consent the queue stalls at 'needsAuth'. The popup IS a window with a user
+// gesture, so the interactive flow can run here: clear the poisoned token, mint
+// a fresh one (showing the Google/SSO window if needed), then kick a drain.
+els.reconnect.addEventListener('click', async () => {
+  els.reconnect.disabled = true;
+  els.error.hidden = true;
+  els.status.textContent = 'Signing in…';
+  try {
+    await clearAllCachedAuthTokens_();
+    await getAuthTokenInteractive_();
+  } catch (e) {
+    showError('Sign-in failed: ' + (e.message || e));
+    els.reconnect.disabled = false;
+    renderSyncStatus({ status: 'needsAuth' });
+    return;
+  }
+  // Fresh token is now cached extension-wide; the worker will pick it up.
+  await sendMessage({ type: 'refreshContext' }).then((r) => {
+    if (r && r.ok) renderIdentity(r.me || null);
+  }).catch(() => {});
+  await sendMessage({ type: 'forceDrain' }).catch(() => {});
+  const s = await sendMessage({ type: 'getSyncStatus' });
+  renderSyncStatus(s);
+  els.reconnect.disabled = false;
+});
+
+function getAuthTokenInteractive_() {
+  return new Promise((resolve, reject) => {
+    chrome.identity.getAuthToken({ interactive: true }, (token) => {
+      if (chrome.runtime.lastError || !token) {
+        reject(new Error((chrome.runtime.lastError && chrome.runtime.lastError.message) || 'no token'));
+        return;
+      }
+      resolve(token);
+    });
+  });
+}
+
+function clearAllCachedAuthTokens_() {
+  return new Promise((resolve) => {
+    if (chrome.identity.clearAllCachedAuthTokens) {
+      chrome.identity.clearAllCachedAuthTokens(() => resolve());
+    } else {
+      resolve();
+    }
+  });
+}

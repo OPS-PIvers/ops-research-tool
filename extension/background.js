@@ -106,6 +106,15 @@ async function drain() {
             }
           }
         } catch (e) {
+          if (e && e.authRequired) {
+            // The token can't be silently refreshed — the student must
+            // reconnect from the toolbar popup (interactive sign-in can't run
+            // from a background alarm). Leave the items queued AND un-penalized
+            // (no markItemFailure / backoff) so a reconnect drains them at
+            // once; this is an auth wall, not a flaky write.
+            await setSyncStatus('needsAuth');
+            return;
+          }
           anyFailed = true;
           for (const b of batch) await markItemFailure(b.id, e.message || String(e));
           // Network error — stop trying further projects this drain cycle.
@@ -125,7 +134,9 @@ async function drain() {
 
 function isNetworkError(e) {
   const msg = String(e && e.message || e).toLowerCase();
-  return msg.includes('failed to fetch') || msg.includes('network') || msg.includes('no token');
+  return msg.includes('failed to fetch') || msg.includes('fetch failed') ||
+    msg.includes('network') || msg.includes('no token') ||
+    msg.includes('aborted') || msg.includes('timeout');
 }
 
 // ---------- message handlers ----------
