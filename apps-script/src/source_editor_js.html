@@ -415,12 +415,13 @@ function renderEvidenceCard(h) {
   card.id = 'hl-' + h.highlightId;
   card.setAttribute('data-highlight-id', h.highlightId);
 
-  // Category color → subtle tinted fill + thin same-hue border (matches the
-  // sidebar; no left bar).
+  // Category color → faint fill + near-solid same-hue border (matches the
+  // sidebar; the border carries the hue since faint fills of close colors are
+  // hard to tell apart).
   const color = colorForLabel_(h.primaryCategory);
   if (color) {
-    card.style.backgroundColor = tint_(color, 0.06);
-    card.style.borderColor = tint_(color, 0.45);
+    card.style.backgroundColor = tint_(color, 0.08);
+    card.style.border = '1.5px solid ' + tint_(color, 0.85);
   }
 
   const cat = document.createElement('div');

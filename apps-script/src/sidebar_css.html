@@ -226,13 +226,14 @@ select, input, textarea { font: inherit; }
   50% { opacity: 1; }
 }
 
+/* Sources are no longer boxed in a gray container — just a header + its
+   highlight cards, with a hairline divider separating one source from the
+   next. The bordered highlight cards carry the visual structure. */
 .sb-source {
-  margin: 0 10px 10px;
-  padding: 10px 12px;
-  background: var(--c-soft);
-  border: 1px solid var(--c-line);
-  border-radius: 6px;
+  margin: 0 10px;
+  padding: 10px 0;
 }
+.sb-source + .sb-source { border-top: 1px solid var(--c-line); }
 .sb-source__head {
   display: flex; justify-content: space-between; gap: 6px; align-items: flex-start;
 }
@@ -252,11 +253,31 @@ select, input, textarea { font: inherit; }
 }
 .sb-source__chip {
   font-size: 10px; padding: 2px 6px;
-  border-radius: 999px; white-space: nowrap;
+  border: 1px solid transparent;
+  border-radius: 999px; white-space: nowrap; flex-shrink: 0;
 }
 .sb-source__chip--primary   { background: var(--c-blue-subtle); color: var(--c-accent-strong); }
 .sb-source__chip--secondary { background: var(--c-red-subtle); color: var(--c-bad); }
 .sb-source__chip--unset     { background: var(--c-soft); color: var(--c-muted); }
+/* Clickable classification chip → opens an anchored picker. */
+.sb-source__chip--clickable { cursor: pointer; }
+.sb-source__chip--clickable:hover { filter: brightness(0.96); }
+.sb-source__chip-caret { font-size: 7px; margin-left: 3px; vertical-align: middle; opacity: 0.75; }
+
+.sb-ps-pop {
+  position: fixed; z-index: 60; display: none;
+  min-width: 132px; padding: 4px;
+  background: #fff; border: 1px solid var(--c-line); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(29, 42, 93, 0.16);
+}
+.sb-ps-pop__opt {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 10px; border: none; background: none; border-radius: 6px;
+  font-size: 12px; color: var(--c-text); text-align: left; cursor: pointer;
+}
+.sb-ps-pop__opt:hover { background: var(--c-soft); }
+.sb-ps-pop__opt--active { font-weight: 600; }
+.sb-ps-pop__dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 
 .sb-source__meta {
   display: flex; align-items: center; gap: 8px;
@@ -375,12 +396,10 @@ select, input, textarea { font: inherit; }
 .sb-hl-tag--secondary { background: var(--c-soft); }
 .sb-hl-tag--match { color: var(--c-text); font-weight: 600; }
 .sb-highlight__text { line-height: 1.4; white-space: pre-wrap; }
-.sb-highlight__more {
-  display: inline-block; margin-top: 3px;
-  background: none; border: none; padding: 0;
-  color: var(--c-accent); font-size: 11px; font-weight: 500; cursor: pointer;
-}
-.sb-highlight__more:hover { text-decoration: underline; }
+/* Whole card is the expand/collapse target when text is trimmed. */
+.sb-highlight--expandable { cursor: pointer; }
+.sb-highlight--expandable:hover { box-shadow: 0 1px 5px rgba(29, 42, 93, 0.13); }
+.sb-highlight__chevron { margin-left: auto; flex-shrink: 0; color: var(--c-muted); font-size: 9px; }
 .sb-highlight__note { font-style: italic; color: var(--c-muted); font-size: 11px; margin-top: 4px; }
 .sb-highlight__actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
 .sb-highlight__btn { background: none; border: none; font-size: 10px; padding: 2px 4px; }
