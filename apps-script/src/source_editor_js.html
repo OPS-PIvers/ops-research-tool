@@ -76,15 +76,22 @@ function switchSource_(newSourceId) {
     populateSourceSelect_();   // re-sync the select back to ctx.sourceId
     return;
   }
-  ctx.sourceId = newSourceId;
-  editor.source = next;
-  editor.highlights = editor.allHighlights.filter((h) => h.sourceId === newSourceId);
-  // Reset per-source UI state.
+  loadSourceIntoEditor_(next);
+  render();
+}
+
+/**
+ * Point the editor at `source` and reset all per-source UI state so it starts
+ * clean. Does NOT render or touch the dropdown — callers decide that.
+ */
+function loadSourceIntoEditor_(source) {
+  ctx.sourceId = source.sourceId;
+  editor.source = source;
+  editor.highlights = editor.allHighlights.filter((h) => h.sourceId === source.sourceId);
   editor.perSourceFilter = null;
   editor.editingHighlightId = null;
   editor.confirmingHighlightDeleteId = null;
   editor.confirmingSourceDelete = false;
-  render();
 }
 
 function sourceLabel_(s) {
@@ -691,21 +698,38 @@ function renderDeleteSourceUi_() {
 
 /**
  * Non-optimistic delete — modal stays open until the server confirms. On
- * success, close the modal; the sidebar's polling loop picks up the
+ * success, drop the source from the local model and switch to a neighboring
+ * source so the editor stays open (the user is usually mid-session); only
+ * close when nothing's left to edit. The sidebar's polling loop picks up the
  * deletion on its next tick. On failure, revert to the initial single-button
  * state and surface the error.
  */
 function performDeleteSource_() {
   setStatus('Deleting…');
+  const deletedId = ctx.sourceId;
   google.script.run
     .withSuccessHandler(() => {
-      google.script.host.close();
+      const idx = editor.allSources.findIndex((s) => s.sourceId === deletedId);
+      editor.allSources = editor.allSources.filter((s) => s.sourceId !== deletedId);
+      editor.allHighlights = editor.allHighlights.filter((h) => h.sourceId !== deletedId);
+
+      if (editor.allSources.length === 0) {
+        google.script.host.close();   // nothing left to edit
+        return;
+      }
+
+      // Land on the source that took the deleted one's slot (or the new last).
+      const next = editor.allSources[Math.min(Math.max(idx, 0), editor.allSources.length - 1)];
+      loadSourceIntoEditor_(next);
+      populateSourceSelect_();
+      render();
+      setStatus('Source deleted.', 'good', 2000);
     })
     .withFailureHandler((e) => {
       editor.confirmingSourceDelete = false;
       render();
       setStatus('Delete failed: ' + (e && e.message || e), 'bad');
     })
-    .sidebarDeleteSource(ctx.projectId, ctx.sourceId);
+    .sidebarDeleteSource(ctx.projectId, deletedId);
 }
 </script>
