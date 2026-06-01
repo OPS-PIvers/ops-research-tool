@@ -20,20 +20,18 @@
     </section>
 
     <section class="sb-viewmode">
-      <div class="sb-viewmode__pills" role="tablist">
-        <button id="sb-vm-evidence" type="button" class="sb-viewmode__pill sb-viewmode__pill--active" role="tab">By evidence</button>
-        <button id="sb-vm-source" type="button" class="sb-viewmode__pill" role="tab">By source</button>
-      </div>
-    </section>
-
-    <section id="sb-filter" class="sb-filter" hidden>
-      <div class="sb-sortfilter" id="sb-sortfilter">
-        <button id="sb-sortfilter-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
-          <span>Sort &amp; Filter</span>
-          <span id="sb-sortfilter-badge" class="sb-sortfilter__badge" hidden></span>
-          <span class="sb-sortfilter__caret" aria-hidden="true">▾</span>
-        </button>
-        <div id="sb-sortfilter-pop" class="sb-sortfilter-pop" role="menu" aria-label="Sort and filter" hidden>
+      <div class="sb-viewmode__row">
+        <div class="sb-viewmode__pills" role="tablist">
+          <button id="sb-vm-evidence" type="button" class="sb-viewmode__pill sb-viewmode__pill--active" role="tab">By evidence</button>
+          <button id="sb-vm-source" type="button" class="sb-viewmode__pill" role="tab">By source</button>
+        </div>
+        <div class="sb-sortfilter" id="sb-sortfilter" hidden>
+          <button id="sb-sortfilter-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span>Sort &amp; Filter</span>
+            <span id="sb-sortfilter-badge" class="sb-sortfilter__badge" hidden></span>
+            <span class="sb-sortfilter__caret" aria-hidden="true">▾</span>
+          </button>
+          <div id="sb-sortfilter-pop" class="sb-sortfilter-pop" role="menu" aria-label="Sort and filter" hidden>
           <div class="sb-pop-section">
             <div class="sb-pop-section__title">Sort by</div>
             <div id="sb-sort-opts"></div>
@@ -52,6 +50,7 @@
           </div>
           <div class="sb-pop-actions">
             <button id="sb-filter-clear" type="button">Clear all</button>
+          </div>
           </div>
         </div>
       </div>

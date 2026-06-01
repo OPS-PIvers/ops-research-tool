@@ -14,6 +14,7 @@ const state = {
   filterPS: { primary: true, secondary: true, unset: true },
   viewMode: 'evidence',     // 'evidence' | 'source'
   expandedSourceIds: {},    // sourceId → true (highlights visible in source mode)
+  expandedHighlightId: null, // single highlight whose full text is shown (accordion)
   sourceFilters: {},        // sourceId → category label (per-source filter, source mode only)
   modalOpenForSourceId: null,   // sourceId of the currently-open modal (drives polling)
   lastDataJson: null,           // JSON of last sidebarGetProjectData response (polling diff)
@@ -26,7 +27,6 @@ const els = {
   project: document.getElementById('sb-project'),
   vmEvidence: document.getElementById('sb-vm-evidence'),
   vmSource: document.getElementById('sb-vm-source'),
-  filter: document.getElementById('sb-filter'),
   sortFilterTrigger: document.getElementById('sb-sortfilter-trigger'),
   sortFilterMenu: document.getElementById('sb-sortfilter'),
   sortFilterPop: document.getElementById('sb-sortfilter-pop'),
@@ -206,8 +206,8 @@ const SORT_OPTIONS = [
 // list re-renders live as options toggle — no Apply step.
 function renderFilter() {
   const bundle = activeBundle();
-  if (!bundle) { els.filter.hidden = true; return; }
-  els.filter.hidden = false;
+  if (!bundle) { els.sortFilterMenu.hidden = true; return; }
+  els.sortFilterMenu.hidden = false;
 
   els.sortOpts.innerHTML = '';
   SORT_OPTIONS.forEach((o) => els.sortOpts.appendChild(makeSortOption_(o.value, o.label)));
@@ -436,14 +436,20 @@ function renderSource(source) {
     titleWrap.appendChild(caret);
   }
   const titleTextWrap = document.createElement('div');
+  titleTextWrap.style.minWidth = '0';
   const title = document.createElement('div');
   title.className = 'sb-source__title';
   title.textContent = (source.citationFieldsParsed && source.citationFieldsParsed.title) || source.scrapedTitle || '(untitled)';
-  const url = document.createElement('div');
-  url.className = 'sb-source__url';
-  url.textContent = source.normalizedUrl || source.rawUrl || '';
   titleTextWrap.appendChild(title);
-  titleTextWrap.appendChild(url);
+  // Evidence view keeps the header compact — the wrapping URL line is the
+  // biggest space hog and the title already identifies the source. Show the
+  // URL only in source view (where the source is the primary unit).
+  if (sourceMode) {
+    const url = document.createElement('div');
+    url.className = 'sb-source__url';
+    url.textContent = source.normalizedUrl || source.rawUrl || '';
+    titleTextWrap.appendChild(url);
+  }
   titleWrap.appendChild(titleTextWrap);
   head.appendChild(titleWrap);
   const chip = document.createElement('span');
@@ -599,15 +605,18 @@ function copyToClipboard_(text) {
 
 // ---------- highlight render ----------
 
+const HL_TRUNCATE = 160;  // chars shown before "Show more" (≈3 lines)
+
 function renderHighlight(source, h) {
   const row = document.createElement('div');
   row.className = 'sb-highlight';
   row.setAttribute('data-highlight-id', h.highlightId);
-  const color = colorForLabel_(h.primaryCategory) || '#cccccc';
-  const bar = document.createElement('div');
-  bar.className = 'sb-highlight__bar';
-  bar.style.backgroundColor = color;
-  row.appendChild(bar);
+  // Category color → subtle tinted fill + thin same-hue border (no left bar).
+  const color = colorForLabel_(h.primaryCategory);
+  if (color) {
+    row.style.backgroundColor = tint_(color, 0.06);
+    row.style.borderColor = tint_(color, 0.45);
+  }
 
   // Category line as swatch · label pills. When a category filter is active,
   // each tag that matched a selected category (primary OR secondary) is
@@ -623,10 +632,27 @@ function renderHighlight(source, h) {
   }
   row.appendChild(cat);
 
+  // Evidence text: trimmed to ~3 lines by default; click "Show more" to expand
+  // the full text. Accordion — only one highlight is expanded at a time.
+  const fullText = h.highlightedText || '';
+  const expanded = state.expandedHighlightId === h.highlightId;
+  const needsTrunc = fullText.length > HL_TRUNCATE;
   const t = document.createElement('div');
   t.className = 'sb-highlight__text';
-  t.textContent = truncate_(h.highlightedText || '', 240);
+  t.textContent = (expanded || !needsTrunc) ? fullText : truncate_(fullText, HL_TRUNCATE);
   row.appendChild(t);
+
+  if (needsTrunc) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'sb-highlight__more';
+    more.textContent = expanded ? 'Show less' : 'Show more';
+    more.addEventListener('click', () => {
+      state.expandedHighlightId = expanded ? null : h.highlightId;
+      render();
+    });
+    row.appendChild(more);
+  }
 
   if (h.note) {
     const n = document.createElement('div');

@@ -415,11 +415,13 @@ function renderEvidenceCard(h) {
   card.id = 'hl-' + h.highlightId;
   card.setAttribute('data-highlight-id', h.highlightId);
 
-  const color = colorForLabel_(h.primaryCategory) || '#cccccc';
-  const bar = document.createElement('div');
-  bar.className = 'sb-highlight__bar';
-  bar.style.backgroundColor = color;
-  card.appendChild(bar);
+  // Category color → subtle tinted fill + thin same-hue border (matches the
+  // sidebar; no left bar).
+  const color = colorForLabel_(h.primaryCategory);
+  if (color) {
+    card.style.backgroundColor = tint_(color, 0.06);
+    card.style.borderColor = tint_(color, 0.45);
+  }
 
   const cat = document.createElement('div');
   cat.className = 'sb-highlight__cat';
@@ -498,6 +500,14 @@ function colorForLabel_(label) {
     if (editor.bundle['label' + i] === label) return editor.bundle['color' + i];
   }
   return null;
+}
+
+/** "#rrggbb" → "rgba(r,g,b,a)". Returns transparent for anything unparseable. */
+function tint_(hex, alpha) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return 'transparent';
+  const n = parseInt(m[1], 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + alpha + ')';
 }
 
 function renderHighlightMiniEditor_(h) {
