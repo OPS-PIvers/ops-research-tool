@@ -27,17 +27,33 @@
     </section>
 
     <section id="sb-filter" class="sb-filter" hidden>
-      <div class="sb-facets" id="sb-filter-cats"></div>
-      <div class="sb-filter__row sb-filter__row--ps">
-        <label class="sb-ps-chip">
-          <input type="checkbox" id="sb-flt-primary" checked /> Primary
-        </label>
-        <label class="sb-ps-chip">
-          <input type="checkbox" id="sb-flt-secondary" checked /> Secondary
-        </label>
-        <label class="sb-ps-chip">
-          <input type="checkbox" id="sb-flt-unset" checked /> Unset
-        </label>
+      <div class="sb-sortfilter" id="sb-sortfilter">
+        <button id="sb-sortfilter-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+          <span>Sort &amp; Filter</span>
+          <span id="sb-sortfilter-badge" class="sb-sortfilter__badge" hidden></span>
+          <span class="sb-sortfilter__caret" aria-hidden="true">▾</span>
+        </button>
+        <div id="sb-sortfilter-pop" class="sb-sortfilter-pop" role="menu" aria-label="Sort and filter" hidden>
+          <div class="sb-pop-section">
+            <div class="sb-pop-section__title">Sort by</div>
+            <div id="sb-sort-opts"></div>
+          </div>
+          <div class="sb-pop-section">
+            <div class="sb-pop-section__title">Categories</div>
+            <div id="sb-filter-cats"></div>
+          </div>
+          <div class="sb-pop-section">
+            <div class="sb-pop-section__title">Type</div>
+            <div class="sb-filter__row sb-filter__row--ps">
+              <label class="sb-ps-chip"><input type="checkbox" id="sb-flt-primary" checked /> Primary</label>
+              <label class="sb-ps-chip"><input type="checkbox" id="sb-flt-secondary" checked /> Secondary</label>
+              <label class="sb-ps-chip"><input type="checkbox" id="sb-flt-unset" checked /> Unset</label>
+            </div>
+          </div>
+          <div class="sb-pop-actions">
+            <button id="sb-filter-clear" type="button">Clear all</button>
+          </div>
+        </div>
       </div>
     </section>
 

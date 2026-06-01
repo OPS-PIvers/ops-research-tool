@@ -9,7 +9,8 @@ const state = {
   projectId: null,
   sources: [],
   highlights: [],
-  filterCat: null,     // null = all categories
+  selectedCats: [],    // multi-select category filter; [] = all categories
+  sortBy: 'recent',    // 'recent' | 'title' | 'evidence' — source card order
   filterPS: { primary: true, secondary: true, unset: true },
   viewMode: 'evidence',     // 'evidence' | 'source'
   expandedSourceIds: {},    // sourceId → true (highlights visible in source mode)
@@ -26,7 +27,13 @@ const els = {
   vmEvidence: document.getElementById('sb-vm-evidence'),
   vmSource: document.getElementById('sb-vm-source'),
   filter: document.getElementById('sb-filter'),
+  sortFilterTrigger: document.getElementById('sb-sortfilter-trigger'),
+  sortFilterMenu: document.getElementById('sb-sortfilter'),
+  sortFilterPop: document.getElementById('sb-sortfilter-pop'),
+  sortFilterBadge: document.getElementById('sb-sortfilter-badge'),
+  sortOpts: document.getElementById('sb-sort-opts'),
   filterCats: document.getElementById('sb-filter-cats'),
+  filterClear: document.getElementById('sb-filter-clear'),
   fltPrim: document.getElementById('sb-flt-primary'),
   fltSec: document.getElementById('sb-flt-secondary'),
   fltUnset: document.getElementById('sb-flt-unset'),
@@ -55,9 +62,17 @@ function bootstrap() {
     google.script.run.sidebarSetActiveProject(state.projectId);
     loadProjectData();
   });
-  els.fltPrim.addEventListener('change', () => { state.filterPS.primary = els.fltPrim.checked; render(); });
-  els.fltSec.addEventListener('change', () => { state.filterPS.secondary = els.fltSec.checked; render(); });
-  els.fltUnset.addEventListener('change', () => { state.filterPS.unset = els.fltUnset.checked; render(); });
+  els.fltPrim.addEventListener('change', () => { state.filterPS.primary = els.fltPrim.checked; updateFilterBadge_(); render(); });
+  els.fltSec.addEventListener('change', () => { state.filterPS.secondary = els.fltSec.checked; updateFilterBadge_(); render(); });
+  els.fltUnset.addEventListener('change', () => { state.filterPS.unset = els.fltUnset.checked; updateFilterBadge_(); render(); });
+  els.sortFilterTrigger.addEventListener('click', toggleSortFilter_);
+  els.filterClear.addEventListener('click', clearFilters_);
+  document.addEventListener('click', (e) => {
+    if (!els.sortFilterPop.hidden && !els.sortFilterMenu.contains(e.target)) closeSortFilter_();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !els.sortFilterPop.hidden) closeSortFilter_();
+  });
   els.vmEvidence.addEventListener('click', () => setViewMode_('evidence'));
   els.vmSource.addEventListener('click', () => setViewMode_('source'));
   els.insertTrigger.addEventListener('click', toggleInsertMenu_);
@@ -102,10 +117,10 @@ function openEditorFromFooter_() {
 }
 
 function pickFirstVisibleSource_() {
-  const list = (state.sources || []).filter(sourcePassesPSFilter).filter((s) => {
-    if (!state.filterCat) return true;
+  const list = sortSources_((state.sources || []).filter(sourcePassesPSFilter).filter((s) => {
+    if (state.selectedCats.length === 0) return true;
     return filteredHighlightsForSource(s.sourceId).length > 0;
-  });
+  }));
   return list[0] || (state.sources && state.sources[0]) || null;
 }
 
@@ -180,54 +195,112 @@ function activeBundle() {
   return state.ctx && state.ctx.activeBundle ? state.ctx.activeBundle : null;
 }
 
+const SORT_OPTIONS = [
+  { value: 'recent', label: 'Recently added' },
+  { value: 'title', label: 'Title A–Z' },
+  { value: 'evidence', label: 'Most evidence' },
+];
+
+// Populate the Sort & Filter popover. Sort = single-select radios; categories
+// = multi-select checkboxes (any number); Type checkboxes reflect state. The
+// list re-renders live as options toggle — no Apply step.
 function renderFilter() {
   const bundle = activeBundle();
   if (!bundle) { els.filter.hidden = true; return; }
   els.filter.hidden = false;
-  els.filterCats.innerHTML = '';
 
-  // Vertical facet list: All + every bundle category, each row = swatch ·
-  // label · count. No horizontal overflow (the old single-row dot strip ran
-  // off the edge), and the labels are always visible so no legend is needed.
-  els.filterCats.appendChild(makeFacet_(null, 'All', null, countHighlights(null)));
+  els.sortOpts.innerHTML = '';
+  SORT_OPTIONS.forEach((o) => els.sortOpts.appendChild(makeSortOption_(o.value, o.label)));
+
+  els.filterCats.innerHTML = '';
   for (let i = 1; i <= 5; i++) {
     const label = bundle['label' + i];
     if (!label) continue;
-    els.filterCats.appendChild(makeFacet_(label, label, bundle['color' + i], countHighlights(label)));
+    els.filterCats.appendChild(makeCatOption_(label, bundle['color' + i], countHighlights(label)));
   }
+
+  // Keep the Type checkboxes in sync with state (e.g. after Clear all).
+  els.fltPrim.checked = state.filterPS.primary;
+  els.fltSec.checked = state.filterPS.secondary;
+  els.fltUnset.checked = state.filterPS.unset;
+
+  updateFilterBadge_();
 }
 
-function makeFacet_(value, label, color, count) {
-  const active = state.filterCat === value;
-  const empty = value !== null && count === 0;
-  const row = document.createElement('button');
-  row.type = 'button';
-  row.className = 'sb-facet'
-    + (active ? ' sb-facet--active' : '')
-    + (empty ? ' sb-facet--dimmed' : '');
-  if (empty) row.disabled = true;
-
-  const dot = document.createElement('span');
-  dot.className = 'sb-facet__dot' + (color ? '' : ' sb-facet__dot--all');
-  if (color) dot.style.backgroundColor = color;
-  row.appendChild(dot);
-
+function makeSortOption_(value, label) {
+  const wrap = document.createElement('label');
+  wrap.className = 'sb-pop-opt';
+  const input = document.createElement('input');
+  input.type = 'radio'; input.name = 'sb-sort'; input.value = value;
+  input.checked = state.sortBy === value;
+  input.addEventListener('change', () => { state.sortBy = value; updateFilterBadge_(); render(); });
   const lab = document.createElement('span');
-  lab.className = 'sb-facet__label';
+  lab.className = 'sb-pop-opt__label';
   lab.textContent = label;
-  row.appendChild(lab);
+  wrap.appendChild(input);
+  wrap.appendChild(lab);
+  return wrap;
+}
 
-  const c = document.createElement('span');
-  c.className = 'sb-facet__count';
-  c.textContent = count;
-  row.appendChild(c);
-
-  row.addEventListener('click', () => {
-    state.filterCat = state.filterCat === value ? null : value;
-    renderFilter();
+function makeCatOption_(label, color, count) {
+  const wrap = document.createElement('label');
+  wrap.className = 'sb-pop-opt';
+  const input = document.createElement('input');
+  input.type = 'checkbox'; input.value = label;
+  input.checked = state.selectedCats.indexOf(label) >= 0;
+  input.addEventListener('change', () => {
+    const i = state.selectedCats.indexOf(label);
+    if (input.checked && i < 0) state.selectedCats.push(label);
+    else if (!input.checked && i >= 0) state.selectedCats.splice(i, 1);
+    updateFilterBadge_();
     render();
   });
-  return row;
+  const dot = document.createElement('span');
+  dot.className = 'sb-pop-opt__dot';
+  dot.style.backgroundColor = color || '#cccccc';
+  const lab = document.createElement('span');
+  lab.className = 'sb-pop-opt__label';
+  lab.textContent = label;
+  const c = document.createElement('span');
+  c.className = 'sb-pop-opt__count';
+  c.textContent = count;
+  wrap.appendChild(input);
+  wrap.appendChild(dot);
+  wrap.appendChild(lab);
+  wrap.appendChild(c);
+  return wrap;
+}
+
+// Active-filter count on the trigger badge: one per selected category, plus one
+// if the Type filter is narrowed from its all-on default. Sort doesn't count —
+// it reorders, it doesn't hide anything.
+function updateFilterBadge_() {
+  const psNarrowed = !(state.filterPS.primary && state.filterPS.secondary && state.filterPS.unset);
+  const n = state.selectedCats.length + (psNarrowed ? 1 : 0);
+  els.sortFilterBadge.textContent = n;
+  els.sortFilterBadge.hidden = n === 0;
+  els.filterClear.disabled = n === 0 && state.sortBy === 'recent';
+}
+
+function clearFilters_() {
+  state.selectedCats = [];
+  state.filterPS = { primary: true, secondary: true, unset: true };
+  state.sortBy = 'recent';
+  renderFilter();
+  render();
+}
+
+function toggleSortFilter_() {
+  if (els.sortFilterPop.hidden) openSortFilter_();
+  else closeSortFilter_();
+}
+function openSortFilter_() {
+  els.sortFilterPop.hidden = false;
+  els.sortFilterTrigger.setAttribute('aria-expanded', 'true');
+}
+function closeSortFilter_() {
+  els.sortFilterPop.hidden = true;
+  els.sortFilterTrigger.setAttribute('aria-expanded', 'false');
 }
 
 function countHighlights(category) {
@@ -235,12 +308,38 @@ function countHighlights(category) {
   return state.highlights.filter((h) => h.primaryCategory === category || h.secondaryCategory === category).length;
 }
 
+// A highlight matches the category filter when any selected category is its
+// primary OR secondary tag (OR semantics across the multi-select). Empty
+// selection = no category constraint.
+function highlightMatchesCats_(h) {
+  if (state.selectedCats.length === 0) return true;
+  return state.selectedCats.indexOf(h.primaryCategory) >= 0
+    || state.selectedCats.indexOf(h.secondaryCategory) >= 0;
+}
+
 function filteredHighlightsForSource(sourceId) {
   const perSource = state.viewMode === 'source' ? state.sourceFilters[sourceId] : null;
   return state.highlights
     .filter((h) => h.sourceId === sourceId)
-    .filter((h) => state.filterCat ? (h.primaryCategory === state.filterCat || h.secondaryCategory === state.filterCat) : true)
+    .filter(highlightMatchesCats_)
     .filter((h) => perSource ? (h.primaryCategory === perSource || h.secondaryCategory === perSource) : true);
+}
+
+// Order the source cards per the chosen sort. Returns a new array.
+function sortSources_(list) {
+  const arr = list.slice();
+  if (state.sortBy === 'title') {
+    arr.sort((a, b) => sourceTitle_(a).toLowerCase().localeCompare(sourceTitle_(b).toLowerCase()));
+  } else if (state.sortBy === 'evidence') {
+    arr.sort((a, b) => hlCountForSource_(b) - hlCountForSource_(a));
+  } else { // 'recent' — newest createdAt first
+    arr.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  }
+  return arr;
+}
+
+function hlCountForSource_(s) {
+  return state.highlights.filter((h) => h.sourceId === s.sourceId).length;
 }
 
 function categoryBreakdownForSource(sourceId) {
@@ -302,11 +401,11 @@ function render() {
     els.main.appendChild(e);
     return;
   }
-  const visibleSources = state.sources.filter(sourcePassesPSFilter).filter((s) => {
-    // If the category filter is on, only show sources that have at least one matching highlight.
-    if (!state.filterCat) return true;
+  const visibleSources = sortSources_(state.sources.filter(sourcePassesPSFilter).filter((s) => {
+    // With a category filter on, only show sources that have a matching highlight.
+    if (state.selectedCats.length === 0) return true;
     return filteredHighlightsForSource(s.sourceId).length > 0;
-  });
+  }));
   if (visibleSources.length === 0) {
     const e = document.createElement('div'); e.className = 'sb-empty';
     e.textContent = state.sources.length === 0
@@ -424,7 +523,7 @@ function renderSourceFilterRow(source) {
   const breakdown = categoryBreakdownForSource(source.sourceId);
   if (breakdown.length === 0) return row;
   const current = state.sourceFilters[source.sourceId] || null;
-  const allChip = makeSourceFilterChip_(source, null, 'All', '#dadce0', state.highlights.filter((h) => h.sourceId === source.sourceId).length, current === null);
+  const allChip = makeSourceFilterChip_(source, null, 'All', '#cccccc', state.highlights.filter((h) => h.sourceId === source.sourceId).length, current === null);
   row.appendChild(allChip);
   breakdown.forEach((b) => {
     row.appendChild(makeSourceFilterChip_(source, b.label, b.label, b.color, b.count, current === b.label));
@@ -504,23 +603,23 @@ function renderHighlight(source, h) {
   const row = document.createElement('div');
   row.className = 'sb-highlight';
   row.setAttribute('data-highlight-id', h.highlightId);
-  const color = colorForLabel_(h.primaryCategory) || '#dadce0';
+  const color = colorForLabel_(h.primaryCategory) || '#cccccc';
   const bar = document.createElement('div');
   bar.className = 'sb-highlight__bar';
   bar.style.backgroundColor = color;
   row.appendChild(bar);
 
   // Category line as swatch · label pills. When a category filter is active,
-  // the tag that caused this card to match (primary OR secondary) is
+  // each tag that matched a selected category (primary OR secondary) is
   // emphasized, so a card that matched on its secondary tag no longer looks
   // like it doesn't belong.
   const cat = document.createElement('div');
   cat.className = 'sb-highlight__cat';
   cat.appendChild(hlTag_(h.primaryCategory || '(no category)', colorForLabel_(h.primaryCategory),
-    !!(state.filterCat && h.primaryCategory === state.filterCat), false));
+    state.selectedCats.indexOf(h.primaryCategory) >= 0, false));
   if (h.secondaryCategory) {
     cat.appendChild(hlTag_(h.secondaryCategory, colorForLabel_(h.secondaryCategory),
-      !!(state.filterCat && h.secondaryCategory === state.filterCat), true));
+      state.selectedCats.indexOf(h.secondaryCategory) >= 0, true));
   }
   row.appendChild(cat);
 
@@ -562,7 +661,7 @@ function hlTag_(label, color, match, secondary) {
     + (match ? ' sb-hl-tag--match' : '');
   const dot = document.createElement('span');
   dot.className = 'sb-hl-tag__dot';
-  dot.style.backgroundColor = color || '#dadce0';
+  dot.style.backgroundColor = color || '#cccccc';
   tag.appendChild(dot);
   tag.appendChild(document.createTextNode(label));
   if (match) tag.style.backgroundColor = tint_(color, 0.18);

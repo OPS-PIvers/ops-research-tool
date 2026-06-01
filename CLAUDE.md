@@ -268,6 +268,20 @@ These supersede or refine the spec — apply them before defaulting to plan text
   but warn so students don't silently forget a source. Server enforces the
   filter regardless; the client warning is UX only — keep the two rules in sync.
 
+- **Docs sidebar + source-editor modal are OPS-brand-aligned.** The shared
+  stylesheet [`sidebar_css.html`](apps-script/src/sidebar_css.html) now uses the
+  Orono Technology palette (brand blue `#2d3f89` primary / `#1d2a5d` strong, red
+  `#ad2122` accent, true-gray neutrals), **Lexend** for titles + **Roboto** for
+  body (Google-Fonts `@import` at the top — works in the HtmlService iframe), and
+  the OPS focus-ring on form controls. The old Google-Material hexes are gone.
+  Semantic CSS vars (`--c-accent`, `--c-good`, etc.) were kept and remapped, so
+  rules pick up brand colors without renaming. Primary/secondary/unset now read
+  blue/red/gray everywhere (chips + segmented control). Use the
+  `anthropic-skills:ops-brand-guidelines` skill + these tokens for any new
+  sidebar/modal UI. **Follow-up:** the header is still a styled text wordmark —
+  drop in the real OPS Primary Logo (base64-inlined; GAS can't `clasp push` a
+  PNG) when the asset is on hand.
+
 ## 5. GAS V8 quirks discovered
 
 - `new URL(...)` **throws** in GAS V8. The global is advertised but unusable.

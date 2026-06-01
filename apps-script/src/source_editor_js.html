@@ -415,7 +415,7 @@ function renderEvidenceCard(h) {
   card.id = 'hl-' + h.highlightId;
   card.setAttribute('data-highlight-id', h.highlightId);
 
-  const color = colorForLabel_(h.primaryCategory) || '#dadce0';
+  const color = colorForLabel_(h.primaryCategory) || '#cccccc';
   const bar = document.createElement('div');
   bar.className = 'sb-highlight__bar';
   bar.style.backgroundColor = color;
@@ -588,7 +588,7 @@ function swatch_(label, color, active, onClick) {
   const b = document.createElement('button');
   b.type = 'button';
   b.title = label;
-  b.style.cssText = 'width:22px; height:22px; border-radius:50%; border:2px solid ' + (active ? '#202124' : 'transparent') + '; padding:0; background:' + color + '; cursor:pointer; background-clip:padding-box;';
+  b.style.cssText = 'width:22px; height:22px; border-radius:50%; border:2px solid ' + (active ? '#1d2a5d' : 'transparent') + '; padding:0; background:' + color + '; cursor:pointer; background-clip:padding-box;';
   b.addEventListener('click', onClick);
   return b;
 }
@@ -639,7 +639,7 @@ function renderFilterChips_() {
 
   // "All" chip.
   const allCount = editor.highlights.length;
-  els.filter.appendChild(makeFilterChip_(null, 'All', '#dadce0', allCount, editor.perSourceFilter === null));
+  els.filter.appendChild(makeFilterChip_(null, 'All', '#cccccc', allCount, editor.perSourceFilter === null));
 
   // Per-category chips.
   breakdown.forEach((b) => {
