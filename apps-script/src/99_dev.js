@@ -1705,3 +1705,44 @@ function devTestDedupeSourcesPersist() {
   console.log(fail === 0 ? 'devTestDedupeSourcesPersist: ALL GREEN' : 'devTestDedupeSourcesPersist: NOT GREEN (' + fail + ' fail)');
   return { pass, fail };
 }
+
+/**
+ * partitionBibliographySources_ is the single source of truth for which sources
+ * land in the bibliography. Annotated needs classified + non-empty annotation;
+ * Works Cited needs classified only (annotation irrelevant); unclassified is
+ * always omitted. The Docs sidebar mirrors this rule client-side to warn before
+ * insert — if this goes red, the warning and the actual insert have drifted.
+ */
+function devTestBibliographyPartition() {
+  const sources = [
+    { sourceId: 'a', primarySecondary: 'primary',   annotation: 'has note' },
+    { sourceId: 'b', primarySecondary: 'primary',   annotation: '   ' },     // whitespace = no annotation
+    { sourceId: 'c', primarySecondary: 'secondary', annotation: 'note' },
+    { sourceId: 'd', primarySecondary: 'secondary', annotation: '' },
+    { sourceId: 'e', primarySecondary: 'unset',     annotation: 'note' },    // classified-unset but annotated
+    { sourceId: 'f', primarySecondary: '',          annotation: '' },        // no classification at all
+  ];
+  let pass = 0, fail = 0;
+  const check = (label, cond) => { if (cond) { pass++; console.log('PASS ' + label); } else { fail++; console.log('FAIL ' + label); } };
+  const ids = (arr) => arr.map((s) => s.sourceId).sort().join(',');
+  const omittedFor = (arr, reason) => arr.filter((o) => o.reason === reason).map((o) => o.source.sourceId).sort().join(',');
+
+  const ann = partitionBibliographySources_(sources, true);
+  check('annotated primary = [a]',        ids(ann.primary) === 'a');
+  check('annotated secondary = [c]',      ids(ann.secondary) === 'c');
+  check('annotated no-annotation = [b,d]', omittedFor(ann.omitted, 'no-annotation') === 'b,d');
+  check('annotated unclassified = [e,f]',  omittedFor(ann.omitted, 'unclassified') === 'e,f');
+
+  const wc = partitionBibliographySources_(sources, false);
+  check('works-cited primary = [a,b]',    ids(wc.primary) === 'a,b');
+  check('works-cited secondary = [c,d]',  ids(wc.secondary) === 'c,d');
+  check('works-cited no no-annotation omissions', omittedFor(wc.omitted, 'no-annotation') === '');
+  check('works-cited unclassified = [e,f]', omittedFor(wc.omitted, 'unclassified') === 'e,f');
+
+  // Empty / null input is safe.
+  const empty = partitionBibliographySources_(null, true);
+  check('null input → empty buckets', empty.primary.length === 0 && empty.secondary.length === 0 && empty.omitted.length === 0);
+
+  console.log(fail === 0 ? 'devTestBibliographyPartition: ALL GREEN' : 'devTestBibliographyPartition: NOT GREEN (' + fail + ' fail)');
+  return { pass, fail };
+}

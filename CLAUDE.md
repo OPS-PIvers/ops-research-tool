@@ -119,9 +119,12 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     [`52_bibliography.js`](apps-script/src/52_bibliography.js):
     `insertAnnotatedBibliography` splits Primary/Secondary, alphabetizes by
     author-last/title, applies italics ranges + MLA hanging indent, inserts at
-    cursor. Sources with no primary/secondary classification are skipped (hard
-    validation per build plan §2). `insertInlineCitation` for in-text
-    parentheticals. **No "insert as quote" button** — intentional.
+    cursor. Inclusion is decided by `partitionBibliographySources_`: unclassified
+    sources are always skipped (hard validation per build plan §2), and the
+    annotated variant additionally skips classified-but-un-annotated sources;
+    the sidebar shows a confirm warning listing the omissions before inserting
+    (see §4). `insertInlineCitation` for in-text parentheticals. **No "insert as
+    quote" button** — intentional.
   - **Still TODO in Phase 3:** install the editor add-on (dev: Deploy → Test
     deployments → Editor Add-on; prod: Marketplace SDK, domain-restricted to
     `orono.k12.mn.us`); real-Doc QA of bibliography formatting + cursor
@@ -247,6 +250,23 @@ These supersede or refine the spec — apply them before defaulting to plan text
   The offline queue now **merges** pending same-source writes (sorted by
   `enqueuedAt`) instead of last-write-wins, so a citation edit can't be dropped
   by a later scrape re-assert before draining.
+- **Bibliography inclusion keys on annotation too — and omissions are warned,
+  not silent.** The **annotated** bibliography includes a source only if it is
+  classified primary/secondary **AND** has a non-empty annotation; **Works
+  Cited** still keys on classification only (annotations are irrelevant there).
+  Unclassified is omitted from both (build plan §2). The rule lives in exactly
+  one place — `partitionBibliographySources_`
+  ([`52_bibliography.js`](apps-script/src/52_bibliography.js), pure +
+  unit-tested by `devTestBibliographyPartition`) — and the Docs sidebar mirrors
+  it in `bibliographyOmissions_`
+  ([`sidebar_js.html`](apps-script/src/sidebar_js.html)) to show a **blocking
+  confirm** listing every source that will be left out and why ("not marked
+  Primary or Secondary" / "no annotation written") before inserting; the
+  success status reports the left-out count. This refines build plan §2's
+  hard-validation (unclassified skipped) to also treat a blank annotation as
+  incomplete for the *annotated* variant. Per Paul: the cut behavior is fine,
+  but warn so students don't silently forget a source. Server enforces the
+  filter regardless; the client warning is UX only — keep the two rules in sync.
 
 ## 5. GAS V8 quirks discovered
 
@@ -349,8 +369,15 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   `devTestEnsureHeadersAppend` (additive header heal + reorder still throws).
   The DOM-side scraper itself can't run under GAS — exercise
   [`scrape.js`](extension/content/scrape.js) by real-page QA (see §9).
+- `devTestBibliographyPartition` — locks `partitionBibliographySources_`, the
+  single source of truth for bibliography inclusion (annotated needs classified
+  + annotation; Works Cited needs classified only; unclassified always omitted).
+  The sidebar mirrors this rule to warn before insert, so a red here means the
+  warning and the actual insert have drifted.
 - No editor test covers citation/bibliography *formatting* — that's manual
-  QA in a real Doc (italics ranges, hanging indent, cursor insertion).
+  QA in a real Doc (italics ranges, hanging indent, cursor insertion). The
+  inclusion/omission filter IS tested (above); the warning confirm dialog is
+  DOM-side — real-Doc QA only.
 - Groups (sub-project D) — each builds a DEV-class fixture, asserts, and
   cleans up after itself: `devTestGroupRoutingProvisioning`,
   `devTestGroupMergeMigrationFidelity`, `devTestGroupDisbandRoundTrip`,

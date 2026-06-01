@@ -28,8 +28,13 @@ function insertAnnotatedBibliography(projectId) {
  * The inserted block is wrapped in a named range (BIB_NAMED_RANGE). On a
  * subsequent insert of EITHER type, the previous block is removed and the new
  * one dropped in its place — so re-clicking updates the single bibliography
- * instead of appending copies. Sources are de-duplicated by URL first;
- * unclassified (primary/secondary unset) sources are skipped per build plan §2.
+ * instead of appending copies. Sources are de-duplicated by URL first, then
+ * partitioned by partitionBibliographySources_: unclassified (primary/secondary
+ * unset) sources are always skipped per build plan §2, and for the ANNOTATED
+ * variant a classified source with no annotation is also skipped (an annotated
+ * entry with a blank annotation is incomplete). The sidebar warns the student
+ * about both omission buckets before calling in, so this skip is acknowledged,
+ * not silent.
  */
 function insertBibliography_(projectId, annotated) {
   const doc = DocumentApp.getActiveDocument();
@@ -43,24 +48,19 @@ function insertBibliography_(projectId, annotated) {
   const sources = dedupeSourcesByUrl_(readSourcesForActor_(actorEmail, projectId), []).sources;
   if (sources.length === 0) throw new Error('No sources saved for this project yet.');
 
-  const primary = [];
-  const secondary = [];
-  sources.forEach((s) => {
+  const toEntry = (s) => {
     const fields = parseCitationFields_(s);
     const formatted = formatCitation(fields, style);
-    const entry = {
+    return {
       sortKey: bibSortKey_(fields, formatted.text),
       text: formatted.text,
       italics: formatted.italics || [],
       annotation: s.annotation || '',
     };
-    if (s.primarySecondary === 'primary') primary.push(entry);
-    else if (s.primarySecondary === 'secondary') secondary.push(entry);
-    // unset → skipped per build plan §2 ("you must classify this source before
-    // it counts as complete")
-  });
-  primary.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-  secondary.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  };
+  const parts = partitionBibliographySources_(sources, annotated);
+  const primary = parts.primary.map(toEntry).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  const secondary = parts.secondary.map(toEntry).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
   const body = doc.getBody();
   // Replace an existing OPS bibliography in place, if there is one; otherwise
@@ -84,6 +84,40 @@ function insertBibliography_(projectId, annotated) {
   }
   wrapBibliographyRange_(doc, body, startIndex, idx);
   return { ok: true, annotated: !!annotated, inserted: { primary: primary.length, secondary: secondary.length } };
+}
+
+/**
+ * Decide which sources make it into the bibliography and which are left out.
+ * Pure (no DocumentApp/Sheets) so it is unit-testable and so the rule lives in
+ * exactly one place — the Docs sidebar mirrors this same rule client-side to
+ * warn the student before inserting (see bibliographyOmissions_ in
+ * sidebar_js.html); keep the two in sync.
+ *
+ *   - A source must be classified primary/secondary to appear at all
+ *     (unclassified → omitted, reason 'unclassified', per build plan §2).
+ *   - For the ANNOTATED variant, a classified source must ALSO have a non-empty
+ *     annotation (classified-but-blank → omitted, reason 'no-annotation'). The
+ *     "Works Cited" variant has no annotations, so annotation never gates it.
+ *
+ * Returns { primary:[source], secondary:[source], omitted:[{source, reason}] }.
+ */
+function partitionBibliographySources_(sources, annotated) {
+  const primary = [];
+  const secondary = [];
+  const omitted = [];
+  (sources || []).forEach((s) => {
+    const ps = s.primarySecondary;
+    if (ps !== 'primary' && ps !== 'secondary') {
+      omitted.push({ source: s, reason: 'unclassified' });
+      return;
+    }
+    if (annotated && !(s.annotation && String(s.annotation).trim())) {
+      omitted.push({ source: s, reason: 'no-annotation' });
+      return;
+    }
+    (ps === 'primary' ? primary : secondary).push(s);
+  });
+  return { primary: primary, secondary: secondary, omitted: omitted };
 }
 
 /**

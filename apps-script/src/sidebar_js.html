@@ -665,10 +665,64 @@ const INSERT_BTN_LABELS = {
   works: 'Insert Works Cited',
 };
 
+/**
+ * Which of the current sources will NOT make it into the bibliography, and why.
+ * Mirrors partitionBibliographySources_ on the server (52_bibliography.js) — the
+ * server is the source of truth for what actually gets inserted; this is the
+ * client-side preview so we can warn the student first. Keep the two in sync.
+ *
+ *   - unclassified  → omitted from BOTH variants (build plan §2).
+ *   - no-annotation → omitted from the ANNOTATED variant only (a blank
+ *                     annotation makes an annotated entry incomplete). Works
+ *                     Cited has no annotations, so it never trips this.
+ */
+function bibliographyOmissions_(annotated) {
+  const omitted = [];
+  (state.sources || []).forEach((s) => {
+    const ps = s.primarySecondary;
+    if (ps !== 'primary' && ps !== 'secondary') {
+      omitted.push({ source: s, reason: 'unclassified' });
+      return;
+    }
+    if (annotated && !(s.annotation && String(s.annotation).trim())) {
+      omitted.push({ source: s, reason: 'no-annotation' });
+    }
+  });
+  return omitted;
+}
+
+function sourceTitle_(s) {
+  return (s.citationFieldsParsed && s.citationFieldsParsed.title) || s.scrapedTitle || '(untitled)';
+}
+
+/**
+ * Blocking warning shown before an insert that would drop sources. Lists each
+ * omitted source with the reason so the student can go fix it (Cancel) or
+ * insert without it (OK). Returns true to proceed.
+ */
+function confirmOmissions_(omitted, annotated) {
+  const reasonText = {
+    'unclassified': 'not marked Primary or Secondary',
+    'no-annotation': 'no annotation written',
+  };
+  const lines = omitted.map((o) => '  • ' + truncate_(sourceTitle_(o.source), 60) + ' — ' + reasonText[o.reason]);
+  const n = omitted.length;
+  const what = annotated ? 'annotated bibliography' : 'works cited list';
+  const msg =
+    n + ' source' + (n === 1 ? '' : 's') + ' will be LEFT OUT of your ' + what + ':\n\n' +
+    lines.join('\n') +
+    '\n\nFix ' + (n === 1 ? 'it' : 'them') + ' in the editor first, or click OK to insert without ' +
+    (n === 1 ? 'it' : 'them') + '.';
+  return window.confirm(msg);
+}
+
 // annotated=true → Annotated Bibliography button; false → Works Cited button.
 // Both replace whatever bibliography is already in the doc (server-side, via
 // the named-range tag), so re-clicking either updates the one block.
 function insertBibliography(annotated) {
+  const omitted = bibliographyOmissions_(annotated);
+  if (omitted.length > 0 && !confirmOmissions_(omitted, annotated)) return;
+  const omittedCount = omitted.length;
   const btn = annotated ? els.insert : els.insertWorks;
   els.insert.disabled = true;
   els.insertWorks.disabled = true;
@@ -692,7 +746,9 @@ function insertBibliography(annotated) {
       if (res && res.ok) {
         const n = res.inserted.primary + res.inserted.secondary;
         const what = res.annotated ? 'annotated bibliography' : 'works cited';
-        setStatus('Inserted ' + what + ' (' + n + ' source(s)).', 'good', 3000);
+        let msg = 'Inserted ' + what + ' (' + n + ' source' + (n === 1 ? '' : 's') + ')';
+        if (omittedCount > 0) msg += ' · ' + omittedCount + ' left out';
+        setStatus(msg + '.', 'good', 4000);
       } else {
         setStatus('Insert failed.', 'bad');
       }
