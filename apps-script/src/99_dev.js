@@ -1471,6 +1471,57 @@ function devTestPreviewCitation() {
 }
 
 /**
+ * Locks the robust date parser behind formatMlaDate_ / yearOnly_. Covers the
+ * formats the old `new Date()` path mangled — ordinals ("April 16th, 2020"),
+ * separator-less compact dates ("20200416") — plus ISO/US/slash/month-name
+ * variants and graceful echo of unparseable strings. No timezone round-trip,
+ * so ISO dates no longer drift a day under the script timezone.
+ */
+function devTestMlaDateFormatting() {
+  const full = [
+    ['2020-04-16',        '16 Apr. 2020'],
+    ['2020-4-6',          '6 Apr. 2020'],
+    ['2020/04/16',        '16 Apr. 2020'],
+    ['2020.04.16',        '16 Apr. 2020'],
+    ['20200416',          '16 Apr. 2020'],
+    ['20260305',          '5 Mar. 2026'],
+    ['April 16, 2020',    '16 Apr. 2020'],
+    ['April 16th, 2020',  '16 Apr. 2020'],
+    ['Apr. 16 2020',      '16 Apr. 2020'],
+    ['16 April 2020',     '16 Apr. 2020'],
+    ['1st March 2021',    '1 Mar. 2021'],
+    ['4/16/2020',         '16 Apr. 2020'],
+    ['May 3, 2026',       '3 May 2026'],
+    ['April 2020',        'Apr. 2020'],
+    ['202004',            'Apr. 2020'],
+    ['Sept 2019',         'Sept. 2019'],
+    ['2020',              '2020'],
+    ['',                  ''],
+    ['n.d.',              'n.d.'],          // unparseable → echoed verbatim
+    ['Spring 2020',       'Spring 2020'],   // season qualifier preserved
+  ];
+  const years = [
+    ['2020-04-16',        '2020'],
+    ['20200416',          '2020'],
+    ['April 16th, 2020',  '2020'],
+    ['2020',              '2020'],
+    ['c. 1850',           'c. 1850'],       // unparseable → echoed verbatim
+    ['',                  ''],
+  ];
+  let pass = 0, fail = 0;
+  const run = (fn, name, cases) => cases.forEach(([raw, expected]) => {
+    const got = fn(raw);
+    const ok = got === expected;
+    if (ok) pass++; else fail++;
+    console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}(${JSON.stringify(raw)}) = ${JSON.stringify(got)} (expected ${JSON.stringify(expected)})`);
+  });
+  run(formatMlaDate_, 'formatMlaDate_', full);
+  run(yearOnly_, 'yearOnly_', years);
+  console.log((fail === 0 ? 'devTestMlaDateFormatting: ALL GREEN' : 'devTestMlaDateFormatting: NOT GREEN (' + fail + ' fail)') + ` — ${pass} passed`);
+  return { pass, fail };
+}
+
+/**
  * doPost deletes accept { kind:'source', id } and route to the orphan-safe
  * deleteSourceIfOrphaned_ — removes a source with no referencing highlights,
  * refuses one that still has evidence. Backs the extension's "Delete source"

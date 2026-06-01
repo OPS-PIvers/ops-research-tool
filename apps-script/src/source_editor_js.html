@@ -13,6 +13,7 @@ const editor = {
   editingHighlightId: null,
   confirmingHighlightDeleteId: null,
   confirmingSourceDelete: false,
+  busy: false,             // a blocking server op is in flight (see setBusy_)
 };
 
 const els = {
@@ -25,8 +26,11 @@ const els = {
   status:       document.getElementById('ed-status'),
 };
 
-els.close.addEventListener('click', () => google.script.host.close());
-els.sourceSelect.addEventListener('change', () => switchSource_(els.sourceSelect.value));
+els.close.addEventListener('click', () => { if (!editor.busy) google.script.host.close(); });
+els.sourceSelect.addEventListener('change', () => {
+  if (editor.busy) { populateSourceSelect_(); return; }   // ignore + re-sync while busy
+  switchSource_(els.sourceSelect.value);
+});
 
 bootstrap();
 
@@ -199,23 +203,8 @@ function renderCitationForm() {
     form.appendChild(formField_(def.label, textInput_(fields[def.key] || '', onChange, def.kind)));
   });
 
-  // Primary/secondary radios
-  const psRow = document.createElement('div');
-  psRow.className = 'sb-source__form-row';
-  PS_OPTS.forEach((opt) => {
-    const lab = document.createElement('label');
-    const inp = document.createElement('input');
-    inp.type = 'radio'; inp.name = 'ed-ps'; inp.value = opt;
-    if ((source.primarySecondary || 'unset') === opt) inp.checked = true;
-    inp.addEventListener('change', () => {
-      saveSourcePatch_({ primarySecondary: opt });
-      source.primarySecondary = opt;
-    });
-    lab.appendChild(inp);
-    lab.appendChild(document.createTextNode(' ' + opt));
-    psRow.appendChild(lab);
-  });
-  form.appendChild(formField_('Tag', psRow));
+  // Primary / secondary / unset — segmented control.
+  form.appendChild(formField_('Tag', psSegmented_(source)));
 
   // Annotation
   const annWrap = document.createElement('div');
@@ -322,6 +311,41 @@ function selectInput_(options, value, onChange) {
   });
   s.addEventListener('change', () => onChange(s.value));
   return s;
+}
+
+const PS_LABELS = { primary: 'Primary', secondary: 'Secondary', unset: 'Unset' };
+
+/**
+ * Primary/secondary/unset picker as a full-width segmented control. Re-skins
+ * in place on click (no full re-render — keeps focus and the live preview
+ * intact) and persists through the same source autosave path as before.
+ */
+function psSegmented_(source) {
+  const group = document.createElement('div');
+  group.className = 'sb-segmented';
+  group.setAttribute('role', 'radiogroup');
+  group.setAttribute('aria-label', 'Primary or secondary source');
+  PS_OPTS.forEach((opt) => {
+    const active = (source.primarySecondary || 'unset') === opt;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sb-segmented__opt sb-segmented__opt--' + opt + (active ? ' sb-segmented__opt--active' : '');
+    b.textContent = PS_LABELS[opt];
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', active ? 'true' : 'false');
+    b.addEventListener('click', () => {
+      if ((source.primarySecondary || 'unset') === opt) return;   // no change
+      source.primarySecondary = opt;
+      saveSourcePatch_({ primarySecondary: opt });
+      Array.prototype.forEach.call(group.children, (child) => {
+        const on = child === b;
+        child.classList.toggle('sb-segmented__opt--active', on);
+        child.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
+    });
+    group.appendChild(b);
+  });
+  return group;
 }
 
 function updatePreview_(form, fields) {
@@ -705,7 +729,7 @@ function renderDeleteSourceUi_() {
  * state and surface the error.
  */
 function performDeleteSource_() {
-  setStatus('Deleting…');
+  setBusy_(true, 'Deleting source…');
   const deletedId = ctx.sourceId;
   google.script.run
     .withSuccessHandler(() => {
@@ -714,10 +738,11 @@ function performDeleteSource_() {
       editor.allHighlights = editor.allHighlights.filter((h) => h.sourceId !== deletedId);
 
       if (editor.allSources.length === 0) {
-        google.script.host.close();   // nothing left to edit
+        google.script.host.close();   // nothing left to edit (overlay tears down with it)
         return;
       }
 
+      setBusy_(false);
       // Land on the source that took the deleted one's slot (or the new last).
       const next = editor.allSources[Math.min(Math.max(idx, 0), editor.allSources.length - 1)];
       loadSourceIntoEditor_(next);
@@ -726,10 +751,46 @@ function performDeleteSource_() {
       setStatus('Source deleted.', 'good', 2000);
     })
     .withFailureHandler((e) => {
+      setBusy_(false);
       editor.confirmingSourceDelete = false;
       render();
       setStatus('Delete failed: ' + (e && e.message || e), 'bad');
     })
     .sidebarDeleteSource(ctx.projectId, deletedId);
+}
+
+/**
+ * Full-modal blocking overlay for operations that keep the editor open while a
+ * server call is in flight (currently: deleting a source). The overlay captures
+ * every click so a student can't double-fire the button or dismiss the editor
+ * mid-flight, and editor.busy makes the header close / source-switch handlers
+ * bail too. Autosaves (citation fields, annotation, highlight edits) stay
+ * optimistic and non-blocking by design — they never raise this.
+ */
+function setBusy_(on, label) {
+  editor.busy = !!on;
+  let ov = document.getElementById('ed-busy');
+  if (on) {
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'ed-busy';
+      ov.className = 'sb-modal__busy';
+      const card = document.createElement('div');
+      card.className = 'sb-modal__busy-card';
+      const sp = document.createElement('div');
+      sp.className = 'sb-loading__spinner';
+      const lab = document.createElement('div');
+      lab.className = 'sb-modal__busy-label';
+      card.appendChild(sp);
+      card.appendChild(lab);
+      ov.appendChild(card);
+      ov.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); });
+      document.body.appendChild(ov);
+    }
+    ov.querySelector('.sb-modal__busy-label').textContent = label || 'Working…';
+    ov.style.display = 'flex';
+  } else if (ov) {
+    ov.style.display = 'none';
+  }
 }
 </script>

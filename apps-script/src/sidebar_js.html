@@ -31,7 +31,10 @@ const els = {
   fltSec: document.getElementById('sb-flt-secondary'),
   fltUnset: document.getElementById('sb-flt-unset'),
   main: document.getElementById('sb-main'),
-  insert: document.getElementById('sb-insert'),
+  insertTrigger: document.getElementById('sb-insert-trigger'),
+  insertMenu: document.getElementById('sb-insert-menu'),
+  insertPop: document.getElementById('sb-insert-pop'),
+  insertAnnotated: document.getElementById('sb-insert-annotated'),
   insertWorks: document.getElementById('sb-insert-works'),
   openEditor: document.getElementById('sb-open-editor'),
   status: document.getElementById('sb-status'),
@@ -57,9 +60,31 @@ function bootstrap() {
   els.fltUnset.addEventListener('change', () => { state.filterPS.unset = els.fltUnset.checked; render(); });
   els.vmEvidence.addEventListener('click', () => setViewMode_('evidence'));
   els.vmSource.addEventListener('click', () => setViewMode_('source'));
-  els.insert.addEventListener('click', () => insertBibliography(true));
-  els.insertWorks.addEventListener('click', () => insertBibliography(false));
+  els.insertTrigger.addEventListener('click', toggleInsertMenu_);
+  els.insertAnnotated.addEventListener('click', () => { closeInsertMenu_(); insertBibliography(true); });
+  els.insertWorks.addEventListener('click', () => { closeInsertMenu_(); insertBibliography(false); });
   els.openEditor.addEventListener('click', openEditorFromFooter_);
+
+  // Dismiss the insert popover on outside click or Escape.
+  document.addEventListener('click', (e) => {
+    if (!els.insertPop.hidden && !els.insertMenu.contains(e.target)) closeInsertMenu_();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !els.insertPop.hidden) closeInsertMenu_();
+  });
+}
+
+function toggleInsertMenu_() {
+  if (els.insertPop.hidden) openInsertMenu_();
+  else closeInsertMenu_();
+}
+function openInsertMenu_() {
+  els.insertPop.hidden = false;
+  els.insertTrigger.setAttribute('aria-expanded', 'true');
+}
+function closeInsertMenu_() {
+  els.insertPop.hidden = true;
+  els.insertTrigger.setAttribute('aria-expanded', 'false');
 }
 
 /**
@@ -142,8 +167,7 @@ function onProjectData(resp) {
   if (!resp || !resp.ok) { setStatus('Could not load project data.', 'bad'); return; }
   state.sources = resp.sources || [];
   state.highlights = resp.highlights || [];
-  els.insert.disabled = state.sources.length === 0;
-  els.insertWorks.disabled = state.sources.length === 0;
+  els.insertTrigger.disabled = state.sources.length === 0;
   els.openEditor.disabled = state.sources.length === 0;
   setStatus('');
   renderFilter();
@@ -162,86 +186,48 @@ function renderFilter() {
   els.filter.hidden = false;
   els.filterCats.innerHTML = '';
 
-  // "All" chip — no dot, just label + count. Sits at the start of the strip.
-  const all = document.createElement('button');
-  all.type = 'button';
-  all.className = 'sb-filter-chip sb-filter-chip--all';
-  if (state.filterCat === null) all.classList.add('sb-filter-chip--active');
-  all.title = 'Show all categories';
-  all.appendChild(document.createTextNode('All'));
-  const allCount = document.createElement('span');
-  allCount.className = 'sb-filter-chip__count';
-  allCount.textContent = countHighlights(null);
-  all.appendChild(allCount);
-  all.addEventListener('click', () => {
-    state.filterCat = null;
-    renderFilter();
-    render();
-  });
-  els.filterCats.appendChild(all);
-
-  // Per-category chips — colored dot + count only. Label is in the hover
-  // tooltip + (when this chip is the active filter) in the legend row
-  // below the strip.
+  // Vertical facet list: All + every bundle category, each row = swatch ·
+  // label · count. No horizontal overflow (the old single-row dot strip ran
+  // off the edge), and the labels are always visible so no legend is needed.
+  els.filterCats.appendChild(makeFacet_(null, 'All', null, countHighlights(null)));
   for (let i = 1; i <= 5; i++) {
     const label = bundle['label' + i];
-    const color = bundle['color' + i];
     if (!label) continue;
-    els.filterCats.appendChild(makeFilterDotChip(label, color, countHighlights(label)));
-  }
-
-  // Active-filter legend: only visible when something other than "All" is
-  // selected. Shows the human label and a quick clear (×).
-  let legend = document.getElementById('sb-filter-legend');
-  if (state.filterCat) {
-    if (!legend) {
-      legend = document.createElement('div');
-      legend.id = 'sb-filter-legend';
-      legend.className = 'sb-filter__legend';
-      els.filter.insertBefore(legend, els.filterCats.nextSibling);
-    }
-    legend.innerHTML = '';
-    const dot = document.createElement('span');
-    dot.className = 'sb-filter__legend-dot';
-    dot.style.backgroundColor = colorForLabel_(state.filterCat) || '#dadce0';
-    legend.appendChild(dot);
-    legend.appendChild(document.createTextNode(state.filterCat));
-    const clear = document.createElement('button');
-    clear.type = 'button';
-    clear.className = 'sb-filter__legend-clear';
-    clear.title = 'Clear filter';
-    clear.textContent = '×';
-    clear.addEventListener('click', () => {
-      state.filterCat = null;
-      renderFilter();
-      render();
-    });
-    legend.appendChild(clear);
-  } else if (legend) {
-    legend.remove();
+    els.filterCats.appendChild(makeFacet_(label, label, bundle['color' + i], countHighlights(label)));
   }
 }
 
-function makeFilterDotChip(value, color, count) {
-  const chip = document.createElement('button');
-  chip.type = 'button';
-  chip.className = 'sb-filter-chip sb-filter-chip--dot';
-  if (state.filterCat === value) chip.classList.add('sb-filter-chip--active');
-  chip.title = value; // hover tooltip carries the label
+function makeFacet_(value, label, color, count) {
+  const active = state.filterCat === value;
+  const empty = value !== null && count === 0;
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'sb-facet'
+    + (active ? ' sb-facet--active' : '')
+    + (empty ? ' sb-facet--dimmed' : '');
+  if (empty) row.disabled = true;
+
   const dot = document.createElement('span');
-  dot.className = 'sb-filter-chip__dot';
-  dot.style.backgroundColor = color;
-  chip.appendChild(dot);
+  dot.className = 'sb-facet__dot' + (color ? '' : ' sb-facet__dot--all');
+  if (color) dot.style.backgroundColor = color;
+  row.appendChild(dot);
+
+  const lab = document.createElement('span');
+  lab.className = 'sb-facet__label';
+  lab.textContent = label;
+  row.appendChild(lab);
+
   const c = document.createElement('span');
-  c.className = 'sb-filter-chip__count';
+  c.className = 'sb-facet__count';
   c.textContent = count;
-  chip.appendChild(c);
-  chip.addEventListener('click', () => {
+  row.appendChild(c);
+
+  row.addEventListener('click', () => {
     state.filterCat = state.filterCat === value ? null : value;
     renderFilter();
     render();
   });
-  return chip;
+  return row;
 }
 
 function countHighlights(category) {
@@ -524,14 +510,17 @@ function renderHighlight(source, h) {
   bar.style.backgroundColor = color;
   row.appendChild(bar);
 
+  // Category line as swatch · label pills. When a category filter is active,
+  // the tag that caused this card to match (primary OR secondary) is
+  // emphasized, so a card that matched on its secondary tag no longer looks
+  // like it doesn't belong.
   const cat = document.createElement('div');
   cat.className = 'sb-highlight__cat';
-  cat.appendChild(document.createTextNode(h.primaryCategory || '(no category)'));
+  cat.appendChild(hlTag_(h.primaryCategory || '(no category)', colorForLabel_(h.primaryCategory),
+    !!(state.filterCat && h.primaryCategory === state.filterCat), false));
   if (h.secondaryCategory) {
-    const sec = document.createElement('span');
-    sec.className = 'sb-highlight__secondary';
-    sec.textContent = '+ ' + h.secondaryCategory;
-    cat.appendChild(sec);
+    cat.appendChild(hlTag_(h.secondaryCategory, colorForLabel_(h.secondaryCategory),
+      !!(state.filterCat && h.secondaryCategory === state.filterCat), true));
   }
   row.appendChild(cat);
 
@@ -558,6 +547,34 @@ function colorForLabel_(label) {
     if (bundle['label' + i] === label) return bundle['color' + i];
   }
   return null;
+}
+
+/**
+ * One category tag on a highlight card: swatch dot + label. `secondary` styles
+ * it as the lighter "+ tag" form; `match` fills it with a tint of its own
+ * category color + bold, marking it as the reason this card matched the active
+ * filter.
+ */
+function hlTag_(label, color, match, secondary) {
+  const tag = document.createElement('span');
+  tag.className = 'sb-hl-tag'
+    + (secondary ? ' sb-hl-tag--secondary' : '')
+    + (match ? ' sb-hl-tag--match' : '');
+  const dot = document.createElement('span');
+  dot.className = 'sb-hl-tag__dot';
+  dot.style.backgroundColor = color || '#dadce0';
+  tag.appendChild(dot);
+  tag.appendChild(document.createTextNode(label));
+  if (match) tag.style.backgroundColor = tint_(color, 0.18);
+  return tag;
+}
+
+/** "#rrggbb" → "rgba(r,g,b,a)". Returns transparent for anything unparseable. */
+function tint_(hex, alpha) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return 'transparent';
+  const n = parseInt(m[1], 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + alpha + ')';
 }
 
 function truncate_(s, n) {
@@ -647,8 +664,7 @@ function onPollResponse_(resp) {
   state.lastDataJson = json;
   state.sources = resp.sources || [];
   state.highlights = resp.highlights || [];
-  els.insert.disabled = state.sources.length === 0;
-  els.insertWorks.disabled = state.sources.length === 0;
+  els.insertTrigger.disabled = state.sources.length === 0;
   els.openEditor.disabled = state.sources.length === 0;
   renderFilter();
   render();
@@ -660,10 +676,7 @@ function onPollResponse_(resp) {
 }
 
 
-const INSERT_BTN_LABELS = {
-  annotated: 'Insert Annotated Bibliography',
-  works: 'Insert Works Cited',
-};
+const INSERT_TRIGGER_LABEL_HTML = 'Insert References <span class="sb-insert__caret" aria-hidden="true">▾</span>';
 
 /**
  * Which of the current sources will NOT make it into the bibliography, and why.
@@ -723,22 +736,14 @@ function insertBibliography(annotated) {
   const omitted = bibliographyOmissions_(annotated);
   if (omitted.length > 0 && !confirmOmissions_(omitted, annotated)) return;
   const omittedCount = omitted.length;
-  const btn = annotated ? els.insert : els.insertWorks;
-  els.insert.disabled = true;
-  els.insertWorks.disabled = true;
-  if (annotated) {
-    btn.innerHTML =
-      '<span class="sb-loading__spinner sb-loading__spinner--sm sb-loading__spinner--on-accent"></span>Inserting…';
-  } else {
-    btn.textContent = 'Inserting…';
-  }
+  els.insertTrigger.disabled = true;
+  els.insertTrigger.innerHTML =
+    '<span class="sb-loading__spinner sb-loading__spinner--sm sb-loading__spinner--on-accent"></span>Inserting…';
   setStatus('');
   const restore = () => {
-    els.insert.disabled = state.sources.length === 0;
-    els.insertWorks.disabled = state.sources.length === 0;
+    els.insertTrigger.disabled = state.sources.length === 0;
     els.openEditor.disabled = state.sources.length === 0;
-    els.insert.textContent = INSERT_BTN_LABELS.annotated;
-    els.insertWorks.textContent = INSERT_BTN_LABELS.works;
+    els.insertTrigger.innerHTML = INSERT_TRIGGER_LABEL_HTML;
   };
   google.script.run
     .withSuccessHandler((res) => {

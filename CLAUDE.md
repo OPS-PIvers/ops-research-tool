@@ -364,6 +364,12 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
 - Admin (Phase 4 C): `devTestAdminAuthGate`, `devTestAdminRosterCrud`,
   `devTestAdminRosterReplace`, `devTestAdminEmailChange`,
   `devTestArchiveSchoolYear`.
+- `devTestMlaDateFormatting` — locks the robust published-date parser behind
+  `formatMlaDate_` / `yearOnly_` ([`51_citation.js`](apps-script/src/51_citation.js)):
+  ordinals ("April 16th, 2020"), separator-less compact dates ("20200416"),
+  ISO/US/slash/month-name variants, and verbatim echo of unparseable strings
+  ("n.d.", "Spring 2020"). Parses to integer parts — no `new Date()`, so ISO
+  dates no longer drift a day under the script timezone.
 - Citation scrape: `devTestScrapedExtraRoundTrip` (scrapedExtra JSON column
   stores → reads → surfaces as `scrapedExtraParsed`) and
   `devTestEnsureHeadersAppend` (additive header heal + reorder still throws).
