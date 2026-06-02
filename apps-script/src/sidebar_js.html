@@ -17,6 +17,7 @@ const state = {
   collapsedSourceIds: {},   // sourceId → true (evidence view: which are collapsed)
   expandedHighlightId: null, // single highlight whose full text is shown (accordion)
   psMenuOpen: false,         // source-classification popover visible
+  psMenuSourceId: null,      // which source's classification picker is open
   sourceFilters: {},        // sourceId → category label (per-source filter, source mode only)
   modalOpenForSourceId: null,   // sourceId of the currently-open modal (drives polling)
   lastDataJson: null,           // JSON of last sidebarGetProjectData response (polling diff)
@@ -430,12 +431,14 @@ function openPsMenu_(chipEl, source) {
   pop.style.right = Math.max(4, window.innerWidth - r.right) + 'px';
   pop.style.visibility = 'visible';
   state.psMenuOpen = true;
+  state.psMenuSourceId = source.sourceId;
 }
 
 function closePsMenu_() {
   const pop = document.getElementById('sb-ps-pop');
   if (pop) pop.style.display = 'none';
   state.psMenuOpen = false;
+  state.psMenuSourceId = null;
 }
 
 // Optimistic: update + re-render immediately, persist in the background, revert
@@ -556,7 +559,9 @@ function renderSource(source) {
   chip.appendChild(chipCaret);
   chip.addEventListener('click', (e) => {
     e.stopPropagation();   // don't toggle source collapse; don't hit doc closer
-    openPsMenu_(chip, source);
+    // Toggle: a second click on the same chip closes the picker.
+    if (state.psMenuOpen && state.psMenuSourceId === source.sourceId) closePsMenu_();
+    else openPsMenu_(chip, source);
   });
   head.appendChild(chip);
   head.addEventListener('click', (e) => {
