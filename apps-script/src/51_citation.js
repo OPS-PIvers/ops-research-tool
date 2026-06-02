@@ -109,7 +109,7 @@ function mlaWebsite_(f) {
   const parts = [];
   const author = formatAuthorMLA_(f.author);
   if (author) parts.push({ text: author + '.', italic: false });
-  if (f.title) parts.push({ text: '"' + f.title + '."', italic: false });
+  if (f.title) parts.push({ text: quotedTitleMLA_(f.title), italic: false });
   if (f.siteName) parts.push({ text: f.siteName, italic: true });
   if (f.publishedDate) parts.push({ text: formatMlaDate_(f.publishedDate), italic: false });
   if (f.url) parts.push({ text: f.url, italic: false });
@@ -120,7 +120,7 @@ function mlaArticle_(f) {
   const parts = [];
   const author = formatAuthorMLA_(f.author);
   if (author) parts.push({ text: author + '.', italic: false });
-  if (f.title) parts.push({ text: '"' + f.title + '."', italic: false });
+  if (f.title) parts.push({ text: quotedTitleMLA_(f.title), italic: false });
   const pub = f.publication || f.siteName;
   if (pub) parts.push({ text: pub, italic: true });
   if (f.publishedDate) parts.push({ text: formatMlaDate_(f.publishedDate), italic: false });
@@ -149,7 +149,7 @@ function mlaPrimary_(f) {
   const parts = [];
   const author = formatAuthorMLA_(f.author);
   if (author) parts.push({ text: author + '.', italic: false });
-  if (f.title) parts.push({ text: '"' + f.title + '."', italic: false });
+  if (f.title) parts.push({ text: quotedTitleMLA_(f.title), italic: false });
   if (f.publishedDate) parts.push({ text: formatMlaDate_(f.publishedDate), italic: false });
   if (f.archive) parts.push({ text: f.archive, italic: false });
   if (f.url) parts.push({ text: f.url, italic: false });
@@ -176,6 +176,18 @@ function joinMlaParts_(parts) {
   });
   if (!/[.!?]$/.test(out)) out += '.';
   return { text: out, italics };
+}
+
+/**
+ * Wrap a title in quotation marks with a single terminal mark inside the
+ * closing quote (MLA places the period there). If the title already ends in
+ * sentence-ending punctuation (. ? !) — e.g. a scraped "U.S. Civil War." or a
+ * "What Happened?" headline — keep it and DON'T add a period, so we never
+ * double it ("U.S. Civil War.." → "U.S. Civil War.").
+ */
+function quotedTitleMLA_(title) {
+  const t = String(title == null ? '' : title).trim();
+  return '"' + t + (/[.?!]$/.test(t) ? '' : '.') + '"';
 }
 
 function formatAuthorMLA_(author) {

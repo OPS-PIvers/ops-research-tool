@@ -22,12 +22,17 @@ const root = document.getElementById('console-root');
 
 bootstrap();
 
-document.addEventListener('click', () => {
-  if (myProjects.openMenuId !== null) {
-    myProjects.openMenuId = null;
-    if (state.view === 'MY_PROJECTS') renderShell_();
-  }
-});
+// Single close path for the project-card kebab menu. Clears the open-menu
+// state AND re-renders, so the menu is actually removed from the DOM rather
+// than just flagged closed. Used both by the document-level click-away below
+// and by every menu action (opening a modal, archiving, …) so a popover can
+// never linger behind whatever it launched.
+function closeProjectMenu_() {
+  if (myProjects.openMenuId === null) return;
+  myProjects.openMenuId = null;
+  if (state.view === 'MY_PROJECTS') renderShell_();
+}
+document.addEventListener('click', closeProjectMenu_);
 
 function bootstrap() {
   state.view = 'BOOT';
@@ -459,32 +464,46 @@ function renderCreateModal_(fields, bundles, classOptions) {
     const lab = document.createElement('label');
     lab.textContent = 'Member classes';
     wrap.appendChild(lab);
-    const box = document.createElement('div');
-    box.className = 'modal__classes';
 
     const isAdmin = state.ctx.role === 'admin';
 
-    // Ad-hoc class chips (admin-typed, not yet in the Roster). Tracked
-    // separately so we can render them above the checkbox list.
+    // Existing Roster classes as a scrollable checkbox list (only when there
+    // are any — otherwise we skip the empty bordered box entirely).
+    if (classOptions.length > 0) {
+      const box = document.createElement('div');
+      box.className = 'modal__classes';
+      classOptions.forEach((c) => {
+        box.appendChild(makeClassCheckboxRow_({
+          label: c, value: c, checked: fields.memberClasses.indexOf(c) >= 0,
+          onToggle: (on) => {
+            fields.memberClasses = fields.memberClasses.filter((x) => x !== c);
+            if (on) fields.memberClasses.push(c);
+            updateCreateBtn_();
+          },
+        }));
+      });
+      wrap.appendChild(box);
+    }
+
+    // Ad-hoc class chips (admin-typed, not yet in the Roster) — own row below
+    // the list so they wrap freely instead of fighting the checkbox layout.
     const adhoc = [];
     const chipsRow = document.createElement('div');
-    chipsRow.style.display = 'flex';
-    chipsRow.style.flexWrap = 'wrap';
-    chipsRow.style.gap = '6px';
-    chipsRow.style.padding = adhoc.length ? '0 0 8px' : '0';
-    box.appendChild(chipsRow);
+    chipsRow.className = 'modal__class-chips';
+    chipsRow.style.display = 'none';
+    wrap.appendChild(chipsRow);
 
     function renderChips() {
       chipsRow.innerHTML = '';
-      chipsRow.style.padding = adhoc.length ? '0 0 8px' : '0';
+      chipsRow.style.display = adhoc.length ? 'flex' : 'none';
       adhoc.forEach((cls, idx) => {
         const chip = document.createElement('span');
-        chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 10px;background:#e8eaed;border-radius:12px;font-size:13px;';
+        chip.className = 'modal__class-chip';
         chip.appendChild(document.createTextNode(cls));
         const x = document.createElement('button');
         x.type = 'button';
         x.textContent = '×';
-        x.style.cssText = 'background:transparent;border:0;cursor:pointer;font-size:14px;padding:0 6px;color:#5f6368;';
+        x.title = 'Remove ' + cls;
         x.addEventListener('click', (e) => {
           e.preventDefault();
           adhoc.splice(idx, 1);
@@ -497,38 +516,15 @@ function renderCreateModal_(fields, bundles, classOptions) {
       });
     }
 
-    // Existing Roster classes as checkboxes (if any).
-    if (classOptions.length > 0) {
-      classOptions.forEach((c) => {
-        const lbl = document.createElement('label');
-        lbl.className = 'modal__class-checkbox';
-        const inp = document.createElement('input');
-        inp.type = 'checkbox'; inp.value = c;
-        inp.addEventListener('change', () => {
-          fields.memberClasses = fields.memberClasses.filter((x) => x !== c);
-          if (inp.checked) fields.memberClasses.push(c);
-          updateCreateBtn_();
-        });
-        lbl.appendChild(inp);
-        lbl.appendChild(document.createTextNode(' ' + c));
-        box.appendChild(lbl);
-      });
-    }
-
-    // Admin: "+ Add a class" input — always present. Lets a fresh-install
-    // admin bootstrap a project before any roster exists. Teachers stick
-    // with their checkbox list (or the explanation below).
+    // Admin: full-width "+ Add a class" adder. Lets a fresh-install admin
+    // bootstrap a project before any roster exists. Teachers without roster
+    // classes get the explanation below instead.
     if (isAdmin) {
-      const adderRow = document.createElement('div');
-      const hasOptions = classOptions.length > 0;
-      adderRow.style.cssText = 'display:flex;gap:6px;' +
-        (hasOptions ? 'margin-top:10px;padding-top:10px;border-top:1px solid #e8eaed;' : '');
-
+      const adder = document.createElement('div');
+      adder.className = 'modal__class-adder';
       const input = document.createElement('input');
       input.type = 'text';
       input.placeholder = 'Add a class (e.g., 7A)';
-      input.style.cssText = 'flex:1;padding:6px 10px;border:1px solid #dadce0;border-radius:4px;font:14px Roboto,sans-serif;';
-
       function addCurrent() {
         const v = input.value.trim();
         if (!v) return;
@@ -542,31 +538,27 @@ function renderCreateModal_(fields, bundles, classOptions) {
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); addCurrent(); }
       });
-
       const addBtn = document.createElement('button');
       addBtn.type = 'button';
       addBtn.textContent = '+ Add';
-      addBtn.style.cssText = 'padding:6px 12px;background:transparent;color:#2d3f89;border:1px solid #2d3f89;border-radius:4px;cursor:pointer;font:500 13px Roboto,sans-serif;';
       addBtn.addEventListener('click', addCurrent);
-
-      adderRow.appendChild(input);
-      adderRow.appendChild(addBtn);
-      box.appendChild(adderRow);
+      adder.appendChild(input);
+      adder.appendChild(addBtn);
+      wrap.appendChild(adder);
 
       if (classOptions.length === 0) {
         const hint = document.createElement('div');
-        hint.style.cssText = 'font-size:12px;color:#5f6368;margin-top:8px;line-height:1.4;';
+        hint.className = 'modal__class-hint';
         hint.textContent = 'No Roster classes yet. Type a class name above — students added later with this Class will join the project automatically.';
-        box.appendChild(hint);
+        wrap.appendChild(hint);
       }
     } else if (classOptions.length === 0) {
       const note = document.createElement('div');
       note.className = 'modal__error';
       note.textContent = 'You are not listed as the Teacher for any classes in the Roster.';
-      box.appendChild(note);
+      wrap.appendChild(note);
     }
 
-    wrap.appendChild(box);
     return wrap;
   })());
 
@@ -611,6 +603,24 @@ function makeField_(labelText, control) {
   wrap.appendChild(lab);
   wrap.appendChild(control);
   return wrap;
+}
+
+// Shared full-width class-picker row used by both the Create-project and
+// Edit-classes modals. opts: { label, value, checked, locked, isNew, onToggle }.
+function makeClassCheckboxRow_(opts) {
+  const lbl = document.createElement('label');
+  lbl.className = 'modal__class-checkbox'
+    + (opts.locked ? ' modal__class-checkbox--locked' : '')
+    + (opts.isNew ? ' modal__class-checkbox--new' : '');
+  const inp = document.createElement('input');
+  inp.type = 'checkbox';
+  inp.value = opts.value;
+  inp.checked = !!opts.checked;
+  if (opts.locked) { inp.disabled = true; lbl.title = 'You don’t teach this class'; }
+  inp.addEventListener('change', () => opts.onToggle(inp.checked));
+  lbl.appendChild(inp);
+  lbl.appendChild(document.createTextNode(opts.label));
+  return lbl;
 }
 
 function generateSchoolYearOptions_() {
@@ -659,7 +669,7 @@ function submitCreate_(fields, btn) {
  * classes they teach (per-row disabled state). Admin: all classes editable.
  */
 function openEditClassesModal_(p) {
-  myProjects.openMenuId = null;
+  closeProjectMenu_();
   closeModal_();
 
   const isAdmin = state.ctx.role === 'admin';
@@ -701,57 +711,39 @@ function openEditClassesModal_(p) {
     box.className = 'modal__classes';
 
     sorted.forEach((cls) => {
-      const lbl = document.createElement('label');
-      lbl.className = 'modal__class-checkbox';
-      const inp = document.createElement('input');
-      inp.type = 'checkbox';
-      inp.value = cls;
-      inp.checked = !!selected[cls];
       const lockedForTeacher = !isAdmin && teacherClasses.indexOf(cls) < 0;
-      if (lockedForTeacher) {
-        inp.disabled = true;
-        lbl.style.opacity = '0.55';
-        lbl.title = 'You don’t teach this class';
-      }
-      inp.addEventListener('change', () => {
-        if (inp.checked) selected[cls] = true; else delete selected[cls];
-        updateSaveBtn();
-      });
-      lbl.appendChild(inp);
-      lbl.appendChild(document.createTextNode(' ' + cls));
-      box.appendChild(lbl);
+      box.appendChild(makeClassCheckboxRow_({
+        label: cls, value: cls, checked: !!selected[cls], locked: lockedForTeacher,
+        onToggle: (on) => {
+          if (on) selected[cls] = true; else delete selected[cls];
+          updateSaveBtn();
+        },
+      }));
     });
+    body.appendChild(box);
 
-    // Admin: "+ Add a class" input — adds a chip that participates in the
-    // selected map. Lets admins add a class to the project even when that
-    // class doesn't exist in the Roster yet.
+    // Admin: full-width "Add a class" adder beneath the list. Appends a
+    // checked row that participates in the selected map — lets admins add a
+    // class to the project even when it doesn't exist in the Roster yet.
     if (isAdmin) {
-      const adderRow = document.createElement('div');
-      adderRow.style.cssText = 'display:flex;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid #e8eaed;';
+      const adder = document.createElement('div');
+      adder.className = 'modal__class-adder';
       const input = document.createElement('input');
       input.type = 'text';
       input.placeholder = 'Add a class (e.g., 7B)';
-      input.style.cssText = 'flex:1;padding:6px 10px;border:1px solid #dadce0;border-radius:4px;font:14px Roboto,sans-serif;';
       function addCurrent() {
         const v = input.value.trim();
         if (!v || selected[v]) { input.value = ''; return; }
         selected[v] = true;
         input.value = '';
-        // Append a checked-by-default row for the new class.
-        const lbl = document.createElement('label');
-        lbl.className = 'modal__class-checkbox';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.value = v;
-        cb.checked = true;
-        cb.addEventListener('change', () => {
-          if (cb.checked) selected[v] = true; else delete selected[v];
-          updateSaveBtn();
-        });
-        lbl.appendChild(cb);
-        lbl.appendChild(document.createTextNode(' ' + v + ' (new)'));
-        // Insert above the adder row.
-        box.insertBefore(lbl, adderRow);
+        box.appendChild(makeClassCheckboxRow_({
+          label: v + ' (new)', value: v, checked: true, isNew: true,
+          onToggle: (on) => {
+            if (on) selected[v] = true; else delete selected[v];
+            updateSaveBtn();
+          },
+        }));
+        box.scrollTop = box.scrollHeight;
         updateSaveBtn();
       }
       input.addEventListener('keydown', (e) => {
@@ -760,19 +752,16 @@ function openEditClassesModal_(p) {
       const addBtn = document.createElement('button');
       addBtn.type = 'button';
       addBtn.textContent = '+ Add';
-      addBtn.style.cssText = 'padding:6px 12px;background:transparent;color:#2d3f89;border:1px solid #2d3f89;border-radius:4px;cursor:pointer;font:500 13px Roboto,sans-serif;';
       addBtn.addEventListener('click', addCurrent);
-      adderRow.appendChild(input);
-      adderRow.appendChild(addBtn);
-      box.appendChild(adderRow);
+      adder.appendChild(input);
+      adder.appendChild(addBtn);
+      body.appendChild(adder);
     } else if (sorted.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'modal__error';
       empty.textContent = 'No classes available to you.';
-      box.appendChild(empty);
+      body.appendChild(empty);
     }
-
-    body.appendChild(box);
 
     const errMsg = document.createElement('div');
     errMsg.className = 'modal__error';
@@ -848,7 +837,7 @@ function openEditClassesModal_(p) {
 
 function confirmArchive_(p) {
   // Close the kebab menu first so it doesn't sit under the modal.
-  myProjects.openMenuId = null;
+  closeProjectMenu_();
   closeModal_();
 
   const backdrop = document.createElement('div');
@@ -911,7 +900,7 @@ function confirmArchive_(p) {
 }
 
 function doUnarchive_(p) {
-  myProjects.openMenuId = null;
+  closeProjectMenu_();
   setStatus('Unarchiving "' + p.name + '"…', null, 1500);
   google.script.run
     .withSuccessHandler(() => {
@@ -2260,8 +2249,9 @@ function buildHeader_() {
   const right = document.createElement('div');
   right.className = 'console-header__right';
 
-  // Admin dropdown — visible only when role === 'admin'.
+  // Admin-only: demo sample-data toggle + admin dropdown.
   if (state.ctx && state.ctx.role === 'admin') {
+    right.appendChild(buildSampleToggle_());
     right.appendChild(buildAdminDropdown_());
   }
 
@@ -2310,13 +2300,66 @@ function buildAdminDropdown_() {
 
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    menu.classList.toggle('console-header__admin-menu--open');
-  });
-  // Click anywhere else closes it.
-  document.addEventListener('click', () => {
-    menu.classList.remove('console-header__admin-menu--open');
+    const open = menu.classList.toggle('console-header__admin-menu--open');
+    if (!open) return;
+    // One-shot click-away: attach a document listener only while the menu is
+    // open and remove it on close. The header is rebuilt on every render, so
+    // a permanent per-build listener would leak one handler per re-render.
+    const closeAway = (ev) => {
+      if (wrap.contains(ev.target)) return;
+      menu.classList.remove('console-header__admin-menu--open');
+      document.removeEventListener('click', closeAway);
+    };
+    setTimeout(() => document.addEventListener('click', closeAway), 0);
   });
   return wrap;
+}
+
+/**
+ * Demo sample-data toggle (admin-only). Flipping ON lazily seeds ~18 fake
+ * students into the Dev Project the first time (server-side; can take a few
+ * seconds), then it's an instant show/hide. State lives in state.ctx.
+ */
+function buildSampleToggle_() {
+  const on = !!(state.ctx && state.ctx.sampleDataEnabled);
+  const btn = document.createElement('button');
+  btn.className = 'console-header__sample' + (on ? ' console-header__sample--on' : '');
+  btn.id = 'sample-toggle';
+  btn.title = 'Show or hide demo sample students on the dashboard';
+  const dot = document.createElement('span');
+  dot.className = 'console-header__sample-dot';
+  btn.appendChild(dot);
+  const lbl = document.createElement('span');
+  lbl.textContent = 'Sample data: ' + (on ? 'On' : 'Off');
+  btn.appendChild(lbl);
+  btn.addEventListener('click', () => toggleSampleData_(btn, lbl));
+  return btn;
+}
+
+function toggleSampleData_(btn, lbl) {
+  const next = !(state.ctx && state.ctx.sampleDataEnabled);
+  btn.disabled = true;
+  lbl.textContent = next ? 'Seeding…' : 'Hiding…';
+  setStatus(next ? 'Seeding sample data… (first time only, ~20–30s)' : 'Hiding sample data…', null, 0);
+  google.script.run
+    .withSuccessHandler((resp) => {
+      if (!resp || !resp.ok) {
+        setStatus('Sample-data toggle failed.', 'bad', 4000);
+        applyHash_();
+        return;
+      }
+      state.ctx.sampleDataEnabled = resp.enabled;
+      setStatus(resp.enabled
+        ? ('Sample data on — ' + resp.count + ' demo students')
+        : 'Sample data hidden', 'good', 3000);
+      dashboard.loadedFor = null;   // force the dashboard to refetch in the new state
+      renderShell_();               // rebuilds header (toggle state) + current view
+    })
+    .withFailureHandler((e) => {
+      applyHash_();
+      onFail_('toggling sample data')(e);
+    })
+    .consoleSetSampleData(next);
 }
 
 // ---------- shared helpers ----------

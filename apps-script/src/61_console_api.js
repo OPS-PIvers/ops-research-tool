@@ -33,7 +33,10 @@ function consoleGetContext() {
   }
   const role = staff.Role === ROLES.ADMIN ? 'admin' : 'teacher';
   const teacherClasses = role === 'admin' ? null : listClassesTaughtBy_(actorEmail);
-  return { ok: true, actor: actorEmail, staff, role, teacherClasses };
+  return {
+    ok: true, actor: actorEmail, staff, role, teacherClasses,
+    sampleDataEnabled: consoleSampleDataEnabled_(),   // drives the header demo toggle
+  };
 }
 
 /**
@@ -107,7 +110,7 @@ function consoleGetMyProjects(filter) {
     const scopedClasses = isAdmin_(staff)
       ? projectClasses
       : projectClasses.filter((c) => teacherClasses.indexOf(c) >= 0);
-    const studentCount = rosterRows.filter(
+    const studentCount = excludeSampleIfDisabled_(rosterRows).filter(
       (r) => r.Class && scopedClasses.indexOf(String(r.Class).trim()) >= 0
     ).length;
     const bundle = bundleById[p.bundleId] || null;
@@ -261,7 +264,10 @@ function consoleGetProjectDashboard(projectId, className, bypassCache) {
   // teachers with the same scope share an entry; the actor email is not needed
   // in the key.
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'dash:v1:' + projectId + ':' + scopedClasses.slice().sort().join(',');
+  // Sample-data state changes the enrolled set, so it must key the cache —
+  // otherwise toggling would serve a stale (with/without sample) dashboard.
+  const cacheKey = 'dash:v1:' + projectId + ':' + scopedClasses.slice().sort().join(',') +
+    (consoleSampleDataEnabled_() ? ':s1' : ':s0');
   if (!bypassCache) {
     const hit = cache.get(cacheKey);
     if (hit) { try { return JSON.parse(hit); } catch (e) { /* corrupt — recompute */ } }
@@ -316,12 +322,13 @@ function consoleGetProjectDashboard(projectId, className, bypassCache) {
   return resp;
 }
 
-/** Enrolled roster rows for a set of classes. */
+/** Enrolled roster rows for a set of classes. Sample students drop out when
+ *  the demo toggle is off (single chokepoint for the dashboard student list). */
 function dashboardEnrolled_(scopedClasses) {
-  const rosterRows = readAllAsObjects_(
+  const rosterRows = excludeSampleIfDisabled_(readAllAsObjects_(
     getTab_(SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID), TABS.ROSTER),
     HEADERS.ROSTER
-  );
+  ));
   return rosterRows.filter(
     (r) => r.Class && scopedClasses.indexOf(String(r.Class).trim()) >= 0
   );

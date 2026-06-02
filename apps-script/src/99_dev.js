@@ -5,6 +5,55 @@
  * a "Dev" project unless you point them elsewhere.
  */
 
+/**
+ * Diagnose the Docs sidebar "Could not load project data." failure. Runs the
+ * exact server path sidebarGetProjectData uses, under the caller's identity,
+ * and reports where it breaks — including a JSON.stringify pass (the client
+ * gets null if the payload can't be delivered) and a scan for Date-typed cells
+ * (a common google.script.run delivery gotcha). Run from the editor; the return
+ * string also lands in the execution log.
+ */
+function devDiagnoseSidebarData() {
+  const out = [];
+  const log = (m) => { out.push(String(m)); console.log(String(m)); };
+  try {
+    const actor = getActorEmail_();
+    log('actorEmail = "' + actor + '"');
+    const project = devSeedDevProject();
+    log('project: id=' + project.projectId + ' name="' + project.name +
+        '" bundleId=' + project.bundleId + ' rootFolderId=' + project.rootFolderId);
+
+    let rawS = null, rawH = null;
+    try { rawS = readSourcesForActor_(actor, project.projectId); log('readSourcesForActor_ OK, count=' + rawS.length); }
+    catch (e) { log('readSourcesForActor_ THREW: ' + (e && e.stack || e)); }
+    try { rawH = readHighlightsForActor_(actor, project.projectId); log('readHighlightsForActor_ OK, count=' + rawH.length); }
+    catch (e) { log('readHighlightsForActor_ THREW: ' + (e && e.stack || e)); }
+
+    let data = null;
+    try {
+      data = sidebarGetProjectData(project.projectId);
+      log('sidebarGetProjectData returned ok=' + (data && data.ok) +
+          (data && data.error ? ' error="' + data.error + '"' : '') +
+          ' sources=' + (data && data.sources ? data.sources.length : 'n/a') +
+          ' highlights=' + (data && data.highlights ? data.highlights.length : 'n/a'));
+    } catch (e) { log('sidebarGetProjectData THREW: ' + (e && e.stack || e)); }
+
+    if (data) {
+      try { log('JSON.stringify OK, length=' + JSON.stringify(data).length); }
+      catch (e) { log('JSON.stringify THREW (payload not serializable!): ' + (e && e.message || e)); }
+      const dateHits = [];
+      (data.sources || []).concat(data.highlights || []).forEach((row, i) => {
+        Object.keys(row || {}).forEach((k) => { if (row[k] instanceof Date) dateHits.push('[' + i + '].' + k); });
+      });
+      log('Date-typed cells in payload: ' + (dateHits.length ? dateHits.join(', ') : 'none'));
+    }
+  } catch (e) {
+    log('TOP-LEVEL THREW: ' + (e && e.stack || e));
+  }
+  const report = out.join('\n');
+  return report;
+}
+
 /** Create a dev project + a fake roster entry for the current owner so writes can flow. */
 function devSeedDevProject() {
   const me = Session.getEffectiveUser().getEmail();
@@ -144,6 +193,56 @@ function devDumpMyData() {
         + '  note="' + (h.note || '').slice(0, 30) + '"');
     });
   });
+}
+
+/**
+ * Regression lock for the "blank citation in the annotated bibliography" bug.
+ * A source with citationFields '{}' but populated scraped* columns (the common
+ * case: student highlighted + classified + annotated but never opened the
+ * citation form) MUST still render a real citation. The bug was a same-named
+ * `parseCitationFields_` in 62_aggregator.js shadowing 52's richer
+ * buildCitationFields_ (GAS shares one global namespace; 62 loads last), which
+ * dropped the scraped fallback so those sources inserted as blank lines.
+ *
+ * Asserts: buildCitationFields_ fills from scraped* and formats non-empty; the
+ * RAW parseCitationFields_ deliberately does NOT (it backs the completion
+ * metric). Pure — no Sheet I/O. Run from the editor.
+ */
+function devTestBibliographyCitationFallback() {
+  const out = [];
+  let pass = true;
+  const check = (name, cond) => { out.push((cond ? 'PASS' : 'FAIL') + ' — ' + name); if (!cond) pass = false; };
+
+  // Mirrors the real EBSCO row: citationFields '{}', data only in scraped*.
+  const scrapedOnly = {
+    citationFields: '{}',
+    scrapedTitle: 'U.S. Civil War.',
+    scrapedSite: 'Salem Press Encyclopedia',
+    scrapedDate: '20230430',
+    scrapedAuthor: 'Hylton, Raymond Pierre',
+    sourceType: 'article',
+    rawUrl: 'https://research-ebsco-com.content.elibrarymn.org/c/viartl/viewer/html/nycc7ixfoj',
+  };
+
+  const built = buildCitationFields_(scrapedOnly);
+  check('buildCitationFields_ falls back title from scrapedTitle', built.title === 'U.S. Civil War.');
+  check('buildCitationFields_ falls back url from rawUrl', !!built.url);
+  check('buildCitationFields_ falls back author from scrapedAuthor', built.author === 'Hylton, Raymond Pierre');
+
+  const formatted = formatCitation(built, 'mla');
+  check('formatCitation on scraped-only source is NON-empty', !!(formatted.text && formatted.text.length));
+  out.push('   rendered: ' + JSON.stringify(formatted.text));
+
+  // The completion-metric parser must stay raw (no scraped fallback) so an
+  // unedited source counts as citation-INCOMPLETE on the dashboard.
+  const raw = parseCitationFields_(scrapedOnly);
+  check('raw parseCitationFields_ does NOT fall back (title undefined)', !raw.title);
+  check('raw parseCitationFields_ does NOT fall back (url undefined)', !raw.url);
+
+  out.push(pass ? 'ALL GREEN' : 'NOT GREEN');
+  const report = out.join('\n');
+  console.log(report);
+  return report;
 }
 
 /** Diagnostic: confirms whether the URL constructor works in this GAS runtime. */
@@ -1518,6 +1617,35 @@ function devTestMlaDateFormatting() {
   run(formatMlaDate_, 'formatMlaDate_', full);
   run(yearOnly_, 'yearOnly_', years);
   console.log((fail === 0 ? 'devTestMlaDateFormatting: ALL GREEN' : 'devTestMlaDateFormatting: NOT GREEN (' + fail + ' fail)') + ` — ${pass} passed`);
+  return { pass, fail };
+}
+
+/**
+ * Locks the quoted-title punctuation rule (quotedTitleMLA_): a title that
+ * already ends in '.', '?', or '!' keeps that single mark inside the closing
+ * quote; any other title gets a period added. Guards against the double-period
+ * regression ("U.S. Civil War." → "U.S. Civil War..") across the three
+ * quoted-title source types (website / article / primary). Pure — no Sheet I/O.
+ */
+function devTestMlaTitlePunctuation() {
+  // [sourceType, title, expected substring that MUST appear in the citation]
+  const cases = [
+    ['website', 'U.S. Civil War.',  '"U.S. Civil War."'],   // trailing '.' not doubled
+    ['article', 'U.S. Civil War.',  '"U.S. Civil War."'],
+    ['primary', 'U.S. Civil War.',  '"U.S. Civil War."'],
+    ['website', 'What Happened?',   '"What Happened?"'],     // '?' kept, no added '.'
+    ['website', 'Stop!',            '"Stop!"'],              // '!' kept, no added '.'
+    ['website', 'Civil War Facts',  '"Civil War Facts."'],   // no terminal punct → period added
+    ['website', '  Trailing Space ', '"Trailing Space."'],   // trimmed, then period
+  ];
+  let pass = 0, fail = 0;
+  cases.forEach(([sourceType, title, expectSub]) => {
+    const got = formatCitation({ sourceType, title, url: 'https://x.example.com/p' }, 'mla').text;
+    const ok = got.indexOf(expectSub) >= 0 && got.indexOf('..') < 0;
+    if (ok) pass++; else fail++;
+    console.log(`${ok ? 'PASS' : 'FAIL'}  ${sourceType} ${JSON.stringify(title)} -> ${JSON.stringify(got)} (want substring ${JSON.stringify(expectSub)}, no "..")`);
+  });
+  console.log((fail === 0 ? 'devTestMlaTitlePunctuation: ALL GREEN' : 'devTestMlaTitlePunctuation: NOT GREEN (' + fail + ' fail)') + ` — ${pass} passed`);
   return { pass, fail };
 }
 

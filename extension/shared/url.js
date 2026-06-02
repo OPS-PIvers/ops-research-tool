@@ -29,7 +29,22 @@ function normalizeUrl(rawUrl) {
   return origin + path + (kept.length ? '?' + kept.join('&') : '');
 }
 
+/**
+ * The URL of the page whose sources we're capturing — normally location.href,
+ * but inside the PDF panel (pdf/panel.html?src=<pdf>) location.href is the
+ * chrome-extension wrapper URL, not the PDF. The panel shim (pdf/shim.js) sets
+ * self.OPS_PAGE_URL to the real ?src= value, so every place that keys a source
+ * row, a citation URL, or a highlight lookup on "the current page" must read
+ * this accessor instead of location.href directly — otherwise saved sources
+ * point at the wrapper URL instead of the actual PDF.
+ */
+function opsPageUrl() {
+  if (typeof self !== 'undefined' && self.OPS_PAGE_URL) return self.OPS_PAGE_URL;
+  return (typeof location !== 'undefined' && location.href) || '';
+}
+
 if (typeof self !== 'undefined') {
   self.normalizeUrl = normalizeUrl;
   self.DROP_QUERY_PARAMS = DROP_QUERY_PARAMS;
+  self.opsPageUrl = opsPageUrl;
 }

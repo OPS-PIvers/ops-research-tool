@@ -41,3 +41,6 @@ logs/
 coverage/
 .nyc_output/
 .superpowers/
+
+# Google Drive desktop sync temp dir (transient upload chunks — never source)
+.tmp.driveupload/

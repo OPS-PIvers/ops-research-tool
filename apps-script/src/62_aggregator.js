@@ -182,9 +182,17 @@ function computeActivityByDay_(sources, highlights, projectCreatedAt) {
 }
 
 /**
- * Parse `citationFields` (a JSON string column) to an object. Safe on null,
- * malformed JSON, and non-string types. Mirrors the parser in 52_bibliography.js
- * but kept local so 62 has no dependencies on other modules.
+ * Parse ONLY the `citationFields` JSON column to an object — no scraped*
+ * fallback. Safe on null, malformed JSON, and non-string types. This is the
+ * RAW parser the completion metrics need: "citation complete" must mean the
+ * student explicitly entered citation fields, not that a scrape auto-filled
+ * them (otherwise every source counts as cited the moment it's created).
+ *
+ * For RENDERING a citation (bibliography, inline), use buildCitationFields_ in
+ * 52_bibliography.js, which adds the scraped fallback. The two MUST keep
+ * distinct names: they share GAS's single global namespace, and an earlier
+ * same-named copy here shadowed 52's richer version (62 loads after 52),
+ * silently dropping the fallback and blanking scraped-only sources in the bib.
  */
 function parseCitationFields_(source) {
   if (!source.citationFields) return {};

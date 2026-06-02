@@ -29,31 +29,27 @@ const SIDEBAR_CSS = `
 
 /* Slim bookmark-style tab tucked to the right edge. OPS Primary Blue,
    semi-transparent at rest so it recedes into the page; brightens and
-   nudges out on hover/focus. Lexend leads the stack as progressive
-   enhancement — it falls back to system fonts on host pages that don't
-   load it, and renders properly inside the extension's own PDF panel. */
+   nudges out on hover/focus. A pen glyph marks it as the highlight/annotate
+   surface — no text, so it stays compact and language-neutral. */
 .launcher {
   position: fixed; top: 50%; right: 0; transform: translateY(-50%);
   background: #2d3f89; color: #fff; border: none;
-  border-radius: 8px 0 0 8px; padding: 12px 5px 12px 6px;
-  font-family: "Lexend", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-weight: 600; font-size: 11px;
+  border-radius: 8px 0 0 8px; padding: 11px 7px;
   box-shadow: -1px 1px 5px rgba(29,42,93,0.22);
   display: flex; flex-direction: column; align-items: center; gap: 7px;
   opacity: 0.6;
   transition: opacity 0.18s ease, padding-right 0.18s ease, box-shadow 0.18s ease;
 }
 .launcher:hover {
-  opacity: 1; padding-right: 9px;
+  opacity: 1; padding-right: 10px;
   box-shadow: -2px 2px 12px rgba(29,42,93,0.34);
 }
 .launcher:focus-visible {
   opacity: 1; outline: none;
   box-shadow: -2px 2px 12px rgba(29,42,93,0.34), 0 0 0 2px rgba(67,86,160,0.9);
 }
-.launcher__label {
-  writing-mode: vertical-rl; text-orientation: upright;
-  letter-spacing: 0.16em; line-height: 1;
+.launcher__icon {
+  width: 18px; height: 18px; display: block; flex: none;
 }
 .launcher__count {
   background: rgba(255,255,255,0.22); border-radius: 999px;
@@ -393,7 +389,11 @@ const OpsSidebar = (function () {
   async function hide() {
     await ensureInit_();
     state.panelEl.style.display = 'none';
-    state.launcherEl.style.display = state.pageHighlights.length ? 'flex' : 'none';
+    // Always restore the edge tab so the panel can be reopened — it's the
+    // persistent "active here" launcher, not gated on highlight count (a
+    // page opened from the tab with zero highlights must still re-collapse
+    // to a clickable tab, not vanish until reload).
+    state.launcherEl.style.display = 'flex';
     render_();
   }
 
@@ -451,7 +451,7 @@ const OpsSidebar = (function () {
 
     let resp;
     try {
-      resp = await chrome.runtime.sendMessage({ type: 'loadPageHighlights', rawUrl: location.href });
+      resp = await chrome.runtime.sendMessage({ type: 'loadPageHighlights', rawUrl: opsPageUrl() });
     } catch (e) {
       return; // offline / backend down; launcher already visible, nothing more to do
     }
@@ -664,6 +664,7 @@ const OpsSidebar = (function () {
     state.launcherEl.className = 'launcher';
     state.launcherEl.type = 'button';
     state.launcherEl.style.display = 'none';
+    state.launcherEl.setAttribute('aria-label', 'Open OPS Research panel');
     state.launcherEl.addEventListener('click', () => show());
     root.appendChild(state.launcherEl);
 
@@ -686,19 +687,21 @@ const OpsSidebar = (function () {
     if (state.listEl) state.listEl.scrollTop = prevScrollTop;
   }
 
+  // Feather-style pen glyph (static, no user input — safe to inline as markup).
+  const LAUNCHER_PEN_SVG =
+    '<svg class="launcher__icon" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 20h9"></path>' +
+    '<path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>' +
+    '</svg>';
+
   function renderLauncher_() {
     const visibleCount = state.pageHighlights.length;
-    state.launcherEl.innerHTML = '';
-    const label = document.createElement('span');
-    label.className = 'launcher__label';
-    label.textContent = 'OPS';
-    state.launcherEl.appendChild(label);
-    if (visibleCount > 0) {
-      const c = document.createElement('span');
-      c.className = 'launcher__count';
-      c.textContent = String(visibleCount);
-      state.launcherEl.appendChild(c);
-    }
+    const countHtml = visibleCount > 0
+      ? '<span class="launcher__count">' + visibleCount + '</span>'
+      : '';
+    state.launcherEl.innerHTML = LAUNCHER_PEN_SVG + countHtml;
   }
 
   function renderPanel_() {
@@ -1433,7 +1436,7 @@ const OpsSidebar = (function () {
         sourceId,
         projectId: state.project ? state.project.projectId : '',
         normalizedUrl: '',
-        rawUrl: location.href,
+        rawUrl: opsPageUrl(),
         accessDate: new Date().toISOString(),
         scrapedTitle: sc.title || '',
         scrapedSite: sc.site || '',

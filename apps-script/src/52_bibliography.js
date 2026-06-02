@@ -49,7 +49,7 @@ function insertBibliography_(projectId, annotated) {
   if (sources.length === 0) throw new Error('No sources saved for this project yet.');
 
   const toEntry = (s) => {
-    const fields = parseCitationFields_(s);
+    const fields = buildCitationFields_(s);
     const formatted = formatCitation(fields, style);
     return {
       sortKey: bibSortKey_(fields, formatted.text),
@@ -165,7 +165,21 @@ function wrapBibliographyRange_(doc, body, startIndex, endIndex) {
   catch (e) { /* nothing addable — skip tagging */ }
 }
 
-function parseCitationFields_(source) {
+/**
+ * Build the EFFECTIVE citation fields for rendering: the student's
+ * citationFields JSON, with blanks filled from the discrete scraped* columns
+ * and rawUrl, then coerced to strings. An unedited source (citationFields
+ * '{}') therefore still emits a real citation from its scraped metadata.
+ *
+ * Distinct from 62_aggregator.js's `parseCitationFields_`, which parses ONLY
+ * the citationFields JSON (no scraped fallback) — that one feeds the dashboard
+ * "citation complete" metric, which must reflect what the student explicitly
+ * entered. The two share GAS's single global namespace, so they MUST keep
+ * distinct names: a same-named "mirror" in 62 silently shadowed this richer
+ * version (62 loads after 52), which is exactly what dropped the scraped
+ * fallback and left scraped-only sources blank in the bibliography.
+ */
+function buildCitationFields_(source) {
   let fields = {};
   if (source.citationFields) {
     try { fields = JSON.parse(source.citationFields) || {}; }
@@ -263,7 +277,7 @@ function insertInlineCitation(projectId, sourceId, page) {
   const sources = readSourcesForActor_(actorEmail, projectId);
   const source = sources.find((s) => s.sourceId === sourceId);
   if (!source) throw new Error('Source not found in this project.');
-  const fields = parseCitationFields_(source);
+  const fields = buildCitationFields_(source);
   const text = formatInlineCitation(fields, style, page);
   if (!text) throw new Error('No author or title available — edit the citation first.');
 

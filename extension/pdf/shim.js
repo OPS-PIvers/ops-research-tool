@@ -10,11 +10,12 @@
  *    highlight as "page changed." Panel.js triggers OpsSidebar.reanchorIn()
  *    per page instead.
  *
- * 2) Rewrite outgoing chrome.runtime.sendMessage payloads that pass
- *    location.href as rawUrl: location.href in this context is the
- *    chrome-extension://...panel.html?src=<pdf> URL, not the PDF itself.
- *    Background-side normalization needs the real PDF URL so saved
- *    highlights match the source row created on the previous session.
+ * 2) Publish the real PDF URL as self.OPS_PAGE_URL. In this context
+ *    location.href is the chrome-extension://...panel.html?src=<pdf> wrapper
+ *    URL, not the PDF itself. opsPageUrl() (shared/url.js) reads OPS_PAGE_URL,
+ *    so every place the sidebar/toolbar key a source row, a citation URL, or a
+ *    highlight lookup on "the current page" gets the real PDF URL — otherwise
+ *    saved sources point at the wrapper URL instead of the PDF.
  *    Also override scrapePageMeta() for the same reason.
  *
  * This file MUST be a classic <script src=> (not inline — CSP blocks
@@ -31,14 +32,8 @@
   var realUrl = params.get('src');
   if (!realUrl) return;
 
-  var REWRITE = { getOrCreateSourceId: 1, loadPageHighlights: 1 };
-  var sendOrig = chrome.runtime.sendMessage.bind(chrome.runtime);
-  chrome.runtime.sendMessage = function (msg, cb) {
-    if (msg && REWRITE[msg.type]) {
-      msg = Object.assign({}, msg, { rawUrl: realUrl });
-    }
-    return sendOrig(msg, cb);
-  };
+  // opsPageUrl() returns this everywhere instead of location.href.
+  self.OPS_PAGE_URL = realUrl;
 
   // scrapePageMeta is defined by scrape.js (loaded earlier). Wrap it so
   // toolbar.js's syncHighlight_ stamps the new source row with the PDF's

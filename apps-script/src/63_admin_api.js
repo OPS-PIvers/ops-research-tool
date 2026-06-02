@@ -22,7 +22,7 @@ function adminGetRoster() {
   const actorEmail = getActorEmail_();
   assertAdmin_(actorEmail);
   const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const rows = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER);
+  const rows = excludeSampleIfDisabled_(readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER));
   const workEmails = listAllStudentSheetEmails_();
   return {
     ok: true,

@@ -285,7 +285,7 @@ async function syncHighlight_(highlightId, primaryCategory, text, note) {
     const scrape = scrapePageMeta();
     const srcResp = await chrome.runtime.sendMessage({
       type: 'getOrCreateSourceId',
-      rawUrl: location.href,
+      rawUrl: opsPageUrl(),
       scrape,
     });
     if (!srcResp || !srcResp.ok) throw new Error((srcResp && srcResp.error) || 'no sourceId');

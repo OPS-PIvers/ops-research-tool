@@ -326,6 +326,30 @@ These supersede or refine the spec — apply them before defaulting to plan text
   duplicates roster/group reads per class; only helps very large multi-class
   admin views). Pull either in only if a whole-grade project proves slow.
 
+- **Demo "Sample data" toggle (admin-only) for the dashboard.** A header toggle
+  ([`console_js.html`](apps-script/src/console_js.html) `buildSampleToggle_` →
+  `consoleSetSampleData`) seeds ~18 fake students into the **Dev Project's DEV
+  class**, each in a deliberately different state so a teacher sees the full
+  spectrum of dashboard rows + drill-downs (0% not-started, highlights-only,
+  classified-/cited-/annotated-only, 20–100% partials, category-skewed vs
+  balanced, sparse vs deep, book/primary types). All server logic is isolated in
+  [`67_sample_data.js`](apps-script/src/67_sample_data.js). Mechanics: sample
+  students are real roster rows + per-student Sheets, marked by a fake email
+  domain (`@sample.oronoresearch`, never authenticates). **Toggle ON lazily
+  seeds once** (idempotent — deterministic source/highlight ids; ~20–30s the
+  first time as it provisions Sheets), then it's an instant **filter**: every
+  console roster read passes through `excludeSampleIfDisabled_`, so when off the
+  sample students vanish from the dashboard, project-card counts, and admin
+  roster (real students you add always show). State is a ScriptProperty
+  (`OPS_SAMPLE_ENABLED`) returned in `consoleGetContext.sampleDataEnabled` and
+  folded into the dashboard cache key (`:s0`/`:s1`). The completion metric uses
+  the raw `parseCitationFields_` (see §5), so a "cited" sample source writes
+  `title`+`url` into `citationFields`. **No groups seeded** (solo students only)
+  — demo group drill-down by merging samples live, or add a sample group later.
+  Hard teardown (trash Sheets + drop roster rows): `devClearSampleData()` /
+  `consoleClearSampleData()`. Toggle is brand-styled (blue on / gray off, no
+  stoplight green — that's gap-pills only).
+
 ## 5. GAS V8 quirks discovered
 
 - `new URL(...)` **throws** in GAS V8. The global is advertised but unusable.
@@ -334,6 +358,36 @@ These supersede or refine the spec — apply them before defaulting to plan text
 - Side effect: always ship behavior-asserting unit tests as editor-callable
   `devTest*` functions. Functions that "don't throw" can still be silently
   returning wrong values.
+- **`google.script.run` silently delivers `null` to the success handler when
+  the return payload contains a `Date` object** — its serializer can't carry
+  Dates even though `JSON.stringify` can. So a server function that returns
+  fine when Run from the editor still breaks the live sidebar (the client gets
+  `null`, not a thrown error, so `withFailureHandler` never fires — you just see
+  the generic "non-ok" branch). And Sheets **coerces any date-looking cell**
+  (e.g. a scraped `"2020-04-16"`) into a `Date` on read via `getValues()`, so a
+  Date sneaks into payloads you'd assume are all strings. Flatten every `Date`
+  to a string before returning to the client — see `flattenRowDatesForTransfer_`
+  in [`53_sidebar_api.js`](apps-script/src/53_sidebar_api.js) (applied to
+  `sidebarGetProjectData`'s sources + highlights). `devDiagnoseSidebarData`
+  (in [`99_dev.js`](apps-script/src/99_dev.js)) reproduces this server-side and
+  flags Date-typed cells in the payload. Any NEW `google.script.run`-returning
+  read of raw Sheet rows needs the same treatment.
+- **All `.js` files share ONE global namespace; a duplicate top-level
+  `function name(){}` silently SHADOWS — the last-loaded file wins** (load order
+  ≈ filename order, so `62_*` beats `52_*`). This bit the annotated bibliography:
+  `62_aggregator.js` had its own `parseCitationFields_` (parse-only, no `scraped*`
+  fallback — correct for the completion *metric*, which must count only what the
+  student explicitly entered) that shadowed `52_bibliography.js`'s richer parser,
+  so scraped-only sources (`citationFields:'{}'`, data in `scraped*`) rendered as
+  **blank citation lines** in the bib while fully-edited sources rendered fine.
+  Fix: the render parser is now `buildCitationFields_` (full: JSON + `scraped*`
+  fallback + string coercion; in [`52_bibliography.js`](apps-script/src/52_bibliography.js),
+  used by the bibliography + inline-citation precompute) and the raw
+  `parseCitationFields_` (completion only) keeps its name — distinct names, no
+  collision. `61_console_api.js` does its own inline fallback so it's correct
+  either way. Locked by `devTestBibliographyCitationFallback`. Lesson: before
+  adding a `function foo_()`, grep the whole `src/` for an existing `foo_` — a
+  "kept local to avoid a dependency" copy is a shadow waiting to happen.
 
 ## 6. Phase 2 setup decisions (answered + implemented)
 
@@ -403,6 +457,9 @@ git push
 Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js):
 - `devSeedDevProject` — adds Paul to roster as a fake "DEV" student + admin,
   creates a Dev Project if missing
+- `devClearSampleData` — hard-removes the demo "Sample data" students (trashes
+  their Sheets + drops their roster rows). The header toggle only hides them;
+  this is the full teardown. See the §4 sample-data bullet.
 - `devTestRoundTrip` — full doPost → readback → idempotency cycle
 - `devTestNormalizeUrl` — 8 cases, all should PASS
 - `devTestSourceDedup` — confirms two URLs differing only in tracking params
@@ -438,6 +495,11 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   + annotation; Works Cited needs classified only; unclassified always omitted).
   The sidebar mirrors this rule to warn before insert, so a red here means the
   warning and the actual insert have drifted.
+- `devTestBibliographyCitationFallback` — locks that a scraped-only source
+  (`citationFields:'{}'`, data in `scraped*`) still renders a non-empty citation
+  via `buildCitationFields_`, and that the raw `parseCitationFields_` (completion
+  metric) deliberately does NOT fall back. Guards the duplicate-name shadowing
+  bug in §5 from returning.
 - No editor test covers citation/bibliography *formatting* — that's manual
   QA in a real Doc (italics ranges, hanging indent, cursor insertion). The
   inclusion/omission filter IS tested (above); the warning confirm dialog is

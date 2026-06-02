@@ -57,35 +57,73 @@ function sidebarSetActiveProject(projectId) {
  * sidebar groups highlights under their sources in the UI and shows the
  * source-level citation form.
  */
-function sidebarGetProjectData(projectId) {
-  const actorEmail = getActorEmail_();
-  if (!projectId) throw new Error('projectId required');
-  const project = getProject_(projectId);
-  if (!project) throw new Error('Unknown project ' + projectId);
-  // Collapse duplicate source rows for the same page (same URL + author) so the
-  // dropdown / evidence list show one source per page (see dedupeSourcesByUrl_).
-  const rawSources = readSourcesForActor_(actorEmail, projectId);
-  const rawHighlights = readHighlightsForActor_(actorEmail, projectId);
-  const deduped = dedupeSourcesByUrl_(rawSources, rawHighlights);
-  // If duplicates existed, physically remove them so they stop bloating every
-  // read. Best-effort + lock-guarded; the data returned below is already
-  // deduped in-memory regardless of whether the cleanup write runs.
-  if (deduped.sources.length !== rawSources.length) {
-    tryPersistDedupe_(actorEmail, project);
-  }
-  const sources = deduped.sources;
-  const highlights = deduped.highlights;
-  const bundle = getBundle_(project.bundleId);
-  const style = (bundle && bundle.style) || 'mla';
-  sources.forEach((s) => {
-    // Pre-parse JSON columns so the client doesn't re-parse per render.
-    s.citationFieldsParsed = parseJsonColumn_(s.citationFields);
-    s.scrapedExtraParsed = parseJsonColumn_(s.scrapedExtra);
-    // Precompute the in-text citation so the sidebar's "Copy citation" button
-    // is instant — no per-click server round-trip.
-    s.inlineCitation = formatInlineCitation(parseCitationFields_(s), style, '');
+/**
+ * google.script.run silently delivers `null` to the client's success handler
+ * when the return payload contains a Date object (the HtmlService serializer
+ * can't carry it — JSON.stringify can, which is why a server-side test passes
+ * while the live sidebar shows "Could not load project data."). Sheets coerces
+ * any date-looking cell (e.g. a scraped "2020-04-16") into a Date on read, so
+ * flatten every Date back to a plain string before returning. Date-only ISO
+ * keeps the citation formatter happy (formatMlaDate_ parses it); an unparseable
+ * Date becomes ''.
+ */
+function flattenRowDatesForTransfer_(row) {
+  if (!row) return row;
+  Object.keys(row).forEach((k) => {
+    const v = row[k];
+    if (Object.prototype.toString.call(v) === '[object Date]') {
+      row[k] = isNaN(v.getTime()) ? '' : Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    }
   });
-  return { ok: true, sources, highlights };
+  return row;
+}
+
+function sidebarGetProjectData(projectId) {
+  // Always return a structured result. A bare throw reaches the client as a
+  // generic google.script.run failure (or, if the payload can't serialize, a
+  // detail-free success(null) → the dead-end "Could not load project data.").
+  // Catching here means the sidebar can show the ACTUAL reason instead.
+  try {
+    const actorEmail = getActorEmail_();
+    if (!projectId) throw new Error('projectId required');
+    const project = getProject_(projectId);
+    if (!project) throw new Error('Unknown project ' + projectId);
+    // Collapse duplicate source rows for the same page (same URL + author) so the
+    // dropdown / evidence list show one source per page (see dedupeSourcesByUrl_).
+    const rawSources = readSourcesForActor_(actorEmail, projectId);
+    const rawHighlights = readHighlightsForActor_(actorEmail, projectId);
+    const deduped = dedupeSourcesByUrl_(rawSources, rawHighlights);
+    // If duplicates existed, physically remove them so they stop bloating every
+    // read. Best-effort + lock-guarded; the data returned below is already
+    // deduped in-memory regardless of whether the cleanup write runs.
+    if (deduped.sources.length !== rawSources.length) {
+      tryPersistDedupe_(actorEmail, project);
+    }
+    const sources = deduped.sources;
+    const highlights = deduped.highlights;
+    const bundle = getBundle_(project.bundleId);
+    const style = (bundle && bundle.style) || 'mla';
+    sources.forEach((s) => {
+      // Pre-parse JSON columns so the client doesn't re-parse per render.
+      s.citationFieldsParsed = parseJsonColumn_(s.citationFields);
+      s.scrapedExtraParsed = parseJsonColumn_(s.scrapedExtra);
+      // Precompute the in-text citation so the sidebar's "Copy citation" button
+      // is instant — no per-click server round-trip. One malformed source must
+      // not blank the entire project load, so isolate the formatter per row.
+      // buildCitationFields_ (NOT 62's parseCitationFields_) so a scraped-only
+      // source still produces a citation — see buildCitationFields_'s note.
+      try {
+        s.inlineCitation = formatInlineCitation(buildCitationFields_(s), style, '');
+      } catch (e) {
+        s.inlineCitation = '';
+      }
+      flattenRowDatesForTransfer_(s);
+    });
+    highlights.forEach(flattenRowDatesForTransfer_);
+    return { ok: true, sources, highlights };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
 }
 
 /**

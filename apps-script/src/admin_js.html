@@ -1439,18 +1439,24 @@ function plainConfirmModal_(args) {
 function buildAdminBreadcrumb_(label, rightContent) {
   const wrap = document.createElement('div');
   wrap.className = 'admin-breadcrumb';
-  // Use href + JS click handler. The href is for keyboard / right-click /
-  // copy-link behaviour. GAS HtmlService sandboxes the SPA inside an iframe,
-  // and the default browser navigation on a hash href would try to apply the
-  // fragment to the top window URL (a googleusercontent.com iframe URL), not
-  // ours — so we preventDefault and route through navigate_ instead.
+  // Back out of the Admin area to the main console. (Navigation BETWEEN admin
+  // pages is the header "Admin ▾" menu's job; this link just exits.) The old
+  // target was '/admin/roster', which is itself the default admin landing — so
+  // on the Roster page the link set the hash to its current value, fired no
+  // hashchange, and did nothing. '/projects' is always a real navigation.
+  //
+  // Use href + JS click handler: the href is for keyboard / right-click /
+  // copy-link, but GAS HtmlService sandboxes the SPA inside an iframe, so the
+  // default browser navigation on a hash href would apply the fragment to the
+  // top (googleusercontent.com iframe) URL, not ours — so we preventDefault and
+  // route through navigate_ instead.
   const back = document.createElement('a');
   back.className = 'admin-breadcrumb__back';
-  back.textContent = '← Admin';
-  back.href = '#/admin/roster';
+  back.textContent = '← My Projects';
+  back.href = '#/projects';
   back.addEventListener('click', (e) => {
     e.preventDefault();
-    navigate_('/admin/roster');
+    navigate_('/projects');
   });
   wrap.appendChild(back);
   const sep = document.createElement('span');

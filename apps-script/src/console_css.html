@@ -278,15 +278,50 @@ select, input, textarea { font: inherit; }
   width: 100%; padding: 8px 10px; border: 1px solid var(--c-line);
   border-radius: 4px; font-size: 14px;
 }
+/* Scrollable list of full-width class rows. A single column keeps long
+   names ("Sample Class") on one line and gives each row a real tap target;
+   the adder + chips live OUTSIDE this box (below) so a full-width input is
+   never crammed into a narrow grid cell. */
 .modal__classes {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
-  gap: 6px;
-  max-height: 200px; overflow-y: auto;
-  border: 1px solid var(--c-line); border-radius: 4px;
-  padding: 8px;
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 220px; overflow-y: auto;
+  border: 1px solid var(--c-line); border-radius: 6px;
+  padding: 6px;
 }
 .modal__class-checkbox {
-  display: flex; align-items: center; gap: 6px; font-size: 13px;
+  display: flex; align-items: center; gap: 10px; font-size: 14px;
+  padding: 8px 10px; border-radius: 5px; cursor: pointer;
+}
+.modal__class-checkbox:hover { background: var(--c-soft); }
+.modal__class-checkbox input { flex: none; width: 16px; height: 16px; accent-color: var(--c-brand-primary); }
+.modal__class-checkbox--locked { cursor: not-allowed; color: var(--c-muted); }
+.modal__class-checkbox--locked:hover { background: transparent; }
+.modal__class-checkbox--new { color: var(--c-brand-primary); font-weight: 500; }
+
+/* Add-a-class adder — its own full-width row beneath the list. */
+.modal__class-adder { display: flex; gap: 8px; margin-top: 12px; }
+.modal__class-adder input {
+  flex: 1; min-width: 0; padding: 8px 10px;
+  border: 1px solid var(--c-line); border-radius: 5px; font-size: 14px;
+}
+.modal__class-adder button {
+  flex: none; padding: 8px 14px; background: transparent;
+  color: var(--c-brand-primary); border: 1px solid var(--c-brand-primary);
+  border-radius: 5px; cursor: pointer; font-weight: 500; font-size: 13px;
+}
+.modal__class-adder button:hover { background: var(--c-soft); }
+.modal__class-hint { font-size: 12px; color: var(--c-muted); margin-top: 8px; line-height: 1.4; }
+
+/* Ad-hoc class chips (admin-typed, not yet in the Roster). */
+.modal__class-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.modal__class-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 4px 3px 10px; background: var(--c-soft);
+  border-radius: 999px; font-size: 13px;
+}
+.modal__class-chip button {
+  background: transparent; border: 0; cursor: pointer;
+  font-size: 15px; line-height: 1; padding: 0 4px; color: var(--c-muted);
 }
 .modal__error {
   color: var(--c-bad); font-size: 12px; margin-top: 6px;
@@ -611,6 +646,35 @@ select, input, textarea { font: inherit; }
 .console-header__admin-btn:hover {
   background: rgba(255,255,255,0.12);
 }
+
+/* Demo sample-data toggle. On = filled white w/ brand-blue text + dot; off =
+   outlined like the admin button. (No stoplight green — that's gap-pills only.) */
+.console-header__sample {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.5);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font: 500 13px 'Lexend', sans-serif;
+}
+.console-header__sample:hover { background: rgba(255,255,255,0.12); }
+.console-header__sample:disabled { opacity: 0.6; cursor: default; }
+.console-header__sample-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.45);
+}
+.console-header__sample--on {
+  background: #fff;
+  color: #2d3f89;
+  border-color: #fff;
+}
+.console-header__sample--on .console-header__sample-dot { background: #2d3f89; }
 
 .console-header__admin-menu {
   position: absolute;
