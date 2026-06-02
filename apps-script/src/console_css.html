@@ -23,7 +23,7 @@
   --c-brand-primary-50:   #f4f6fa;  /* OPS blue-50 — faint blue surface */
   --c-brand-primary-200:  #c0c7e0;  /* OPS blue-200 — soft blue border/hover */
   /* Semantic — keep tonally close to brand */
-  --c-good: #2d7a3f;
+  --c-good: var(--c-brand-primary);  /* "complete / on-track" reads brand blue (OPS success) */
   --c-warn: #c13435;
   --c-bad:  #ad2122;
   --font-display: "Lexend", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -409,7 +409,7 @@ select, input, textarea { font: inherit; }
 .db-gap {
   font-size: 10px; padding: 2px 6px; border-radius: 999px;
   font-family: var(--font-display); font-weight: 500;
-  background: #e6f4ea; color: var(--c-good);
+  background: var(--c-brand-primary-tint); color: var(--c-good);
 }
 .db-gap--warn { background: var(--c-brand-secondary-tint); color: var(--c-warn); }
 .db-gap--bad  { background: var(--c-brand-secondary-tint); color: var(--c-bad); }
@@ -518,11 +518,11 @@ select, input, textarea { font: inherit; }
 .dd-source-card__chip {
   font-size: 10px; padding: 2px 6px; border-radius: 999px;
 }
-/* Classification chips keep their original semantic coding —
-   primary = green, secondary = blue, unset = red. */
-.dd-source-card__chip--primary   { background: #e6f4ea; color: var(--c-good); }
-.dd-source-card__chip--secondary { background: var(--c-brand-primary-tint); color: var(--c-accent); }
-.dd-source-card__chip--unset     { background: var(--c-brand-secondary-tint); color: var(--c-bad); }
+/* Classification chips: primary = blue, secondary = red, unset = gray
+   (matches the brand-aligned Docs sidebar — all on-palette). */
+.dd-source-card__chip--primary   { background: var(--c-brand-primary-tint); color: var(--c-brand-primary); }
+.dd-source-card__chip--secondary { background: var(--c-brand-secondary-tint); color: var(--c-brand-secondary); }
+.dd-source-card__chip--unset     { background: var(--c-soft); color: var(--c-muted); }
 .dd-source-card__count {
   font-size: 11px; color: var(--c-muted);
 }
@@ -534,7 +534,7 @@ select, input, textarea { font: inherit; }
   background: var(--c-bg); border: 1px solid var(--c-line);
   color: var(--c-muted);
 }
-.dd-source-card__flag--complete { background: #e6f4ea; color: var(--c-good); border-color: transparent; }
+.dd-source-card__flag--complete { background: var(--c-brand-primary-tint); color: var(--c-good); border-color: transparent; }
 .dd-source-card__flag--gap      { background: var(--c-brand-secondary-tint); color: var(--c-bad); border-color: transparent; }
 .dd-source-card__citation {
   font-size: 12px; color: var(--c-text); margin-top: 8px;
@@ -820,7 +820,7 @@ select, input, textarea { font: inherit; }
   border-radius: 3px;
   display: inline-block;
 }
-.admin-edit:hover { background: #fff8c4; }
+.admin-edit:hover { background: var(--c-brand-primary-tint); }
 .admin-edit__input {
   font: inherit;
   padding: 2px 4px;
