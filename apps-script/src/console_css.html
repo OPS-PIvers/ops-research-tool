@@ -24,7 +24,7 @@
   --c-brand-primary-200:  #c0c7e0;  /* OPS blue-200 — soft blue border/hover */
   /* Semantic — keep tonally close to brand */
   --c-good: #2d7a3f;
-  --c-warn: #b06000;
+  --c-warn: #c13435;
   --c-bad:  #ad2122;
   --font-display: "Lexend", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-body:    "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
@@ -411,7 +411,7 @@ select, input, textarea { font: inherit; }
   font-family: var(--font-display); font-weight: 500;
   background: #e6f4ea; color: var(--c-good);
 }
-.db-gap--warn { background: #fef7e0; color: var(--c-warn); }
+.db-gap--warn { background: var(--c-brand-secondary-tint); color: var(--c-warn); }
 .db-gap--bad  { background: var(--c-brand-secondary-tint); color: var(--c-bad); }
 
 /* Activity — relative timestamp */
@@ -970,7 +970,7 @@ select, input, textarea { font: inherit; }
 }
 .admin-import__added    { color: var(--c-good); }
 .admin-import__removed  { color: #ad2122; }
-.admin-import__changed  { color: #b06000; }
+.admin-import__changed  { color: #c13435; }
 .admin-import__unchanged{ color: var(--c-muted); }
 
 .admin-import__errors-head { color: #ad2122; font-weight: 500; padding: 8px 0 4px; }
@@ -991,14 +991,14 @@ select, input, textarea { font: inherit; }
   gap: 12px;
   padding: 12px 16px;
   margin: 12px 0;
-  background: #fff5e0;
-  border: 1px solid #e7c068;
-  border-left: 4px solid #b06000;
+  background: var(--c-brand-secondary-tint);
+  border: 1px solid var(--c-brand-secondary-light);
+  border-left: 4px solid #c13435;
   border-radius: 4px;
   font-size: 14px;
   color: var(--c-text);
 }
-.unarchive-banner__icon { color: #b06000; font-size: 16px; line-height: 1.4; }
+.unarchive-banner__icon { color: #c13435; font-size: 16px; line-height: 1.4; }
 .unarchive-banner__text { flex: 1; line-height: 1.5; }
 .unarchive-banner__sub  { color: var(--c-muted); font-size: 13px; }
 .unarchive-banner__close {
@@ -1092,11 +1092,11 @@ select, input, textarea { font: inherit; }
 .admin-lifecycle__errors {
   margin-top: 16px;
   padding: 12px;
-  border: 1px solid #e7c068;
-  background: #fff5e0;
+  border: 1px solid var(--c-brand-secondary-light);
+  background: var(--c-brand-secondary-tint);
   border-radius: 4px;
 }
-.admin-lifecycle__errors-head { color: #b06000; font-weight: 500; padding-bottom: 6px; }
+.admin-lifecycle__errors-head { color: #c13435; font-weight: 500; padding-bottom: 6px; }
 .admin-lifecycle__errors ul { margin: 0; padding-left: 24px; font-size: 13px; color: var(--c-text); }
 
 /* ============================================================
@@ -1130,8 +1130,8 @@ select, input, textarea { font: inherit; }
   flex-direction: column;
   gap: 6px;
   padding: 10px 12px;
-  background: #fff5e0;
-  border: 1px solid #e7c068;
+  background: var(--c-brand-secondary-tint);
+  border: 1px solid var(--c-brand-secondary-light);
   border-radius: 4px;
   margin-bottom: 12px;
 }
