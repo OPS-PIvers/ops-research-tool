@@ -15,9 +15,15 @@
   <body class="sb-body sb-body--modal">
     <header class="sb-modal__header">
       <button id="ed-close" type="button" class="sb-modal__close" title="Close">&times;</button>
-      <select id="ed-source-select" class="sb-modal__source-select" disabled>
-        <option>Loading…</option>
-      </select>
+      <div id="ed-source-dd" class="sb-srcdd">
+        <button id="ed-source-trigger" type="button" class="sb-srcdd__trigger"
+                aria-haspopup="listbox" aria-expanded="false" disabled>
+          <span id="ed-source-label" class="sb-srcdd__label">Loading…</span>
+          <span class="sb-srcdd__caret" aria-hidden="true">▾</span>
+        </button>
+        <div id="ed-source-menu" class="sb-srcdd__menu" role="listbox"
+             aria-label="Choose a source" hidden></div>
+      </div>
     </header>
 
     <div class="sb-modal__body">

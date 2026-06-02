@@ -17,20 +17,59 @@ const editor = {
 };
 
 const els = {
-  sourceSelect: document.getElementById('ed-source-select'),
-  close:        document.getElementById('ed-close'),
-  citation:     document.getElementById('ed-citation'),
-  evHeader:     document.getElementById('ed-evheader'),
-  filter:       document.getElementById('ed-filter'),
-  evidence:     document.getElementById('ed-evidence'),
-  status:       document.getElementById('ed-status'),
+  sourceDd:      document.getElementById('ed-source-dd'),
+  sourceTrigger: document.getElementById('ed-source-trigger'),
+  sourceLabel:   document.getElementById('ed-source-label'),
+  sourceMenu:    document.getElementById('ed-source-menu'),
+  close:         document.getElementById('ed-close'),
+  citation:      document.getElementById('ed-citation'),
+  evHeader:      document.getElementById('ed-evheader'),
+  filter:        document.getElementById('ed-filter'),
+  evidence:      document.getElementById('ed-evidence'),
+  status:        document.getElementById('ed-status'),
 };
 
 els.close.addEventListener('click', () => { if (!editor.busy) google.script.host.close(); });
-els.sourceSelect.addEventListener('change', () => {
-  if (editor.busy) { populateSourceSelect_(); return; }   // ignore + re-sync while busy
-  switchSource_(els.sourceSelect.value);
+
+// Custom source switcher — toggle on the trigger, dismiss on outside click /
+// Escape, arrow-key navigation within the open menu.
+els.sourceTrigger.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (editor.busy || els.sourceTrigger.disabled) return;
+  toggleSourceMenu_();
 });
+document.addEventListener('click', (e) => {
+  if (!els.sourceMenu.hidden && !els.sourceDd.contains(e.target)) closeSourceMenu_();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !els.sourceMenu.hidden) {
+    closeSourceMenu_();
+    els.sourceTrigger.focus();
+  }
+});
+els.sourceMenu.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  e.preventDefault();
+  const opts = Array.prototype.slice.call(els.sourceMenu.children);
+  if (!opts.length) return;
+  const idx = opts.indexOf(document.activeElement);
+  const next = e.key === 'ArrowDown' ? (opts[idx + 1] || opts[0]) : (opts[idx - 1] || opts[opts.length - 1]);
+  next.focus();
+});
+
+function openSourceMenu_() {
+  els.sourceMenu.hidden = false;
+  els.sourceTrigger.setAttribute('aria-expanded', 'true');
+  const active = els.sourceMenu.querySelector('.sb-srcdd__opt--active') || els.sourceMenu.firstElementChild;
+  if (active) active.focus();
+}
+function closeSourceMenu_() {
+  els.sourceMenu.hidden = true;
+  els.sourceTrigger.setAttribute('aria-expanded', 'false');
+}
+function toggleSourceMenu_() {
+  if (els.sourceMenu.hidden) openSourceMenu_(); else closeSourceMenu_();
+}
 
 bootstrap();
 
@@ -104,24 +143,76 @@ function sourceLabel_(s) {
 }
 
 function populateSourceSelect_() {
-  els.sourceSelect.innerHTML = '';
+  els.sourceMenu.innerHTML = '';
   editor.allSources.forEach((s) => {
-    const opt = document.createElement('option');
-    opt.value = s.sourceId;
-    opt.textContent = sourceLabel_(s);
-    if (s.sourceId === ctx.sourceId) opt.selected = true;
-    els.sourceSelect.appendChild(opt);
+    const active = s.sourceId === ctx.sourceId;
+    const opt = document.createElement('button');
+    opt.type = 'button';
+    opt.className = 'sb-srcdd__opt' + (active ? ' sb-srcdd__opt--active' : '');
+    opt.setAttribute('role', 'option');
+    opt.setAttribute('aria-selected', active ? 'true' : 'false');
+    opt.setAttribute('data-source-id', s.sourceId);
+
+    const check = document.createElement('span');
+    check.className = 'sb-srcdd__opt-check';
+    check.textContent = active ? '✓' : '';
+    opt.appendChild(check);
+
+    const dot = document.createElement('span');
+    dot.className = 'sb-srcdd__opt-dot sb-srcdd__opt-dot--' + (s.primarySecondary || 'unset');
+    dot.title = PS_LABELS[s.primarySecondary] || 'Unset';
+    opt.appendChild(dot);
+
+    const text = document.createElement('span');
+    text.className = 'sb-srcdd__opt-text';
+    text.textContent = sourceLabel_(s);
+    opt.appendChild(text);
+
+    opt.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeSourceMenu_();
+      if (editor.busy) return;
+      switchSource_(s.sourceId);
+      els.sourceTrigger.focus();
+    });
+    els.sourceMenu.appendChild(opt);
   });
-  els.sourceSelect.disabled = editor.allSources.length <= 1;
+  els.sourceLabel.textContent = editor.source ? sourceLabel_(editor.source) : '(no source)';
+  els.sourceTrigger.disabled = editor.allSources.length <= 1;
+}
+
+/**
+ * Keep the trigger label and the menu's active option in sync with the
+ * currently-loaded source. Title edits ripple into the label + option text;
+ * a primary/secondary change re-tints the active option's dot; switching
+ * sources moves the checkmark + active styling.
+ */
+function syncSourceDropdown_() {
+  if (!editor.source) return;
+  const label = sourceLabel_(editor.source);
+  els.sourceLabel.textContent = label;
+  Array.prototype.forEach.call(els.sourceMenu.children, (opt) => {
+    const on = opt.getAttribute('data-source-id') === ctx.sourceId;
+    opt.classList.toggle('sb-srcdd__opt--active', on);
+    opt.setAttribute('aria-selected', on ? 'true' : 'false');
+    const check = opt.querySelector('.sb-srcdd__opt-check');
+    if (check) check.textContent = on ? '✓' : '';
+    if (on) {
+      const text = opt.querySelector('.sb-srcdd__opt-text');
+      if (text) text.textContent = label;
+      const dot = opt.querySelector('.sb-srcdd__opt-dot');
+      if (dot) {
+        dot.className = 'sb-srcdd__opt-dot sb-srcdd__opt-dot--' + (editor.source.primarySecondary || 'unset');
+        dot.title = PS_LABELS[editor.source.primarySecondary] || 'Unset';
+      }
+    }
+  });
 }
 
 function render() {
-  // Keep the select label in sync with whatever's currently shown — citation
-  // title edits should ripple into the dropdown option text.
-  if (editor.source) {
-    const opt = els.sourceSelect.querySelector('option[value="' + ctx.sourceId + '"]');
-    if (opt) opt.textContent = sourceLabel_(editor.source);
-  }
+  // Keep the trigger label + active menu option in sync — citation title edits
+  // and primary/secondary changes should ripple into the dropdown.
+  syncSourceDropdown_();
 
   els.evHeader.textContent = 'Evidence (' + editor.highlights.length + ')';
 
@@ -132,8 +223,10 @@ function render() {
 }
 
 function renderEmpty(message) {
-  els.sourceSelect.innerHTML = '<option>(no source)</option>';
-  els.sourceSelect.disabled = true;
+  els.sourceMenu.innerHTML = '';
+  els.sourceLabel.textContent = '(no source)';
+  els.sourceTrigger.disabled = true;
+  closeSourceMenu_();
   els.citation.innerHTML = '';
   els.filter.innerHTML = '';
   els.evidence.innerHTML = '<div class="sb-empty">' + esc_(message) + '</div>';
