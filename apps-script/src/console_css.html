@@ -343,6 +343,27 @@ select, input, textarea { font: inherit; }
 .db-table tbody tr:hover { background: var(--c-soft); }
 .db-table tbody tr:last-child td { border-bottom: none; }
 
+/* Skeleton table — shown the instant the dashboard view opens, replaced by
+   real rows when the (now-fast, parallel) fetch returns. Gives immediate
+   structure instead of a centered spinner. */
+.db-table--skeleton tbody tr { cursor: default; }
+.db-table--skeleton tbody tr:hover { background: transparent; }
+.db-skel-bar {
+  height: 12px; border-radius: 6px; width: 60%;
+  background: linear-gradient(90deg, var(--c-soft) 25%, #e8e8e8 37%, var(--c-soft) 63%);
+  background-size: 400% 100%;
+  animation: db-shimmer 1.4s ease infinite;
+}
+.db-skel-bar--wide { width: 85%; }
+.db-skel-bar--narrow { width: 40%; }
+@keyframes db-shimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .db-skel-bar { animation: none; }
+}
+
 .db-row__name { font-weight: 500; }
 .db-row__name-class {
   display: block; font-size: 11px; color: var(--c-muted); margin-top: 2px;

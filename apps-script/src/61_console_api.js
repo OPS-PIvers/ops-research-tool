@@ -226,7 +226,19 @@ function consoleUnarchiveProject(projectId) {
  * Teacher: only sees students whose Class ∈ classes they teach AND ∈
  * project.memberClasses. Admin: sees all students in the project.
  */
-function consoleGetProjectDashboard(projectId) {
+// Dashboard cache TTL (seconds). Short by design — the cache is correctness-
+// neutral (the per-student Sheets stay authoritative; stale ≤ TTL), and the
+// Refresh button bypasses it. Keeps repeated navigation/refocus instant
+// without a write-path invalidation hook.
+var DASH_CACHE_TTL_SEC = 45;
+
+/**
+ * @param {string} projectId
+ * @param {string} [className]   Narrow to a single class (drives the client's
+ *                               per-class fan-out). Omit for the actor's full scope.
+ * @param {boolean} [bypassCache] Skip the read cache (Refresh button).
+ */
+function consoleGetProjectDashboard(projectId, className, bypassCache) {
   const actorEmail = getActorEmail_();
   const staff = assertStaff_(actorEmail);
   if (!projectId) throw new Error('projectId required');
@@ -237,20 +249,207 @@ function consoleGetProjectDashboard(projectId) {
 
   const projectClasses = projectClassList_(project);
   const teacherClasses = isAdmin_(staff) ? null : listClassesTaughtBy_(actorEmail);
-  const scopedClasses = isAdmin_(staff)
+  let scopedClasses = isAdmin_(staff)
     ? projectClasses
     : projectClasses.filter((c) => teacherClasses.indexOf(c) >= 0);
+  if (className) {
+    const cn = String(className).trim();
+    scopedClasses = scopedClasses.filter((c) => c === cn);
+  }
 
+  // Scope-keyed short-TTL cache. Classes fully determine the data, so two
+  // teachers with the same scope share an entry; the actor email is not needed
+  // in the key.
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'dash:v1:' + projectId + ':' + scopedClasses.slice().sort().join(',');
+  if (!bypassCache) {
+    const hit = cache.get(cacheKey);
+    if (hit) { try { return JSON.parse(hit); } catch (e) { /* corrupt — recompute */ } }
+  }
+
+  // Parallel read is the fast path. If it wholesale-fails (e.g. the Sheets API
+  // is disabled in the GCP project, or a transient outage), fall back to the
+  // serial SpreadsheetApp path so the dashboard is never empty — correct-but-
+  // slow beats fast-but-blank. A partial failure (one bad sheet) keeps the
+  // parallel result; that sheet just shows zeros and is logged.
+  let result;
+  try {
+    result = computeDashboardParallel_(project, scopedClasses, bundle);
+    if (result.readRequested > 0 && result.readErrors >= result.readRequested) {
+      console.warn('[OPS] dashboard parallel read fully failed (' + result.readErrors +
+        '/' + result.readRequested + ' sheets); falling back to serial.');
+      result = computeDashboardSerial_(project, scopedClasses, bundle);
+    }
+  } catch (e) {
+    console.warn('[OPS] dashboard parallel path threw; serial fallback: ' + (e && e.message || e));
+    result = computeDashboardSerial_(project, scopedClasses, bundle);
+  }
+  const students = result.students;
+  const groups = result.groups;
+
+  const unarchive = latestUnarchiveFor_(project.projectId);
+  const banner = (function () {
+    if (!unarchive) return undefined;
+    const ageMs = Date.now() - new Date(unarchive.at).getTime();
+    if (ageMs < 0 || ageMs > 7 * 24 * 3600 * 1000) return undefined;
+    return { eventId: unarchive.eventId, actor: unarchive.actor, at: unarchive.at };
+  })();
+
+  const resp = {
+    ok: true,
+    project: {
+      projectId: project.projectId,
+      name: project.name,
+      schoolYear: project.schoolYear,
+      bundleName: bundle ? bundle.name : '',
+      memberClasses: projectClasses,
+      scopedClasses,
+    },
+    students,
+    groups,
+    asOf: nowIso_(),
+  };
+  if (banner) resp.recentUnarchive = banner;
+  // >100KB values (a huge admin 'all' scope) silently fail to cache — caught
+  // here so the request still returns; the parallel path is fast regardless.
+  try { cache.put(cacheKey, JSON.stringify(resp), DASH_CACHE_TTL_SEC); } catch (e) { /* skip cache */ }
+  return resp;
+}
+
+/** Enrolled roster rows for a set of classes. */
+function dashboardEnrolled_(scopedClasses) {
   const rosterRows = readAllAsObjects_(
     getTab_(SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID), TABS.ROSTER),
     HEADERS.ROSTER
   );
-  const enrolled = rosterRows.filter(
+  return rosterRows.filter(
     (r) => r.Class && scopedClasses.indexOf(String(r.Class).trim()) >= 0
   );
+}
 
-  // Sheet-id keyed cache: open each group Sheet once per request even if
-  // 3 students all resolve to the same group.
+/**
+ * Build the {students, groups} aggregates by reading every Sheet in scope
+ * CONCURRENTLY (manifest-resolved ids → batch fetch). This is the production
+ * path. `computeDashboardSerial_` below is the byte-for-byte equivalent using
+ * sequential SpreadsheetApp opens — kept as the parity baseline
+ * (devTestDashboardParityParallelVsSerial) and an emergency fallback.
+ */
+function computeDashboardParallel_(project, scopedClasses, bundle) {
+  const enrolled = dashboardEnrolled_(scopedClasses);
+
+  // Groups in scope — opens each group Sheet once (O(groups)) for membership +
+  // tab gids.
+  const groupsInProject = listGroupsForProject_(project)
+    .filter((g) => scopedClasses.indexOf(g.className) >= 0);
+  const emailToGroupSheet = {};   // emailLower → group sheetId
+  const groupSheetToId = {};      // group sheetId → groupId
+  const descById = {};            // sheetId → { id, sourcesGid, highlightsGid } for the CSV reader
+  groupsInProject.forEach((g) => {
+    groupSheetToId[g.sheetId] = g.groupId;
+    descById[g.sheetId] = { id: g.sheetId, sourcesGid: g.sourcesGid, highlightsGid: g.highlightsGid };
+    (g.memberEmails || []).forEach((e) => { emailToGroupSheet[String(e).toLowerCase()] = g.sheetId; });
+  });
+
+  // Resolve every enrolled student to a sheetId: group member → group Sheet;
+  // else manifest solo entry (id + tab gids); else Drive fallback (+ best-effort
+  // manifest backfill so the next load skips the walk). A manifest entry missing
+  // its gids is treated as incomplete and re-resolved.
+  const manifest = loadProjectManifest_(project.projectId);
+  const studentSheetId = {};   // email → sheetId|null
+  const studentIsGroup = {};   // email → bool
+  enrolled.forEach((r) => {
+    const emailLower = String(r.Email).toLowerCase();
+    if (emailToGroupSheet[emailLower]) {
+      studentSheetId[r.Email] = emailToGroupSheet[emailLower];
+      studentIsGroup[r.Email] = true;
+      return;
+    }
+    studentIsGroup[r.Email] = false;
+    const entry = manifest[emailLower];
+    if (manifestEntryComplete_(entry)) {
+      studentSheetId[r.Email] = entry.id;
+      descById[entry.id] = { id: entry.id, sourcesGid: entry.sgid, highlightsGid: entry.hgid };
+      return;
+    }
+    // Miss / incomplete entry → resolve via Drive once, backfill the manifest.
+    const ss = getSoloSheetIfExists_(r.Email, project);
+    if (ss) {
+      const id = ss.getId();
+      recordSoloSheetForSs_(project.projectId, r.Email, ss);
+      studentSheetId[r.Email] = id;
+      descById[id] = { id, sourcesGid: tabGid_(ss, TABS.SOURCES), highlightsGid: tabGid_(ss, TABS.HIGHLIGHTS) };
+    } else {
+      studentSheetId[r.Email] = null;   // student never provisioned a Sheet
+    }
+  });
+
+  // One parallel CSV-export read across every distinct Sheet (solo + group).
+  const descriptors = Object.keys(descById).map((id) => descById[id]);
+  const batch = batchReadStudentData_(descriptors);
+  if (batch.errors.length) {
+    console.warn('[OPS] dashboard batch read: ' + batch.errors.length +
+      ' request(s) failed: ' + JSON.stringify(batch.errors.slice(0, 5)));
+  }
+  const readFor = (sheetId) => (sheetId && batch.data[sheetId]) || { sources: [], highlights: [] };
+  const readRequested = descriptors.length;   // unique sheets attempted
+  // Count sheets with ANY failed tab as failed, so a wholesale outage (every
+  // sheet erroring) is detected for the serial fallback.
+  const failedSheetIds = {};
+  batch.errors.forEach((e) => { if (e.id) failedSheetIds[e.id] = true; });
+  const readErrors = Object.keys(failedSheetIds).length;
+
+  const students = enrolled.map((r) => {
+    const fetched = readFor(studentSheetId[r.Email]);
+    const isGroup = studentIsGroup[r.Email];
+    const personalSources    = isGroup ? fetched.sources.filter((s)    => String(s.createdByEmail).toLowerCase()    === String(r.Email).toLowerCase()) : fetched.sources;
+    const personalHighlights = isGroup ? fetched.highlights.filter((h) => String(h.createdByEmail).toLowerCase() === String(r.Email).toLowerCase()) : fetched.highlights;
+    const agg = aggregateStudent_(personalSources, personalHighlights, bundle);
+    return {
+      email: r.Email,
+      name:  composeStudentName_(r),
+      class: String(r.Class || ''),
+      groupId: isGroup ? (groupSheetToId[studentSheetId[r.Email]] || null) : null,
+      categoryMix:    agg.categoryMix,
+      sourceCount:    agg.sourceCount,
+      highlightCount: agg.highlightCount,
+      completion:     agg.completion,
+      gaps:           agg.gaps,
+      lastActivity:   agg.lastActivity,
+    };
+  });
+
+  const groups = groupsInProject.map((g) => {
+    const fetched = readFor(g.sheetId);
+    const agg = aggregateStudent_(fetched.sources, fetched.highlights, bundle);
+    return {
+      groupId: g.groupId,
+      name: g.name,
+      className: g.className,
+      memberEmails: g.memberEmails,
+      memberCount: g.memberCount,
+      categoryMix:    agg.categoryMix,
+      sourceCount:    agg.sourceCount,
+      highlightCount: agg.highlightCount,
+      completion:     agg.completion,
+      gaps:           agg.gaps,
+      lastActivity:   agg.lastActivity,
+    };
+  });
+
+  // readRequested/readErrors let the caller detect a wholesale failure and fall
+  // back to the serial path. (The parity test reads only students/groups.)
+  return { students, groups, readRequested, readErrors };
+}
+
+/**
+ * Sequential-read equivalent of computeDashboardParallel_ — the original
+ * implementation, preserved verbatim in behavior. Not on the hot path; it
+ * exists so devTestDashboardParityParallelVsSerial can assert the parallel
+ * path produces identical aggregates, and as a hand-pull fallback.
+ */
+function computeDashboardSerial_(project, scopedClasses, bundle) {
+  const enrolled = dashboardEnrolled_(scopedClasses);
+
   const sheetCache = {};  // sheetId → { sources, highlights }
   function readForActor_(email) {
     const ss = getStudentSheetIfExists_(email, project);
@@ -267,7 +466,6 @@ function consoleGetProjectDashboard(projectId) {
     return { sources: sheetCache[sheetId].sources, highlights: sheetCache[sheetId].highlights, sheetId, isGroup, meta };
   }
 
-  // Per-student rows — for group members, filter the group's rows by createdByEmail.
   const students = enrolled.map((r) => {
     const fetched = readForActor_(r.Email);
     const personalSources    = fetched.isGroup ? fetched.sources.filter((s)    => String(s.createdByEmail).toLowerCase()    === String(r.Email).toLowerCase()) : fetched.sources;
@@ -287,7 +485,6 @@ function consoleGetProjectDashboard(projectId) {
     };
   });
 
-  // Groups array — one entry per active group in scope.
   const groupsInProject = listGroupsForProject_(project);
   const groups = groupsInProject
     .filter((g) => scopedClasses.indexOf(g.className) >= 0)
@@ -316,30 +513,7 @@ function consoleGetProjectDashboard(projectId) {
       };
     });
 
-  const unarchive = latestUnarchiveFor_(project.projectId);
-  const banner = (function () {
-    if (!unarchive) return undefined;
-    const ageMs = Date.now() - new Date(unarchive.at).getTime();
-    if (ageMs < 0 || ageMs > 7 * 24 * 3600 * 1000) return undefined;
-    return { eventId: unarchive.eventId, actor: unarchive.actor, at: unarchive.at };
-  })();
-
-  const resp = {
-    ok: true,
-    project: {
-      projectId: project.projectId,
-      name: project.name,
-      schoolYear: project.schoolYear,
-      bundleName: bundle ? bundle.name : '',
-      memberClasses: projectClasses,
-      scopedClasses,
-    },
-    students,
-    groups,
-    asOf: nowIso_(),
-  };
-  if (banner) resp.recentUnarchive = banner;
-  return resp;
+  return { students, groups };
 }
 
 /**
@@ -601,6 +775,7 @@ function consoleGroupCreate(projectId, name, memberEmails) {
         sourcesCopied    += copied.sourcesCopied;
         highlightsCopied += copied.highlightsCopied;
         DriveApp.getFileById(soloFile.getId()).setTrashed(true);
+        forgetSoloSheetId_(project.projectId, email);   // solo Sheet trashed — drop its dashboard-manifest entry
       });
     } catch (e) {
       // Roll back the group Sheet so future writes don't route here.

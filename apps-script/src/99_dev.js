@@ -1797,3 +1797,153 @@ function devTestBibliographyPartition() {
   console.log(fail === 0 ? 'devTestBibliographyPartition: ALL GREEN' : 'devTestBibliographyPartition: NOT GREEN (' + fail + ' fail)');
   return { pass, fail };
 }
+
+// ============================================================
+// Dashboard performance: manifest + parallel batch reader
+// ============================================================
+
+/**
+ * Round-trips the per-(project, student) → spreadsheetId manifest:
+ * record (lowercased key), upsert-replace (no dup), load map, forget.
+ */
+function devTestSheetManifestRoundTrip() {
+  const project = devSeedDevProject();
+  let pass = 0, fail = 0;
+  const check = (label, cond) => { if (cond) { pass++; console.log('PASS ' + label); } else { fail++; console.log('FAIL ' + label); } };
+  const email = 'devManifest.Student@orono.k12.mn.us';   // mixed-case to prove normalization
+  const lower = email.toLowerCase();
+  const fakeId = 'DEV_MANIFEST_FAKE_SSID';
+  try {
+    recordSoloSheetEntry_(project.projectId, email, fakeId, '111', '222', true);
+    const e1 = loadProjectManifest_(project.projectId)[lower];
+    check('records id under lowercased key', e1 && e1.id === fakeId);
+    check('records tab gids', e1 && e1.sgid === '111' && e1.hgid === '222');
+    check('entry reads as complete', manifestEntryComplete_(e1));
+
+    recordSoloSheetEntry_(project.projectId, email, fakeId + '_v2', '333', '444', true);
+    const e2 = loadProjectManifest_(project.projectId)[lower];
+    check('upsert replaces entry (no duplicate)', e2 && e2.id === fakeId + '_v2' && e2.sgid === '333');
+
+    forgetSoloSheetId_(project.projectId, email);
+    check('forget removes the entry', !loadProjectManifest_(project.projectId)[lower]);
+  } finally {
+    forgetSoloSheetId_(project.projectId, email);
+  }
+  console.log(fail === 0 ? 'devTestSheetManifestRoundTrip: ALL GREEN' : 'devTestSheetManifestRoundTrip: NOT GREEN (' + fail + ')');
+  return { pass, fail };
+}
+
+/**
+ * KEYSTONE: the parallel batch-read dashboard path must produce aggregates
+ * byte-for-byte identical to the original serial path. Builds a DEV fixture
+ * with varied per-student data, merges 2 of 3 into a group (so the comparison
+ * exercises BOTH the group-sheet createdByEmail filter and the solo manifest
+ * path), then deep-compares computeDashboardSerial_ vs computeDashboardParallel_.
+ *
+ * NOTE: the parallel path reads via the Sheets REST API through UrlFetchApp,
+ * which needs the `script.external_request` scope. The FIRST run of this test
+ * in the editor triggers the one-time re-consent — approve it and re-run.
+ */
+function devTestDashboardParityParallelVsSerial() {
+  const project = devSeedDevProject();
+  const emails = devGroupsSeedRoster_(3);   // DEV class: 3 students
+  const { check, state } = devGroupsChecker_();
+  try {
+    const bundle = listBundles_().find((b) => b.bundleId === project.bundleId);
+    resetGroupSheetCache_();
+
+    // Seed varied data: differing source counts, classifications, annotations,
+    // and category mixes so the aggregates are non-trivial.
+    emails.forEach((email, idx) => {
+      const ss = findOrCreateStudentSheet_(email, project);
+      const nSrc = idx + 1;   // 1, 2, 3 sources respectively
+      for (let s = 0; s < nSrc; s++) {
+        const sourceId = 'parity-' + idx + '-' + s;
+        upsertSource_(ss, {
+          sourceId, projectId: project.projectId,
+          rawUrl: 'https://parity.example.com/' + idx + '/' + s,
+          scrapedTitle: 'parity ' + email + ' ' + s,
+          primarySecondary: (s % 2 === 0) ? 'primary' : 'unset',
+          annotation: (s === 0) ? 'has annotation' : '',
+          citationFields: JSON.stringify({ title: 't' + s, url: (s === 0) ? ('https://parity.example.com/' + idx + '/' + s) : '' }),
+          createdByEmail: email,
+        });
+        for (let h = 0; h <= idx; h++) {
+          upsertHighlight_(ss, {
+            highlightId: 'parity-hl-' + idx + '-' + s + '-' + h,
+            sourceId, projectId: project.projectId,
+            primaryCategory: bundle['label' + (((idx + s + h) % 5) + 1)],
+            secondaryCategory: '',
+            highlightedText: 'text ' + idx + ' ' + s + ' ' + h,
+            createdByEmail: email,
+          });
+        }
+      }
+    });
+
+    // Merge two of three; leave one solo.
+    resetGroupSheetCache_();
+    const merge = consoleGroupCreate(project.projectId, 'ParityProbe', [emails[0], emails[1]]);
+    check('merge ok', merge && merge.ok === true);
+
+    SpreadsheetApp.flush();   // ensure the Sheets REST read sees all the writes
+
+    const scoped = ['DEV'];
+    resetGroupSheetCache_();
+    const serial = computeDashboardSerial_(project, scoped, bundle);
+    resetGroupSheetCache_();
+    const parallel = computeDashboardParallel_(project, scoped, bundle);
+
+    const norm = (r) => ({
+      students: (r.students || []).slice().sort((a, b) => a.email.localeCompare(b.email)),
+      groups: (r.groups || []).slice().sort((a, b) => String(a.groupId).localeCompare(String(b.groupId))),
+    });
+    const sStr = JSON.stringify(norm(serial));
+    const pStr = JSON.stringify(norm(parallel));
+    check('parallel aggregates == serial aggregates (deep equal)', sStr === pStr);
+    if (sStr !== pStr) {
+      console.log('SERIAL  : ' + sStr);
+      console.log('PARALLEL: ' + pStr);
+    }
+    // DEV class also contains paul.ivers (seeded by devSeedDevProject), so ≥3.
+    check('the 3 seeded students are aggregated',
+      emails.every((e) => serial.students.some((s) => s.email.toLowerCase() === e)));
+    check('1 group aggregated', serial.groups.length === 1);
+  } finally {
+    try {
+      resetGroupSheetCache_();
+      const groups = listGroupsForProject_(project, 'DEV');
+      groups.forEach((g) => { try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {} });
+    } catch (e) {}
+    emails.forEach((e) => { try { forgetSoloSheetId_(project.projectId, e); } catch (x) {} });
+    devGroupsTestCleanup_(emails);
+  }
+  console.log(state.pass + '/' + (state.pass + state.fail) + ' passed');
+  return state;
+}
+
+/** Run both dashboard-perf tests; print a single GREEN/NOT-GREEN summary. */
+function devTestDashboardPerfAll() {
+  const tests = [
+    ['devTestSheetManifestRoundTrip',          devTestSheetManifestRoundTrip],
+    ['devTestDashboardParityParallelVsSerial', devTestDashboardParityParallelVsSerial],
+  ];
+  let pass = 0, fail = 0, threw = 0;
+  const lines = [];
+  tests.forEach((entry) => {
+    try {
+      const s = entry[1]() || {};
+      const p = s.pass || 0, f = s.fail || 0;
+      pass += p; fail += f;
+      lines.push((f === 0 ? 'PASS  ' : 'FAIL  ') + entry[0] + '  (' + p + '/' + (p + f) + ')');
+    } catch (e) {
+      threw++;
+      lines.push('THREW ' + entry[0] + '  — ' + (e && e.message || e));
+    }
+  });
+  const ok = (fail === 0 && threw === 0);
+  console.log('===== devTestDashboardPerfAll =====\n' + lines.join('\n') +
+    '\n-----------------------------------\nTOTAL ' + pass + ' passed, ' + fail +
+    ' failed, ' + threw + ' threw  →  ' + (ok ? 'ALL GREEN' : 'NOT GREEN'));
+  return { ok, pass, fail, threw };
+}

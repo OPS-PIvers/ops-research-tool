@@ -123,6 +123,10 @@ function listGroupsForProject_(project, classFilter) {
           name: String(meta.studentName || '').replace(/^\[grp\] /, ''),
           className: cf.getName(),
           sheetId: f.getId(),
+          // Tab gids for the dashboard's CSV-export reader (we already have the
+          // Spreadsheet open here — capturing them is free).
+          sourcesGid: tabGid_(ss, TABS.SOURCES),
+          highlightsGid: tabGid_(ss, TABS.HIGHLIGHTS),
           memberEmails: current.map((m) => m.email),
           memberCount: current.length,
         });
@@ -542,7 +546,10 @@ function addMemberToGroupCore_(project, group, rosterEntry, actorEmail) {
   // member's data still lives in their (un-trashed) solo Sheet rather than
   // only in a trashed one with no group row pointing at it.
   appendMemberToGroup_(groupSs, rosterEntry);
-  if (soloFile) DriveApp.getFileById(soloFile.getId()).setTrashed(true);
+  if (soloFile) {
+    DriveApp.getFileById(soloFile.getId()).setTrashed(true);
+    forgetSoloSheetId_(project.projectId, e);   // solo Sheet is gone — drop its dashboard-manifest entry
+  }
   appendAuditEvent_({
     projectId: project.projectId, action: AUDIT_ACTIONS.GROUP_MERGE,
     actor: actorEmail, detail: 'add;groupId=' + group.groupId + ';email=' + e,

@@ -931,6 +931,7 @@ const dashboard = {
   sortKey: 'activity',     // 'name' | 'activity' | 'completion' | 'highlights' | 'sources'
   sortDir: 'desc',         // 'asc' | 'desc'
   asOfTickHandle: null,
+  lastRowCount: {},        // projectId → last rendered row count (sizes the load skeleton)
 };
 
 function renderDashboard_(main) {
@@ -998,16 +999,11 @@ function renderDashboard_(main) {
   if (dashboard.data) {
     paintDashboard_();
   } else {
+    // Skeleton table for instant structure while the (fast, parallel) fetch
+    // runs — better perceived speed than a centered spinner. Sized from the
+    // last-known row count for this project, else a sensible default.
     body.innerHTML = '';
-    const loader = document.createElement('div');
-    loader.className = 'mp-loading';
-    const sp = document.createElement('div');
-    sp.className = 'console-spinner';
-    loader.appendChild(sp);
-    const txt = document.createElement('div');
-    txt.textContent = 'Loading dashboard…';
-    loader.appendChild(txt);
-    body.appendChild(loader);
+    body.appendChild(buildDashboardSkeleton_(dashboard.lastRowCount[state.projectId] || 8));
     fetchDashboard_(state.projectId, false);
   }
 
@@ -1049,7 +1045,8 @@ function fetchDashboard_(projectId, isRefresh) {
       if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
       onFail_('loading dashboard')(e);
     })
-    .consoleGetProjectDashboard(projectId);
+    // Refresh bypasses the server's short-TTL cache; normal loads use it.
+    .consoleGetProjectDashboard(projectId, null, !!isRefresh);
 }
 
 function maybeRenderUnarchiveBanner_(main, data) {
@@ -1120,7 +1117,52 @@ function paintDashboard_() {
     body.appendChild(buildDashboardTable_());
   }
 
+  // Remember the rendered row count so a later re-entry (cache cleared) shows a
+  // right-sized load skeleton instead of a generic one.
+  if (dashboard.loadedFor) {
+    const rowCount = (dashboard.data.students || []).length + (dashboard.data.groups || []).length;
+    if (rowCount > 0) dashboard.lastRowCount[dashboard.loadedFor] = rowCount;
+  }
+
   updateAsOf_();
+}
+
+/**
+ * Skeleton table shown the instant the dashboard view opens, before data
+ * returns. Mirrors the real table's columns so the swap is visually stable.
+ */
+function buildDashboardSkeleton_(rowCount) {
+  const n = Math.min(Math.max(rowCount || 8, 4), 40);
+  const table = document.createElement('table');
+  table.className = 'db-table db-table--skeleton';
+
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  ['Student', 'Category mix', 'Completion', 'Gaps', 'Activity'].forEach((h) => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    th.style.cursor = 'default';
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  // Vary bar widths per column so the placeholder reads as a real table.
+  const widths = ['db-skel-bar--wide', '', '', 'db-skel-bar--narrow', 'db-skel-bar--narrow'];
+  for (let i = 0; i < n; i++) {
+    const tr = document.createElement('tr');
+    for (let c = 0; c < widths.length; c++) {
+      const td = document.createElement('td');
+      const bar = document.createElement('div');
+      bar.className = 'db-skel-bar ' + widths[c];
+      td.appendChild(bar);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return table;
 }
 
 function startAsOfTicker_() {

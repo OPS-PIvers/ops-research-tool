@@ -73,5 +73,12 @@ function findOrCreateSoloSheet_(actorEmail, project) {
     projectId: project.projectId,
     groupId: '',
   });
+  // Record the new solo Sheet (id + tab gids) in the dashboard manifest so the
+  // Teacher Console resolves + CSV-exports it directly instead of walking Drive
+  // per student. Recorded only on CREATE — the find-existing path above runs on
+  // every write and must stay free of manifest churn. Best-effort: failure here
+  // never blocks a write (the dashboard falls back to the Drive walk + backfills
+  // on miss).
+  recordSoloSheetForSs_(project.projectId, actorEmail, ss);
   return ss;
 }

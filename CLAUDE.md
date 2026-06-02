@@ -282,6 +282,50 @@ These supersede or refine the spec — apply them before defaulting to plan text
   drop in the real OPS Primary Logo (base64-inlined; GAS can't `clasp push` a
   PNG) when the asset is on hand.
 
+- **Source-editor modal: custom dropdown + evidence spacing.** The per-source
+  editor's source switcher is a custom OPS-styled trigger + popover listbox
+  ([`source_editor.html`](apps-script/src/source_editor.html) +
+  [`source_editor_js.html`](apps-script/src/source_editor_js.html)), NOT a
+  native `<select>` (whose open menu can't be styled). Matches the
+  `.sb-ps-pop` / `.sb-insert-pop` popover language; each option shows a
+  `✓` for the current source · a primary/secondary color dot · 2-line-clamped
+  title; click/outside-click/Escape/↑↓ wired. The evidence list got a
+  `.sb-modal__evidence { gap: 12px }` rule (cards were stacking flush, borders
+  abutting). DOM-side — real-Doc QA only.
+
+- **Teacher dashboard reads are PARALLEL (the #1 perf lever).** Build plan §perf
+  concern: the dashboard fans out across every student's Sheet, and GAS has no
+  threads, so the old serial `openById`+`getValues` loop was O(N) × ~0.5s.
+  Now `consoleGetProjectDashboard` ([`61_console_api.js`](apps-script/src/61_console_api.js))
+  reads all Sheets CONCURRENTLY via `UrlFetchApp.fetchAll` against the **Drive
+  CSV-export endpoint** (`docs.google.com/.../export?format=csv&gid=`,
+  [`22_batch_read.js`](apps-script/src/22_batch_read.js)). **Why CSV-export and
+  not the Sheets REST API:** the script runs on a *default* (Google-managed) GCP
+  project where the Sheets API can't be enabled (Paul can't even `describe` it;
+  `gcloud services enable` → PERMISSION_DENIED). CSV-export rides on the **Drive
+  scope already granted** (+ `script.external_request`, a one-time re-consent
+  added when UrlFetchApp shipped) — no GCP change. Sheet ids + the Sources/
+  Highlights **tab gids** come from a `SheetManifest` tab on the Projects
+  registry ([`15_sheet_manifest.js`](apps-script/src/15_sheet_manifest.js)),
+  written at provisioning (`findOrCreateSoloSheet_`) so the dashboard skips the
+  per-student Drive walk; a miss falls back to the Drive walk + backfills. The
+  manifest is a **derived cache** — `getManifestTab_` self-heals its own schema
+  (clears + rebuilds on any header change; no migration), and group merge/add
+  drop entries (`forgetSoloSheetId_`) while un-merge refreshes via
+  `findOrCreateSoloSheet_`. Results are cached in `CacheService` for 45s keyed by
+  `dash:v1:<projectId>:<sortedScopedClasses>` (Refresh bypasses via a 3rd arg).
+  **Resilience:** if the parallel read wholesale-fails (API outage, etc.) the
+  endpoint falls back to the preserved serial path `computeDashboardSerial_` —
+  correct-but-slow beats fast-but-blank. The console shows a **skeleton table**
+  while loading ([`console_js.html`](apps-script/src/console_js.html)
+  `buildDashboardSkeleton_`). Locked by `devTestDashboardParityParallelVsSerial`
+  (asserts parallel aggregates == serial, byte-for-byte) + `devTestSheetManifestRoundTrip`
+  (`devTestDashboardPerfAll` runs both). **Deferred (documented, additive — no
+  rewrite to add later):** a precomputed per-project rollup Sheet for O(1)
+  dashboards, and per-class fan-out in the client (low ROI after parallel reads;
+  duplicates roster/group reads per class; only helps very large multi-class
+  admin views). Pull either in only if a whole-grade project proves slow.
+
 ## 5. GAS V8 quirks discovered
 
 - `new URL(...)` **throws** in GAS V8. The global is advertised but unusable.
@@ -404,6 +448,14 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   `devTestGroupMoveSemantics`, `devTestGroupAddToGroup`,
   `devTestGroupAuthorizationGate`. **Run `devTestGroupsAll` to run all six in
   one shot** — it prints a single `ALL GREEN` / `NOT GREEN` summary.
+- Dashboard performance — **`devTestDashboardPerfAll`** runs both:
+  `devTestSheetManifestRoundTrip` (manifest record/load/forget + gid storage +
+  self-heal) and `devTestDashboardParityParallelVsSerial` (the keystone — builds
+  a DEV fixture with a solo + a 2-member group, asserts the parallel CSV-export
+  aggregates are byte-for-byte equal to the serial path). The parallel reader
+  needs `script.external_request` (one-time editor re-consent on first run) and
+  the Drive scope — but NOT the Sheets API (it uses CSV-export; see §4). A red
+  parity line prints the `SERIAL:` vs `PARALLEL:` diff.
 
 ## 9. How to start a session here
 
