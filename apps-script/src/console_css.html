@@ -26,6 +26,11 @@
   --c-good: var(--c-brand-primary);  /* "complete / on-track" reads brand blue (OPS success) */
   --c-warn: #c13435;
   --c-bad:  #ad2122;
+  /* Stoplight palette — ONLY for the cite/tag/note gap pills, where a
+     green/amber/red read is genuinely useful. Never chrome/classification. */
+  --stop-good: #15803d; --stop-good-bg: #dcfce7;
+  --stop-warn: #b45309; --stop-warn-bg: #fef3c7;
+  --stop-bad:  #ad2122; --stop-bad-bg:  #e5c7c7;
   --font-display: "Lexend", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-body:    "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
 }
@@ -315,7 +320,7 @@ select, input, textarea { font: inherit; }
   font-size: 12px; color: var(--c-muted);
   white-space: nowrap;
 }
-.db-body { background: var(--c-bg); border: 1px solid var(--c-line); border-radius: 8px; }
+.db-body { background: var(--c-bg); border: 1px solid var(--c-line); border-radius: 8px; overflow: hidden; }
 .db-empty {
   padding: 48px 24px; text-align: center; color: var(--c-muted);
 }
@@ -327,15 +332,16 @@ select, input, textarea { font: inherit; }
 .db-table thead th {
   text-align: left; padding: 12px 12px;
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--c-muted); font-weight: 600;
-  border-bottom: 1px solid var(--c-line);
-  background: var(--c-bg);
+  color: #fff; font-weight: 600;
+  background: var(--c-brand-primary);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
+  transition: background 0.1s;
 }
+.db-table thead th:hover { background: var(--c-brand-primary-dark); }
 .db-table thead th .db-th-arrow {
-  display: inline-block; width: 12px; color: var(--c-muted);
+  display: inline-block; width: 12px; color: #fff;
 }
 .db-table tbody td {
   padding: 10px 12px;
@@ -409,10 +415,10 @@ select, input, textarea { font: inherit; }
 .db-gap {
   font-size: 10px; padding: 2px 6px; border-radius: 999px;
   font-family: var(--font-display); font-weight: 500;
-  background: var(--c-brand-primary-tint); color: var(--c-good);
+  background: var(--stop-good-bg); color: var(--stop-good);
 }
-.db-gap--warn { background: var(--c-brand-secondary-tint); color: var(--c-warn); }
-.db-gap--bad  { background: var(--c-brand-secondary-tint); color: var(--c-bad); }
+.db-gap--warn { background: var(--stop-warn-bg); color: var(--stop-warn); }
+.db-gap--bad  { background: var(--stop-bad-bg); color: var(--stop-bad); }
 
 /* Activity — relative timestamp */
 .db-activity {
@@ -534,8 +540,8 @@ select, input, textarea { font: inherit; }
   background: var(--c-bg); border: 1px solid var(--c-line);
   color: var(--c-muted);
 }
-.dd-source-card__flag--complete { background: var(--c-brand-primary-tint); color: var(--c-good); border-color: transparent; }
-.dd-source-card__flag--gap      { background: var(--c-brand-secondary-tint); color: var(--c-bad); border-color: transparent; }
+.dd-source-card__flag--complete { background: var(--stop-good-bg); color: var(--stop-good); border-color: transparent; }
+.dd-source-card__flag--gap      { background: var(--stop-bad-bg); color: var(--stop-bad); border-color: transparent; }
 .dd-source-card__citation {
   font-size: 12px; color: var(--c-text); margin-top: 8px;
   background: var(--c-bg); padding: 8px 10px; border-radius: 4px;
@@ -763,14 +769,14 @@ select, input, textarea { font: inherit; }
 .admin-table th {
   font-family: 'Lexend', sans-serif;
   font-weight: 500;
-  color: var(--c-muted);
-  background: var(--c-soft);
+  color: #fff;
+  background: var(--c-brand-primary);
   text-transform: uppercase;
   font-size: 11px;
   letter-spacing: 0.5px;
 }
 .admin-table__sortable { cursor: pointer; user-select: none; }
-.admin-table__sortable:hover { background: var(--c-soft); }
+.admin-table__sortable:hover { background: var(--c-brand-primary-dark); }
 .admin-table__sort-asc::after  { content: ' ▴'; }
 .admin-table__sort-desc::after { content: ' ▾'; }
 .admin-table tbody tr:hover { background: var(--c-soft); }
