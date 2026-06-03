@@ -2101,3 +2101,67 @@ function devTestDashboardPerfAll() {
     ' failed, ' + threw + ' threw  →  ' + (ok ? 'ALL GREEN' : 'NOT GREEN'));
   return { ok, pass, fail, threw };
 }
+
+/**
+ * Test-only teardown: hard-delete a Bundles registry row by id. Bundles are
+ * production-immutable (no deleter ships), so this lives in 99_dev.js purely so
+ * devTestConsoleCreateBundle doesn't pollute the real picker with test sets.
+ */
+function devDeleteBundleRow_(bundleId) {
+  const ss = SpreadsheetApp.openById(CONFIG.BUNDLES_SHEET_ID);
+  const tab = getTab_(ss, TABS.BUNDLES);
+  const idCol = HEADERS.BUNDLES.indexOf('bundleId') + 1;
+  const last = tab.getLastRow();
+  for (let r = last; r >= 2; r--) {
+    if (String(tab.getRange(r, idCol).getValue()) === String(bundleId)) {
+      tab.deleteRow(r);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Locks consoleCreateBundle: staff-gated wrapper over createBundle_ that
+ * persists a reusable bundle; off-palette colors and wrong label counts are
+ * rejected by the underlying validator.
+ */
+function devTestConsoleCreateBundle() {
+  const checks = [];
+  const created = [];
+  const check = (label, ok) => { checks.push({ label, ok }); };
+  const name = 'devtest set ' + uuid_().slice(0, 8);
+  try {
+    const resp = consoleCreateBundle({
+      name, style: 'mla',
+      labels: ['Aa', 'Bb', 'Cc', 'Dd', 'Ee'],
+      colors: PRESET_PALETTE.slice(0, 5),
+    });
+    if (resp && resp.bundle && resp.bundle.bundleId) created.push(resp.bundle.bundleId);
+    check('ok true', resp && resp.ok === true);
+    check('bundle has id', !!(resp.bundle && resp.bundle.bundleId));
+    check('persisted + readable', !!getBundle_(resp.bundle.bundleId));
+    check('label1 stored', resp.bundle.label1 === 'Aa');
+    check('color5 stored', resp.bundle.color5 === PRESET_PALETTE[4]);
+
+    let threwColor = false;
+    try {
+      const r = consoleCreateBundle({ name: name + '-x', labels: ['Aa','Bb','Cc','Dd','Ee'],
+        colors: ['#000000', PRESET_PALETTE[1], PRESET_PALETTE[2], PRESET_PALETTE[3], PRESET_PALETTE[4]] });
+      if (r && r.bundle) created.push(r.bundle.bundleId);
+    } catch (e) { threwColor = true; }
+    check('off-palette color rejected', threwColor);
+
+    let threwLabels = false;
+    try {
+      const r = consoleCreateBundle({ name: name + '-y', labels: ['Aa','Bb','Cc'], colors: PRESET_PALETTE.slice(0, 5) });
+      if (r && r.bundle) created.push(r.bundle.bundleId);
+    } catch (e) { threwLabels = true; }
+    check('wrong label count rejected', threwLabels);
+  } finally {
+    created.forEach((id) => { try { devDeleteBundleRow_(id); } catch (e) {} });
+  }
+  const pass = checks.every((c) => c.ok);
+  console.log(JSON.stringify({ ok: pass, checks }, null, 2));
+  return { ok: pass };
+}
