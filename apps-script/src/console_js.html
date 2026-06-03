@@ -663,10 +663,11 @@ function buildCreateSetForm_(fields, bundles, palette, onCreated) {
   // palette if it didn't load (server's createBundle_ rejects any off-palette
   // color, so the fallback MUST be valid palette hexes).
   const fallback = ['#F4B400','#DB4437','#0F9D58','#4285F4','#AB47BC','#FF7043','#26A69A','#8D6E63'];
-  const rowColors = [];
-  for (let i = 0; i < 5; i++) {
-    rowColors.push((palette && palette[i]) ? palette[i] : fallback[i]);
-  }
+  // Resolve ONCE so the row defaults and the swatch buttons draw from the same
+  // source — otherwise an empty/partial palette could default a row to a color
+  // its swatch row never renders (no swatch shows as selected).
+  const effectivePalette = (palette && palette.length) ? palette : fallback;
+  const rowColors = effectivePalette.slice(0, 5);
 
   const rowInputs = [];
   for (let i = 0; i < 5; i++) {
@@ -676,16 +677,16 @@ function buildCreateSetForm_(fields, bundles, palette, onCreated) {
     row.style.gap = '6px';
     row.style.marginBottom = '6px';
 
-    const li = document.createElement('input');
-    li.type = 'text';
-    li.maxLength = 40;
-    li.placeholder = 'Category ' + (i + 1) + ' name';
-    li.style.flex = '1';
-    rowInputs.push(li);
-    row.appendChild(li);
+    const catInput = document.createElement('input');
+    catInput.type = 'text';
+    catInput.maxLength = 40;
+    catInput.placeholder = 'Category ' + (i + 1) + ' name';
+    catInput.style.flex = '1';
+    rowInputs.push(catInput);
+    row.appendChild(catInput);
 
-    // Swatch buttons — iterate whatever palette was passed (up to 8).
-    (palette && palette.length ? palette : fallback).forEach((hex) => {
+    // Swatch buttons — same resolved palette the row default came from.
+    effectivePalette.forEach((hex) => {
       const sw = document.createElement('button');
       sw.type = 'button';
       sw.style.cssText = 'width:20px;height:20px;border-radius:50%;padding:0;border:2px solid transparent;background:' + hex + ';flex-shrink:0;cursor:pointer;';
@@ -717,7 +718,7 @@ function buildCreateSetForm_(fields, bundles, palette, onCreated) {
         saveBtn.disabled = false;
         if (!resp || !resp.ok) { setStatus('Could not create set.', 'bad', 3000); return; }
         bundles.push(resp.bundle);
-        fields.bundleId = resp.bundle.bundleId;
+        fields.bundleId = resp.bundle.bundleId;   // must precede onCreated() — fill() selects by fields.bundleId
         wrap.style.display = 'none';
         setStatus('Set "' + resp.bundle.name + '" created.', 'good', 2500);
         onCreated();
