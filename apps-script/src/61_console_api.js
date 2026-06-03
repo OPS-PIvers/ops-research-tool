@@ -547,12 +547,12 @@ function consoleCreateBundle(args) {
   assertStaff_(actorEmail);
   if (!args) throw new Error('args required');
   const name = String(args.name || '').trim();
-  if (!name || name.length > 60) throw new Error('Set name must be 1-60 characters');
-  const labels = Array.isArray(args.labels) ? args.labels.map(function (l) { return String(l == null ? '' : l).trim(); }) : [];
-  const colors = Array.isArray(args.colors) ? args.colors.map(function (c) { return String(c == null ? '' : c).trim(); }) : [];
+  if (!name || name.length > 60) throw new Error('Set name must be 1–60 characters');
+  const labels = Array.isArray(args.labels) ? args.labels.map((l) => String(l == null ? '' : l).trim()) : [];
+  const colors = Array.isArray(args.colors) ? args.colors.map((c) => String(c == null ? '' : c).trim()) : [];
   const style = String(args.style || 'mla').trim() || 'mla';
-  const bundle = createBundle_({ name: name, style: style, labels: labels, colors: colors, createdBy: actorEmail });
-  return { ok: true, bundle: bundle };
+  const bundle = createBundle_({ name, style, labels, colors, createdBy: actorEmail });
+  return { ok: true, bundle };
 }
 
 /**
