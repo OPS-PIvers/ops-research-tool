@@ -659,8 +659,10 @@ function buildCreateSetForm_(fields, bundles, palette, onCreated) {
   nameInput.style.marginBottom = '8px';
   wrap.appendChild(nameInput);
 
-  // Default colors for each row: first 5 from palette, or fallback grays.
-  const fallback = ['#4a6fa5','#c0392b','#27ae60','#f39c12','#8e44ad'];
+  // Default colors for each row: first 5 from palette, or the real preset
+  // palette if it didn't load (server's createBundle_ rejects any off-palette
+  // color, so the fallback MUST be valid palette hexes).
+  const fallback = ['#F4B400','#DB4437','#0F9D58','#4285F4','#AB47BC','#FF7043','#26A69A','#8D6E63'];
   const rowColors = [];
   for (let i = 0; i < 5; i++) {
     rowColors.push((palette && palette[i]) ? palette[i] : fallback[i]);
