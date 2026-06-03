@@ -364,6 +364,7 @@ function openCreateProjectModal_() {
   google.script.run
     .withSuccessHandler((bundlesResp) => {
       const bundles = bundlesResp && bundlesResp.bundles ? bundlesResp.bundles : [];
+      const palette = (bundlesResp && bundlesResp.palette) ? bundlesResp.palette : [];
       if (bundles.length === 0) {
         setStatus('No bundles available.', 'bad', 3000);
         return;
@@ -374,12 +375,12 @@ function openCreateProjectModal_() {
         google.script.run
           .withSuccessHandler((clsResp) => {
             const classes = (clsResp && clsResp.classes) ? clsResp.classes : [];
-            renderCreateModal_(fields, bundles, classes);
+            renderCreateModal_(fields, bundles, classes, palette);
           })
           .withFailureHandler(onFail_('loading classes'))
           .consoleListAllClasses();
       } else {
-        renderCreateModal_(fields, bundles, state.ctx.teacherClasses || []);
+        renderCreateModal_(fields, bundles, state.ctx.teacherClasses || [], palette);
       }
     })
     .withFailureHandler(onFail_('loading bundles'))
@@ -404,7 +405,7 @@ function defaultSchoolYear_() {
   return now.getMonth() >= 7 ? (y + '-' + String(y + 1).slice(2)) : ((y - 1) + '-' + String(y).slice(2));
 }
 
-function renderCreateModal_(fields, bundles, classOptions) {
+function renderCreateModal_(fields, bundles, classOptions, palette) {
   closeModal_();   // in case one is open
   const backdrop = document.createElement('div');
   backdrop.className = 'modal-backdrop';
@@ -444,18 +445,48 @@ function renderCreateModal_(fields, bundles, classOptions) {
     return s;
   })()));
 
-  // Bundle
-  body.appendChild(makeField_('Bundle', (() => {
+  // Bundle — real bundles + a "Create new set…" sentinel that reveals a
+  // 5-row authoring sub-form. `bundles` is mutated in place when a set is
+  // created so the picker reflects it without a full reload.
+  const CREATE_SENTINEL = '__create_new_set__';
+  const bundleField = makeField_('Bundle', (() => {
     const s = document.createElement('select');
-    bundles.forEach((b) => {
-      const o = document.createElement('option');
-      o.value = b.bundleId; o.textContent = b.name;
-      if (b.bundleId === fields.bundleId) o.selected = true;
-      s.appendChild(o);
+    s.id = 'create-bundle-select';
+    const fill = () => {
+      s.innerHTML = '';
+      bundles.forEach((b) => {
+        const o = document.createElement('option');
+        o.value = b.bundleId; o.textContent = b.name;
+        if (b.bundleId === fields.bundleId) o.selected = true;
+        s.appendChild(o);
+      });
+      const sep = document.createElement('option');
+      sep.value = CREATE_SENTINEL; sep.textContent = '➕ Create new set…';
+      s.appendChild(sep);
+    };
+    fill();
+    s.addEventListener('change', () => {
+      if (s.value === CREATE_SENTINEL) {
+        s.value = fields.bundleId;            // don't leave the sentinel selected
+        toggleCreateSetForm_(true);
+      } else {
+        fields.bundleId = s.value;
+        toggleCreateSetForm_(false);
+      }
     });
-    s.addEventListener('change', () => { fields.bundleId = s.value; });
+    s._fill = fill;
     return s;
-  })()));
+  })());
+  body.appendChild(bundleField);
+
+  const setForm = buildCreateSetForm_(fields, bundles, palette || [], () => {
+    const sel = document.getElementById('create-bundle-select');
+    if (sel && sel._fill) sel._fill();
+    updateCreateBtn_();
+  });
+  body.appendChild(setForm);
+
+  function toggleCreateSetForm_(show) { setForm.style.display = show ? 'block' : 'none'; }
 
   // Classes
   body.appendChild((() => {
@@ -602,6 +633,100 @@ function makeField_(labelText, control) {
   lab.textContent = labelText;
   wrap.appendChild(lab);
   wrap.appendChild(control);
+  return wrap;
+}
+
+// 5-row "create a new set" authoring form. Each row: a label-name input + an
+// 8-swatch palette picker (one selected). On Save, calls consoleCreateBundle,
+// pushes the result into `bundles`, selects it in the picker, and hides the form.
+// `onCreated` is called after a successful save so the caller can refresh the
+// bundle select and re-evaluate the Create-project button state.
+function buildCreateSetForm_(fields, bundles, palette, onCreated) {
+  const wrap = document.createElement('div');
+  wrap.className = 'modal__field';
+  wrap.style.display = 'none';
+  wrap.style.borderTop = '1px dashed #c9cdd6';
+  wrap.style.paddingTop = '10px';
+
+  const lab = document.createElement('label');
+  lab.textContent = 'New set';
+  wrap.appendChild(lab);
+
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.maxLength = 60;
+  nameInput.placeholder = 'Set name (e.g., Capstone categories)';
+  nameInput.style.marginBottom = '8px';
+  wrap.appendChild(nameInput);
+
+  // Default colors for each row: first 5 from palette, or fallback grays.
+  const fallback = ['#4a6fa5','#c0392b','#27ae60','#f39c12','#8e44ad'];
+  const rowColors = [];
+  for (let i = 0; i < 5; i++) {
+    rowColors.push((palette && palette[i]) ? palette[i] : fallback[i]);
+  }
+
+  const rowInputs = [];
+  for (let i = 0; i < 5; i++) {
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.gap = '6px';
+    row.style.marginBottom = '6px';
+
+    const li = document.createElement('input');
+    li.type = 'text';
+    li.maxLength = 40;
+    li.placeholder = 'Category ' + (i + 1) + ' name';
+    li.style.flex = '1';
+    rowInputs.push(li);
+    row.appendChild(li);
+
+    // Swatch buttons — iterate whatever palette was passed (up to 8).
+    (palette && palette.length ? palette : fallback).forEach((hex) => {
+      const sw = document.createElement('button');
+      sw.type = 'button';
+      sw.style.cssText = 'width:20px;height:20px;border-radius:50%;padding:0;border:2px solid transparent;background:' + hex + ';flex-shrink:0;cursor:pointer;';
+      if (hex === rowColors[i]) sw.style.borderColor = '#202124';
+      sw.addEventListener('click', () => {
+        rowColors[i] = hex;
+        Array.from(row.querySelectorAll('button')).forEach((b) => { b.style.borderColor = 'transparent'; });
+        sw.style.borderColor = '#202124';
+      });
+      row.appendChild(sw);
+    });
+
+    wrap.appendChild(row);
+  }
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'modal__btn modal__btn--primary';
+  saveBtn.textContent = 'Save set';
+  saveBtn.style.marginTop = '4px';
+  saveBtn.addEventListener('click', () => {
+    const name = nameInput.value.trim();
+    const labels = rowInputs.map((x) => x.value.trim());
+    if (!name) { setStatus('Set name required.', 'bad', 2500); return; }
+    if (labels.some((l) => !l)) { setStatus('All 5 category names required.', 'bad', 2500); return; }
+    saveBtn.disabled = true;
+    google.script.run
+      .withSuccessHandler((resp) => {
+        saveBtn.disabled = false;
+        if (!resp || !resp.ok) { setStatus('Could not create set.', 'bad', 3000); return; }
+        bundles.push(resp.bundle);
+        fields.bundleId = resp.bundle.bundleId;
+        wrap.style.display = 'none';
+        setStatus('Set "' + resp.bundle.name + '" created.', 'good', 2500);
+        onCreated();
+      })
+      .withFailureHandler((e) => {
+        saveBtn.disabled = false;
+        setStatus((e && e.message) || 'Could not create set.', 'bad', 3500);
+      })
+      .consoleCreateBundle({ name: name, style: 'mla', labels: labels, colors: rowColors });
+  });
+  wrap.appendChild(saveBtn);
   return wrap;
 }
 
