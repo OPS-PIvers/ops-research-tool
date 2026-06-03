@@ -210,6 +210,9 @@ backend of A with the UI of B, but A is the natural first slice):
   storage + `saveCustomBundle`/`customBundle` endpoints + `categorySlot` column +
   extension effective-bundle + sidebar Categories editor + toolbar slot + Docs
   sidebar read + dashboard slot aggregation.
+- **Stage C — Bundle management (edit/delete).** Added 2026-06-03 (§14). Depends
+  on Stage B (delete falls back to the Custom bundle). Creator-or-admin edit +
+  delete of teacher-authored sets.
 
 ## 10. Deferred / out of scope (v1)
 
@@ -220,8 +223,10 @@ backend of A with the UI of B, but A is the natural first slice):
   **not** guaranteed. Documented limitation; revisit if the pilot needs it.
 - **Free hex colors** (teacher sets and student custom) — palette only in v1.
 - **`secondarySlot`** — secondary tags keep label snapshots; may drift on rename.
-- **Editing/renaming existing bundles** — bundles remain immutable (build-plan
-  §10). "Custom" is the escape hatch, not bundle mutation.
+- **Bundle immutability is RELAXED in Stage C** (§14): teacher-authored sets
+  become editable/deletable by their creator (and any by an admin), superseding
+  build-plan §10's blanket immutability. The seeded History Day bundle and the
+  reserved Custom bundle stay system-protected (not editable/deletable via the UI).
 
 ## 11. Testing
 
@@ -257,5 +262,68 @@ Categories editor + popover picker, toolbar slot capture, popup hint.
 
 ## 13. Non-goals (unchanged guardrails)
 
-v1 MLA only; 4 source types; no "insert as quote"; no re-anchoring; bundles
-immutable; dashboard counts primary category only.
+v1 MLA only; 4 source types; no "insert as quote"; no re-anchoring; dashboard
+counts primary category only. (Bundle immutability is no longer a guardrail —
+see §14.)
+
+## 14. Stage C — Bundle management (edit + delete)
+
+Added 2026-06-03 per Paul. Relaxes the "bundles immutable" decision for
+**teacher-authored** sets. The seeded **History Day** bundle and the reserved
+**Custom** bundle are system bundles: never editable or deletable through the UI.
+
+### 14.1 Authorization
+- A teacher may edit/delete a bundle **they created** (`bundle.createdBy ===
+  actorEmail`).
+- An **admin** may edit/delete **any** non-system bundle.
+- Server-enforced in new endpoints `consoleUpdateBundle` / `consoleDeleteBundle`
+  (both `assertStaff_` + an ownership/admin check + a system-bundle guard).
+
+### 14.2 Edit semantics (in-use protection)
+A bundle is **in use** if any project's `bundleId` references it.
+- **Unused bundle:** full edit — labels AND colors (re-validated by the same
+  rules as `createBundle_`: 5 non-empty labels, 5 palette colors).
+- **In-use bundle: colors only.** Recoloring is safe — a highlight's color is
+  derived live from the bundle, nothing is stored per-highlight. **Label renames
+  are blocked** when in use (highlights store the label text as `primaryCategory`;
+  a rename would orphan them). The edit UI disables/locks the label inputs and
+  shows why when the bundle is in use.
+- `consoleUpdateBundle` re-reads in-use status server-side and rejects a label
+  change on an in-use bundle regardless of client state (UI gating is not trusted).
+- Because bundles edit **in place** (same `bundleId`), every project + extension/
+  sidebar/dashboard reader picks up the change with no migration.
+
+### 14.3 Delete semantics (fall back to Custom)
+Delete is **always allowed** for an owned/admin non-system bundle, even in use:
+1. Find every project with `bundleId === <deleted>` and **re-point each to the
+   reserved Custom bundle** (`project.bundleId = customBundleId`). Those projects
+   become Custom projects — students define their own categories going forward.
+2. Delete the bundle row.
+
+**The project is not otherwise disturbed**, and **existing highlights retain
+their saved data**: a highlight keeps its stored `primaryCategory` text (and any
+`categorySlot`). In Custom mode the sidebar must show a highlight's saved label
+even when it has **no `categorySlot`** (made under the old bundle) — render the
+stored `primaryCategory` as-is rather than blanking it, and let the student
+re-pick a custom category (which assigns a slot) if they choose. So nothing a
+student already highlighted is lost; it's just no longer tied to a live bundle.
+
+Requires Stage B (the Custom bundle must exist) — hence Stage C lands after B.
+
+### 14.4 UI
+- **Teacher Console:** a small bundle-management surface (e.g. on the bundle
+  picker or a dedicated "Category sets" admin/teacher panel) listing the bundles
+  the actor may manage, each with **Edit** (opens the same 5-row form as
+  create-new-set, label inputs locked when in use) and **Delete** (confirm dialog
+  stating how many projects will fall back to Custom). Reuses the Stage A
+  `buildCreateSetForm_` shape.
+- Endpoints: `consoleUpdateBundle(bundleId, {labels?, colors?})`,
+  `consoleDeleteBundle(bundleId)` → `{ok, repointedProjects}`.
+
+### 14.5 Tests
+- `devTestConsoleUpdateBundle` — owner edits own; admin edits any; non-owner
+  non-admin rejected; system bundle rejected; **label rename on an in-use bundle
+  rejected**; color-only edit on an in-use bundle allowed; full edit on an unused
+  bundle allowed.
+- `devTestConsoleDeleteBundle` — delete re-points referencing projects to the
+  Custom bundle and removes the row; system bundles refused; authorization gated.
