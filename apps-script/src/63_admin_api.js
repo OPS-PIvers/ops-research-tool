@@ -10,8 +10,10 @@
 /**
  * Full roster read with hasWork precomputation.
  *
- * hasWork[email] = true iff there exists a Sheet file named `<email>`
- * inside any class folder under any project root (active OR archived).
+ * hasWork[email] = true iff there exists a Sheet file whose name carries
+ * `<email>` as a token (e.g. `<project> — Research — <email>`, or a legacy
+ * bare `<email>`) inside any class folder under any project root
+ * (active OR archived).
  *
  * Implementation: one Drive walk per call. For ~10 projects × ~5
  * classes × ~25 students that's ~1500 Drive items — handled in a few
@@ -71,12 +73,14 @@ function listAllStudentSheetEmails_() {
       const files = cf.getFiles();
       while (files.hasNext()) {
         const fl = files.next();
-        const name = fl.getName().toLowerCase();
-        // Per-student Sheets are named exactly `[email]`. Cheap filter:
-        // anything with an @ and a dot is plausibly an email.
-        if (name.indexOf('@') > 0 && name.indexOf('.') > 0) {
-          out[name] = true;
-        }
+        // Per-student Sheets carry the student email as a whitespace-delimited
+        // token in the file name (`<project> — Research — <email>`, or a legacy
+        // bare `<email>`). Key the map by that email token so it stays
+        // email-keyed regardless of the surrounding name; group sheets
+        // (`[grp] …`) have no @ token and are skipped.
+        const email = fl.getName().toLowerCase().split(/\s+/)
+          .find((t) => t.indexOf('@') > 0 && t.indexOf('.') > 0);
+        if (email) out[email] = true;
       }
     }
   });
@@ -290,9 +294,12 @@ function findStudentSheetsForEmail_(emailLower) {
     const classFolders = pf.getFolders();
     while (classFolders.hasNext()) {
       const cf = classFolders.next();
-      const files = cf.getFilesByName(emailLower);
+      const files = cf.getFiles();
       while (files.hasNext()) {
-        out.push({ projectId: projectFolderById[folderId], sheetId: files.next().getId() });
+        const f = files.next();
+        if (!f.isTrashed() && soloSheetNameMatches_(f.getName(), emailLower)) {
+          out.push({ projectId: projectFolderById[folderId], sheetId: f.getId() });
+        }
       }
     }
   });
@@ -349,11 +356,13 @@ function adminChangeStudentEmail(oldEmail, newEmail) {
   let rekeyedPrefs = 0;
 
   // ----- Step 2: Rename per-student Sheets + rewrite cells -----
+  const projNameById = {};
+  listProjects_().forEach((p) => { projNameById[p.projectId] = p.name; });
   const sheets = findStudentSheetsForEmail_(oldL);
   sheets.forEach((s) => {
     try {
       const file = DriveApp.getFileById(s.sheetId);
-      file.setName(newL);
+      file.setName(soloSheetName_(projNameById[s.projectId] || '', newL));
       renamedSheets++;
       const inner = SpreadsheetApp.openById(s.sheetId);
       rewrittenCells += rewriteEmailInTab_(inner, TABS.META,       ['studentEmail'],       oldL, newL);

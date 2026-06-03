@@ -19,7 +19,7 @@ function getSoloSheetIfExists_(actorEmail, project) {
   const projectFolder = DriveApp.getFolderById(project.rootFolderId);
   const classFolder = findChildFolder_(projectFolder, roster.Class);
   if (!classFolder) return null;
-  const file = findChildFile_(classFolder, actorEmail);
+  const file = findSoloSheetFile_(classFolder, actorEmail);
   return file ? SpreadsheetApp.openById(file.getId()) : null;
 }
 

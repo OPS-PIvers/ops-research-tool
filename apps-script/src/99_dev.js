@@ -836,6 +836,32 @@ function devTestAdminRosterReplace() {
 }
 
 /**
+ * Locks the solo-Sheet naming + lookup invariant (pure — no Drive): the
+ * friendly file name keeps the email as its trailing token, and
+ * soloSheetNameMatches_ resolves both the legacy bare-email name and the new
+ * "<project> — Research — <email>" name while refusing a longer-local-part
+ * near-match, a different email, and a group sheet.
+ */
+function devTestSoloSheetNaming() {
+  const checks = [];
+  const check = (label, ok) => { checks.push({ label, ok }); };
+  const e = 'jo.smith@orono.k12.mn.us';
+
+  check('name format',                soloSheetName_('Dev Project', e) === 'Dev Project — Research — ' + e);
+  check('name lowercases email',      soloSheetName_('P', 'A@B.K12.MN.US') === 'P — Research — a@b.k12.mn.us');
+  check('matches legacy bare email',  soloSheetNameMatches_(e, e) === true);
+  check('matches new format',         soloSheetNameMatches_('Dev Project — Research — ' + e, e) === true);
+  check('matches case-insensitively', soloSheetNameMatches_('Dev Project — Research — JO.SMITH@ORONO.K12.MN.US', e) === true);
+  check('rejects longer local part',  soloSheetNameMatches_('bob' + e, e) === false);
+  check('rejects different email',     soloSheetNameMatches_('Dev Project — Research — al.jones@orono.k12.mn.us', e) === false);
+  check('rejects group sheet',        soloSheetNameMatches_('[grp] History trio', e) === false);
+
+  const pass = checks.every((c) => c.ok);
+  console.log(JSON.stringify({ ok: pass, checks }, null, 2));
+  return { ok: pass };
+}
+
+/**
  * Atomic email change: stand up a student + per-student Sheet + scratch
  * pref → rename → assert all five places updated → cleanup.
  */

@@ -4,7 +4,12 @@
  * Layout (per build plan §3):
  *   [Project Root Folder]
  *     [Class folder]
- *       [student-email] Sheet  (tabs: Meta, Sources, Highlights)
+ *       [project] — Research — [student-email] Sheet  (tabs: Meta, Sources, Highlights)
+ *
+ * The file name carries the student email as its trailing token — that token,
+ * not the whole name, is the stable lookup key (see soloSheetName_ /
+ * soloSheetNameMatches_). The "[project] — Research —" prefix is purely so the
+ * file reads sensibly in Drive; a bare-email name told the student nothing.
  *
  * Phase 1 implements the SOLO path. Group routing is a Phase 4 add-on:
  *   if a (project, student) is in a group, route to the group Sheet instead.
@@ -19,6 +24,44 @@ function findOrCreateProjectFolder_(projectName) {
 /** Find or create a class folder under a project's root folder. */
 function findOrCreateClassFolder_(projectFolder, className) {
   return findChildFolder_(projectFolder, className) || projectFolder.createFolder(className);
+}
+
+/**
+ * Canonical Drive file name for a solo per-(student, project) Sheet:
+ *   "<project> — Research — <student-email>"
+ * The email is the trailing token because it is the stable lookup key (sheets
+ * are matched by it across provisioning, reads, and the admin Drive walk); the
+ * project + "Research" prefix only makes the file legible in Drive.
+ */
+function soloSheetName_(projectName, actorEmail) {
+  return String(projectName || '').trim() + ' — Research — ' + String(actorEmail).toLowerCase();
+}
+
+/**
+ * True iff `fileName` names the solo Sheet for `email`. Matches BOTH the legacy
+ * bare-email name and the "<project> — Research — <email>" name. The email must
+ * be the whole name, or sit at the very end preceded by a space, so a longer
+ * local part (e.g. "bob.jo@x" vs "jo@x") can never false-match.
+ */
+function soloSheetNameMatches_(fileName, email) {
+  const n = String(fileName).toLowerCase();
+  const e = String(email).toLowerCase();
+  if (n === e) return true;
+  return n.length > e.length && n.endsWith(e) && n.charAt(n.length - e.length - 1) === ' ';
+}
+
+/**
+ * Find a (student, project) solo Sheet file by email, name-format-agnostic.
+ * Skips trashed files (a solo Sheet absorbed into a group is trashed, not
+ * deleted) — see findChildFile_.
+ */
+function findSoloSheetFile_(classFolder, actorEmail) {
+  const it = classFolder.getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    if (!f.isTrashed() && soloSheetNameMatches_(f.getName(), actorEmail)) return f;
+  }
+  return null;
 }
 
 /**
@@ -45,9 +88,13 @@ function findOrCreateSoloSheet_(actorEmail, project) {
   }
   const projectFolder = DriveApp.getFolderById(project.rootFolderId);
   const classFolder = findOrCreateClassFolder_(projectFolder, rosterEntry.Class);
-  const sheetName = actorEmail; // canonical; plan §3 says `[student-email] Sheet`
-  let file = findChildFile_(classFolder, sheetName);
+  const sheetName = soloSheetName_(project.name, actorEmail);
+  // Look up by email (format-agnostic), then self-migrate any legacy bare-email
+  // name to the friendly "<project> — Research — <email>" form on first touch.
+  // The getName guard makes this a no-op on every subsequent write.
+  let file = findSoloSheetFile_(classFolder, actorEmail);
   if (file) {
+    if (file.getName() !== sheetName) file.setName(sheetName);
     return SpreadsheetApp.openById(file.getId());
   }
   // Create + move + init

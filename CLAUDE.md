@@ -350,6 +350,34 @@ These supersede or refine the spec — apply them before defaulting to plan text
   `consoleClearSampleData()`. Toggle is brand-styled (blue on / gray off, no
   stoplight green — that's gap-pills only).
 
+- **Per-student Sheet files are named `"<project> — Research — <email>"`, not
+  bare `<email>`.** The old name (build plan §3's literal `[student-email]`) was
+  opaque in Drive — a student saw only their email with no hint of project or
+  purpose. The friendly name lives in one place,
+  `soloSheetName_(projectName, email)`
+  ([`11_provisioning.js`](apps-script/src/11_provisioning.js)). **The email is
+  deliberately kept as the trailing token because it remains the stable lookup
+  key** — sheets are resolved by it, not by exact filename. Two matchers replace
+  the old exact-name lookups: `soloSheetNameMatches_` (whole-name == email OR
+  email at the end preceded by a space, so `bob.jo@x` never false-matches `jo@x`)
+  drives `findSoloSheetFile_` (provisioning + `getSoloSheetIfExists_`) and the
+  admin email-change Drive walk (`findStudentSheetsForEmail_`); the admin
+  hasWork walk (`listAllStudentSheetEmails_`) extracts the `@`-bearing
+  whitespace token so its map stays email-keyed. **Both legacy bare-email sheets
+  and new ones resolve** — no migration script: a legacy sheet **self-renames to
+  the friendly form on its next write** (the find path in `findOrCreateSoloSheet_`
+  does a guarded `setName`, a no-op once migrated), and an admin email change
+  renames to the friendly form too. Group sheets (`[grp] …`) are untouched (no
+  `@` token, never match). Locked by `devTestSoloSheetNaming` (pure — asserts the
+  format + every match/reject case). **Teachers create their own projects**
+  (`consoleCreateProject` gates on `assertStaff_`, any staff; teachers are only
+  restricted to classes they teach — no admin-assigns-teacher step).
+  **Custom highlighter bundles are backend-only:** `createBundle_` validates +
+  writes a bundle but its sole caller is the History-Day seeder — there is **no
+  `consoleCreateBundle` endpoint or console UI**, so authoring a new bundle today
+  means calling `createBundle_` from the editor. A teacher-facing "create bundle"
+  surface is unbuilt.
+
 ## 5. GAS V8 quirks discovered
 
 - `new URL(...)` **throws** in GAS V8. The global is advertised but unusable.
@@ -467,6 +495,11 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
 - `devProbeUrlConstructor` — diagnostic for the GAS URL quirk
 - `devValidateRoster` — runs roster + staff validation
 - `devTestDeleteSource` — sidebar source/highlight cascade-delete
+- `devTestSoloSheetNaming` — locks the per-student Sheet naming + lookup
+  invariant (`soloSheetName_` / `soloSheetNameMatches_`): friendly name keeps the
+  email as its trailing token; both legacy bare-email and new
+  `"<project> — Research — <email>"` names resolve; a longer local part / wrong
+  email / group sheet are rejected. Pure (no Drive). See §4.
 - Extension Source tab (branch `sidebar-refresh`): `devTestPreviewCitation`
   (the `previewCitation` GET wraps `formatCitation` → `{text, italics}`),
   `devTestSourceDeleteViaPost` (`doPost` `kind:'source'` delete — orphan removed,
