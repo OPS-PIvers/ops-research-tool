@@ -350,7 +350,35 @@ const SIDEBAR_CSS = `
 .toast__btn { font:inherit; font-size:11px; padding:4px 10px; border-radius:5px; border:none; cursor:pointer; }
 .toast__btn--keep { background:rgba(255,255,255,0.16); color:#fff; }
 .toast__btn--delete { background:#f28b82; color:#202124; font-weight:600; }
+
+/* Orphaned-content-script alert: shown once when an extension reload/auto-update
+   has severed this page's connection to the background (saving can't resume
+   until reload). OPS red = needs attention. Lives in the shadow host so it shows
+   whether the panel is open or collapsed. */
+.reload-hint {
+  position: fixed; bottom: 16px; right: 16px; max-width: 280px; z-index: 10;
+  background: #ad2122; color: #fff; border-radius: 8px; padding: 11px 13px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.28); font-size: 12px; line-height: 1.45;
+  display: flex; flex-direction: column; gap: 8px;
+  font-family: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.reload-hint__actions { display:flex; gap:8px; justify-content:flex-end; }
+.reload-hint__btn { font:inherit; font-size:11px; padding:4px 10px; border-radius:5px; border:none; cursor:pointer; }
+.reload-hint__btn--reload { background:#fff; color:#ad2122; font-weight:600; }
+.reload-hint__btn--dismiss { background:rgba(255,255,255,0.18); color:#fff; }
 `;
+
+// True when this content script has been orphaned by an extension reload or
+// auto-update: chrome.runtime is gone, so any chrome.* call throws "Extension
+// context invalidated" and chrome.runtime.id reads back undefined. Saving can't
+// resume until the page is reloaded (which re-injects fresh content scripts).
+// Top-level so toolbar.js can share it (content scripts share one frame scope).
+function opsIsContextInvalidated_(e) {
+  try { if (!chrome.runtime || !chrome.runtime.id) return true; } catch (_) { return true; }
+  const msg = String((e && e.message) || e || '');
+  return msg.indexOf('Extension context invalidated') !== -1 ||
+         msg.indexOf('context invalidated') !== -1;
+}
 
 const OpsSidebar = (function () {
   const state = {
@@ -370,6 +398,7 @@ const OpsSidebar = (function () {
     confirmingDeleteId: null, // highlightId whose Delete button is showing "Confirm?"
     confirmingDeleteTimer: null,
     initialized: false,
+    reloadHintShown: false, // one-time "extension updated — reload to keep saving" banner
     activeTab: 'annotations', // 'source' | 'annotations'
     pageSource: null, // canonical source object for this page (server + local scrape)
     sourceSaveStatus: null,
@@ -670,6 +699,9 @@ const OpsSidebar = (function () {
         if (ctx.projects && ctx.projects.length) state.projects = ctx.projects;
       }
     } catch (e) {
+      // Orphaned tab after a reload/auto-update — surface the reload hint once
+      // instead of spamming the console; saving can't work until reload anyway.
+      if (opsIsContextInvalidated_(e)) { showReloadHint_(); return; }
       console.warn('[OPS sidebar] could not load active project:', e);
     }
   }
@@ -679,6 +711,30 @@ const OpsSidebar = (function () {
   // start — the two surfaces then can't disagree about the active project.
   function getContext() {
     return { project: state.project, bundle: state.bundle, projects: state.projects };
+  }
+
+  // One-time banner shown when this page's content script has been orphaned by
+  // an extension reload/auto-update. Lives in the shadow host (visible whether
+  // the panel is open or collapsed) and only uses page APIs (location.reload),
+  // so it works even though chrome.* is dead. Idempotent via reloadHintShown.
+  function showReloadHint_() {
+    if (state.reloadHintShown || !state.shadowRoot) return;
+    state.reloadHintShown = true;
+    const root = state.shadowRoot.querySelector('.root') || state.shadowRoot;
+    const hint = el_('div', 'reload-hint');
+    hint.appendChild(el_('div', null,
+      'OPS Research Tool was updated. Reload this page to keep saving your highlights.'));
+    const actions = el_('div', 'reload-hint__actions');
+    const dismiss = el_('button', 'reload-hint__btn reload-hint__btn--dismiss', 'Dismiss');
+    dismiss.type = 'button';
+    dismiss.addEventListener('click', () => hint.remove());
+    const reload = el_('button', 'reload-hint__btn reload-hint__btn--reload', 'Reload');
+    reload.type = 'button';
+    reload.addEventListener('click', () => location.reload());
+    actions.appendChild(dismiss);
+    actions.appendChild(reload);
+    hint.appendChild(actions);
+    root.appendChild(hint);
   }
 
   // Switch the active project from the sidebar's picker. Persists + server-syncs
@@ -1037,7 +1093,10 @@ const OpsSidebar = (function () {
     _srcSaveTimer = setTimeout(() => {
       chrome.runtime.sendMessage({ type: 'enqueueSourcePatch', source: snapshot })
         .then(() => { state.sourceSaveStatus = 'saved'; paintSourceStatus_(); })
-        .catch(() => { state.sourceSaveStatus = 'error'; paintSourceStatus_(); });
+        .catch((err) => {
+          state.sourceSaveStatus = 'error'; paintSourceStatus_();
+          if (opsIsContextInvalidated_(err)) showReloadHint_();
+        });
     }, 500);
   }
   function paintSourceStatus_() {
@@ -1277,7 +1336,8 @@ const OpsSidebar = (function () {
         cascadeSource: false,
       });
     } catch (e) {
-      console.warn('[OPS sidebar] delete failed:', e);
+      if (opsIsContextInvalidated_(e)) showReloadHint_();
+      else console.warn('[OPS sidebar] delete failed:', e);
     }
 
     if (wasLastForSource) showOrphanToast_(h.sourceId);
@@ -1495,7 +1555,10 @@ const OpsSidebar = (function () {
         highlightedText: h.text,
         note: h.note || '',
       },
-    }).then(() => markSynced(h.highlightId)).catch((e) => markError(h.highlightId, e.message));
+    }).then(() => markSynced(h.highlightId)).catch((e) => {
+      markError(h.highlightId, e.message);
+      if (opsIsContextInvalidated_(e)) showReloadHint_();
+    });
   }
 
   function normalizeSourceObj_(s) {
@@ -1556,7 +1619,7 @@ const OpsSidebar = (function () {
     }
   }
 
-  return { addHighlight, markSynced, markError, focus, show, hide, toggle, _setSourceId, loadForCurrentPage, reanchorIn, whenLoaded, getContext };
+  return { addHighlight, markSynced, markError, focus, show, hide, toggle, _setSourceId, loadForCurrentPage, reanchorIn, whenLoaded, getContext, showReloadHint: showReloadHint_ };
 })();
 
 self.OpsSidebar = OpsSidebar;

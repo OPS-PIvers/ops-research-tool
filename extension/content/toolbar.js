@@ -120,8 +120,14 @@ async function onSelectionMaybeChanged() {
       adoptSidebarContext_();
     }
   } catch (e) {
-    console.warn('[OPS] getActiveProject failed:', e);
+    // Orphaned tab after a reload/auto-update: the message rejects. Still try the
+    // sidebar's cached context (pure JS, survives), and surface the reload hint.
     adoptSidebarContext_();
+    if (opsIsContextInvalidated_(e)) {
+      if (self.OpsSidebar && self.OpsSidebar.showReloadHint) self.OpsSidebar.showReloadHint();
+    } else {
+      console.warn('[OPS] getActiveProject failed:', e);
+    }
   }
 
   showToolbar(rect, capturedRange, text);
@@ -338,7 +344,11 @@ async function syncHighlight_(highlightId, primaryCategory, text, note) {
     if (!hlResp || !hlResp.ok) throw new Error((hlResp && hlResp.error) || 'enqueue failed');
     if (self.OpsSidebar) self.OpsSidebar.markSynced(highlightId);
   } catch (e) {
-    console.warn('[OPS] save failed:', e);
     if (self.OpsSidebar) self.OpsSidebar.markError(highlightId, e.message || String(e));
+    if (opsIsContextInvalidated_(e)) {
+      if (self.OpsSidebar && self.OpsSidebar.showReloadHint) self.OpsSidebar.showReloadHint();
+    } else {
+      console.warn('[OPS] save failed:', e);
+    }
   }
 }
