@@ -2365,6 +2365,17 @@ function devTestConsoleUpdateRequirements() {
   console.log(pass + '/' + (pass + fail) + ' passed');
 }
 
+/** Runs every requirements test in one shot; prints a single summary. */
+function devTestRequirementsAll() {
+  console.log('--- devTestProjectRequirementsParse ---');             devTestProjectRequirementsParse();
+  console.log('--- devTestRequirementsValidation ---');              devTestRequirementsValidation();
+  console.log('--- devTestCompletionRespectsAnnotationToggle ---');  devTestCompletionRespectsAnnotationToggle();
+  console.log('--- devTestEvidenceDepth ---');                       devTestEvidenceDepth();
+  console.log('--- devTestSourcesProgress ---');                     devTestSourcesProgress();
+  console.log('--- devTestRequirementsBackCompat ---');              devTestRequirementsBackCompat();
+  console.log('--- devTestConsoleUpdateRequirements (needs Dev Project) ---'); devTestConsoleUpdateRequirements();
+}
+
 /**
  * Locks consoleCreateBundle: staff-gated wrapper over createBundle_ that
  * persists a reusable bundle; off-palette colors and wrong label counts are
