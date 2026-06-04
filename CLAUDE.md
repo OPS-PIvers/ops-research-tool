@@ -168,6 +168,49 @@ Moving the project = edit that one file, `clasp push`, redeploy.
 
 These supersede or refine the spec — apply them before defaulting to plan text.
 
+- **Roster is now Classes v2 (multi-class) — supersedes one-class-per-student.**
+  The flat `Roster` tab (one row per student, single `Class` + `TeacherEmail`) is
+  replaced by a normalized trio in the Roster workbook: **`Students`**
+  `[ID,First,Last,Email]`, **`Classes`** `[Class,TeacherEmail,SchoolYear,Status]`
+  (one teacher per class), **`Enrollments`** `[Email,Class]` (the many-to-many
+  join). A **student can be in multiple classes**; a class can be in multiple
+  projects and a teacher can own many classes (project↔class was already
+  many-to-many via `Projects.memberClasses`). `Class` stays a **string key**
+  everywhere (memberClasses, Drive class folders, groups) — the Classes tab only
+  adds metadata, so projects/folders/groups did NOT change. The whole data layer
+  lives in **[`40_roster_model.js`](apps-script/src/40_roster_model.js)**:
+  `getStudentRosterEntry_` (moved here, returns a `.classes[]` array + first-class
+  compat fields) and `listClassesTaughtBy_` (moved here, reads the Classes tab)
+  are defined ONLY here to avoid the §5 shadowing trap. **Migration is
+  self-healing + one-time + reversible:** `ensureClassSchema_()` (called at the
+  top of every roster read; cheap after first) builds the trio from the legacy
+  `Roster` tab via the pure `buildClassSchemaFromLegacy_` and sets ScriptProperty
+  `OPS_CLASS_SCHEMA_V2='done'`; the **legacy `Roster` tab is preserved untouched**
+  as backup (rollback = clear the property + drop the trio). **Per-(student,
+  project) Sheet lookup is now class-agnostic** (`findSoloSheetInProject_`:
+  manifest-first, then a walk of ALL class folders), so a multi-class student has
+  exactly ONE Sheet per project and a second class can't orphan/duplicate it; new
+  Sheets are filed under the class the student shares with the project
+  (`resolveProjectClassForStudent_`), and `Meta.class` is informational only.
+  Admin endpoints added (`63_admin_api.js`): `adminListClasses` / `adminCreateClass`
+  / `adminUpdateClass` / `adminDeleteClass` / `adminGetClassRoster` /
+  `adminEnrollStudent` / `adminUnenrollStudent` / `adminSetStudentClasses`; the
+  old `admin*RosterRow` endpoints now delegate to the model (roster view shows one
+  row per enrollment; inline Class/Teacher edits moved to the Classes screen).
+  New **admin "Classes" screen** (default admin landing; menu Classes / Roster /
+  Staff / Archive) in [`admin_js.html`](apps-script/src/admin_js.html) +
+  [`console_js.html`](apps-script/src/console_js.html) +
+  [`console_css.html`](apps-script/src/console_css.html), OPS-brand-aligned.
+  Tests: `apps-script/test/roster_model.node.test.js` (pure, run with
+  `node`), `devTestClassSchemaMigration`, `devTestMultiClassEnrollment`
+  (class-agnostic one-Sheet-per-project invariant); migration verified on the
+  live 20-row roster. Design/plan:
+  [`docs/2026-06-04-classes-redesign-plan.md`](docs/2026-06-04-classes-redesign-plan.md).
+  On `feat/classes-redesign` (not yet merged); pushed to GAS HEAD. **TODO:** run
+  the `devTest*` from the editor (clasp run is blocked by the standard-GCP-project
+  auth wall), then merge → CI redeploy → the lazy migration runs on first console
+  load.
+
 - **PoC → Shared Drive migration gate is DISSOLVED.** Paul authorized clasp
   with his **district account** from day one. All Drive artifacts live under
   `paul.ivers@orono.k12.mn.us`'s district My Drive. Risk #3 in the build

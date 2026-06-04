@@ -1,7 +1,9 @@
 # Classes redesign — design & implementation plan
 
-**Status:** in progress (started 2026-06-04). Supersedes the build-plan's flat
-one-class-per-student roster.
+**Status:** Tracks A–F implemented + the admin Classes UI, on branch
+`feat/classes-redesign` (pushed to GAS HEAD, not yet merged). Pure logic
+Node-tested green; migration verified on the live roster; `devTest*` await an
+editor run. Supersedes the build-plan's flat one-class-per-student roster.
 
 ## 1. Goal
 
