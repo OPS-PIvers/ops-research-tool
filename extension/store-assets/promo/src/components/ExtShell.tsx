@@ -63,7 +63,7 @@ export const ExtShell: React.FC<{
   );
 
   return (
-    <div style={{width: 360, height, background: '#fff', display: 'flex', flexDirection: 'column', borderLeft: `1px solid ${EXT.border}`}}>
+    <div style={{width: 360, height, background: '#fff', display: 'flex', flexDirection: 'column', borderLeft: `1px solid ${EXT.border}`, boxShadow: '-4px 0 16px rgba(0,0,0,0.08)'}}>
       {/* header */}
       <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 14px', background: EXT.header, color: '#fff'}}>
         <span style={{fontFamily: LEXEND, fontWeight: 600, fontSize: 14}}>OPS Research Tool</span>
