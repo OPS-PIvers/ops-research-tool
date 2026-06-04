@@ -1121,27 +1121,35 @@ function renderAdminClasses_(main) {
   host.className = 'admin-table-host';
   main.appendChild(host);
 
-  const classesSkeleton = () => {
-    host.innerHTML = '';
-    host.appendChild(buildAdminTableSkeleton_(['Class', 'Teacher', 'Students', ''], 6, ['', 'db-skel-bar--wide', 'db-skel-bar--narrow']));
-  };
-  // Load staff (teacher picker) + classes, then render.
-  if (adminClasses.staff === null) {
-    classesSkeleton();
-    google.script.run
-      .withSuccessHandler((resp) => { adminClasses.staff = resp.rows || []; renderAdminClasses_(main); })
-      .withFailureHandler(onFail_('loading staff'))
-      .adminGetStaff();
+  // The table needs BOTH staff (teacher picker) and classes. Render straight
+  // away if both are cached; otherwise show a skeleton and load whatever's
+  // missing into THIS host, then render once both arrive. Never re-enter
+  // renderAdminClasses_ — it appends a fresh breadcrumb + host, so recursing
+  // would orphan the first host with a stuck skeleton (the duplicate-render bug).
+  if (adminClasses.staff !== null && adminClasses.classes !== null) {
+    renderClassesTable_(host);
     return;
   }
-  if (adminClasses.classes === null) {
-    classesSkeleton();
+
+  host.innerHTML = '';
+  host.appendChild(buildAdminTableSkeleton_(['Class', 'Teacher', 'Students', ''], 6, ['', 'db-skel-bar--wide', 'db-skel-bar--narrow']));
+
+  let pending = 0;
+  const done = () => { if (--pending === 0) renderClassesTable_(host); };
+
+  if (adminClasses.staff === null) {
+    pending++;
     google.script.run
-      .withSuccessHandler((resp) => { adminClasses.classes = resp.classes || []; renderClassesTable_(host); })
+      .withSuccessHandler((resp) => { adminClasses.staff = resp.rows || []; done(); })
+      .withFailureHandler(onFail_('loading staff'))
+      .adminGetStaff();
+  }
+  if (adminClasses.classes === null) {
+    pending++;
+    google.script.run
+      .withSuccessHandler((resp) => { adminClasses.classes = resp.classes || []; done(); })
       .withFailureHandler(onFail_('loading classes'))
       .adminListClasses();
-  } else {
-    renderClassesTable_(host);
   }
 }
 
