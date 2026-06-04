@@ -731,15 +731,49 @@ the unverified-app warning — the only scopes are `userinfo.email` + `openid`.
 
 ### Publish to the Chrome Web Store (private)
 
-1. Zip the **contents** of `extension/` (manifest.json at the zip root, not a
-   nested `extension/` folder).
+1. **Build the zip** — don't hand-zip. Run:
+   `powershell -ExecutionPolicy Bypass -File scripts\build-extension-zip.ps1`
+   It emits `extension/dist/ops-research-tool-v<version>.zip` with
+   `manifest.json` at the **root**, `dist/` + `vendor/README.md` excluded, and
+   forward-slash entry paths (Web Store-safe). This script is the single source
+   of truth for the zip — never copy-paste a zip command.
 2. [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole)
    → upload the zip ($5 one-time dev-account fee if not already paid). Use the
    district account.
 3. **Visibility → Private**, restricted to the `orono.k12.mn.us` org, so it's
    not publicly discoverable.
 4. Submit. Private items still get a review but it's fast.
-5. For updates: bump `version` in `manifest.json`, re-zip, re-upload.
+5. **For updates, see the next subsection** (bump + rebuild + re-upload).
+
+### Updating a published extension
+
+The extension is a **thin client** — the Classes redesign, teacher console,
+dashboard, etc. are all server-side Apps Script and go live on the next `main`
+deploy with **no extension change**. You only re-upload the extension when its
+OWN code changes (content scripts under `extension/content/`, the popup, the PDF
+panel, `manifest.json`, or `icons/`).
+
+To ship an extension update:
+
+1. **Bump + rebuild in one command:**
+   `powershell -ExecutionPolicy Bypass -File scripts\build-extension-zip.ps1 -Bump`
+   `-Bump` increments the manifest's patch version (e.g. `0.1.0 → 0.1.1`) and
+   rebuilds the zip. **The version MUST increase** or the Web Store rejects the
+   upload and Chrome won't pull the update. Commit the bumped `manifest.json`.
+   (Run it WITHOUT `-Bump` to just refresh the zip at the current version mid-dev
+   — handy, but not uploadable as an update until you bump.)
+2. Upload `extension/dist/ops-research-tool-v<version>.zip` to the
+   [dev dashboard](https://chrome.google.com/webstore/devconsole) → submit
+   (private item → fast review).
+3. **Installed users update themselves.** Chrome auto-updates extensions in the
+   background (every few hours, ~5h default, and on browser restart);
+   force-installed ones via the Admin console do the same. No reinstall, no
+   prompt — they get the new version within hours of the store approving it.
+
+(Deliberately NOT automated via a git hook: a hook can refresh the zip but can't
+make the version-bump decision, which must be per-release; and the zip is a
+gitignored artifact, so there's nothing to commit. The one-command script run at
+release time fits the rare extension-update cadence.)
 
 ### Force-install via Google Admin console
 
