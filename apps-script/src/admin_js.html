@@ -1310,10 +1310,16 @@ function openManageClassStudentsModal_(c, host) {
     <div class="admin-modal__header">Students in ${esc_(c.Class)}</div>
     <div class="admin-modal__form">
       <div class="admin-class-enrolled" id="class-enrolled"><div class="skel-lines" style="width:100%"><div class="db-skel-bar db-skel-bar--wide"></div><div class="db-skel-bar"></div><div class="db-skel-bar db-skel-bar--narrow"></div></div></div>
-      <label>Add one student
-        <select id="class-add-pick"><option value="">Loading students…</option></select>
+      <label>Add a student
+        <span class="admin-bulk-hint">Start typing an email to pick an existing student, or enter a new First, Last, and email — a new student is created and enrolled automatically.</span>
       </label>
-      <button class="admin-btn-secondary" id="class-add-btn" disabled>Add to class</button>
+      <div class="admin-addrow">
+        <input id="class-add-first" class="admin-addrow__in" type="text" placeholder="First" autocomplete="off">
+        <input id="class-add-last" class="admin-addrow__in" type="text" placeholder="Last" autocomplete="off">
+        <input id="class-add-email" class="admin-addrow__in admin-addrow__email" type="email" placeholder="email" list="class-add-emails" autocomplete="off">
+        <datalist id="class-add-emails"></datalist>
+        <button class="admin-btn-secondary admin-addrow__btn" id="class-add-btn" disabled>Add</button>
+      </div>
       <div class="admin-bulk-sep">— or paste a class list —</div>
       <label>Paste students
         <span class="admin-bulk-hint">One per line: <code>First, Last, email</code> (tab- or comma-separated; paste straight from a spreadsheet). New names are created; a bare email enrolls an existing student.</span>
@@ -1330,7 +1336,10 @@ function openManageClassStudentsModal_(c, host) {
   modal.querySelector('.admin-modal__cancel').addEventListener('click', close);
 
   const enrolledHost = modal.querySelector('#class-enrolled');
-  const pick = modal.querySelector('#class-add-pick');
+  const firstIn = modal.querySelector('#class-add-first');
+  const lastIn = modal.querySelector('#class-add-last');
+  const emailIn = modal.querySelector('#class-add-email');
+  const emailList = modal.querySelector('#class-add-emails');
   const addBtn = modal.querySelector('#class-add-btn');
   let enrolled = [];   // [{Email, name}]
 
@@ -1338,15 +1347,22 @@ function openManageClassStudentsModal_(c, host) {
     c.studentCount += delta;
     if (state.view === 'ADMIN_CLASSES') renderShell_();
   }
+  // Fill the email autocomplete with existing, not-yet-enrolled students.
   function repaintPicker() {
     const enrolledSet = {};
     enrolled.forEach((e) => { enrolledSet[String(e.Email).toLowerCase()] = true; });
-    const opts = (adminClasses.students || [])
+    emailList.innerHTML = (adminClasses.students || [])
       .filter((s) => !enrolledSet[String(s.Email).toLowerCase()])
-      .map((s) => '<option value="' + esc_(s.Email) + '">' + esc_(s.name + ' · ' + s.Email) + '</option>')
+      .map((s) => '<option value="' + esc_(s.Email) + '">' + esc_(s.name) + '</option>')
       .join('');
-    pick.innerHTML = '<option value="">— choose a student —</option>' + opts;
-    addBtn.disabled = true;
+  }
+  function knownStudent_(email) {
+    const e = String(email || '').trim().toLowerCase();
+    return (adminClasses.students || []).find((s) => String(s.Email).toLowerCase() === e) || null;
+  }
+  function refreshAddBtn_() {
+    const email = emailIn.value.trim().toLowerCase();
+    addBtn.disabled = !(email.indexOf('@') > 0 && email.indexOf('.') > 0);
   }
   function repaintEnrolled() {
     enrolledHost.innerHTML = '';
@@ -1375,20 +1391,45 @@ function openManageClassStudentsModal_(c, host) {
     });
   }
 
-  pick.addEventListener('change', () => { addBtn.disabled = !pick.value; });
+  emailIn.addEventListener('input', () => {
+    refreshAddBtn_();
+    // If the email matches an existing student, prefill their name as a courtesy.
+    const s = knownStudent_(emailIn.value);
+    if (s) {
+      const parts = String(s.name).split(', ');
+      if (!firstIn.value) firstIn.value = parts[1] || '';
+      if (!lastIn.value)  lastIn.value  = parts[0] || '';
+    }
+  });
+  emailIn.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !addBtn.disabled) { e.preventDefault(); addBtn.click(); } });
   addBtn.addEventListener('click', () => {
-    const email = pick.value;
-    if (!email) return;
-    addBtn.disabled = true;
+    const email = emailIn.value.trim().toLowerCase();
+    const first = firstIn.value.trim();
+    const last = lastIn.value.trim();
+    if (email.indexOf('@') < 1) return;
+    if (!knownStudent_(email) && (!first || !last)) {
+      setStatus('New student needs a first and last name.', 'bad', 3000);
+      (first ? lastIn : firstIn).focus();
+      return;
+    }
+    addBtn.disabled = true; addBtn.textContent = '…';
     google.script.run
-      .withSuccessHandler(() => {
-        const s = (adminClasses.students || []).find((x) => x.Email === email) || { Email: email, name: email };
-        enrolled.push(s);
-        bumpCount(1); repaintEnrolled(); repaintPicker();
-        setStatus('Added.', 'good', 1500);
+      .withSuccessHandler((resp) => {
+        addBtn.textContent = 'Add';
+        firstIn.value = ''; lastIn.value = ''; emailIn.value = '';
+        if (resp.errors && resp.errors.length) {
+          setStatus(resp.errors[0].error, 'bad', 4000);
+        } else {
+          setStatus(resp.created ? 'New student added.' : (resp.enrolled ? 'Added.' : 'Already in class.'), 'good', 1800);
+        }
+        c.studentCount += resp.enrolled;
+        if (state.view === 'ADMIN_CLASSES') renderShell_();
+        adminClasses.students = null;   // may have created a student → refresh source
+        loadEnrolled();
+        loadPickerSource();
       })
-      .withFailureHandler((e) => { addBtn.disabled = false; setStatus(String(e && e.message || e), 'bad', 4000); })
-      .adminEnrollStudent(email, c.Class);
+      .withFailureHandler((e) => { addBtn.disabled = false; addBtn.textContent = 'Add'; setStatus(String(e && e.message || e), 'bad', 4000); })
+      .adminBulkEnroll(c.Class, [{ First: first, Last: last, Email: email }]);
   });
 
   // Bulk paste-to-enroll a class list.
@@ -1442,7 +1483,7 @@ function openManageClassStudentsModal_(c, host) {
         adminClasses.students = Object.keys(byEmail).map((k) => byEmail[k]);
         repaintPicker();
       })
-      .withFailureHandler(() => { pick.innerHTML = '<option value="">(could not load students)</option>'; })
+      .withFailureHandler(() => { /* autocomplete unavailable — typing a new name+email still works */ })
       .adminGetRoster();
   }
   loadEnrolled();

@@ -1380,4 +1380,13 @@ select, input, textarea { font: inherit; }
   font-family: var(--font-body), monospace; font-size: 12.5px; resize: vertical;
 }
 .admin-bulk-ta:focus { outline: none; border-color: var(--c-brand-primary); box-shadow: 0 0 0 2px var(--c-brand-primary-tint); }
+.admin-addrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.admin-addrow__in {
+  flex: 1 1 90px; min-width: 64px; box-sizing: border-box;
+  border: 1px solid var(--c-line); border-radius: 7px; padding: 7px 9px;
+  font: inherit; font-size: 12.5px;
+}
+.admin-addrow__email { flex: 2 1 180px; }
+.admin-addrow__in:focus { outline: none; border-color: var(--c-brand-primary); box-shadow: 0 0 0 2px var(--c-brand-primary-tint); }
+.admin-addrow__btn { flex: 0 0 auto; }
 </style>
