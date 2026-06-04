@@ -32,19 +32,31 @@ function parseProjectRequirements_(project) {
 /**
  * One dashboard-row's worth of aggregates for a single student.
  *
- *   aggregateStudent_(sources, highlights, bundle)
- *     → { categoryMix, sourceCount, highlightCount, completion, gaps, lastActivity }
+ *   aggregateStudent_(sources, highlights, bundle [, requirements])
+ *     → { categoryMix, sourceCount, highlightCount, completion, gaps,
+ *          sourcesProgress, evidenceDepth, lastActivity }
  *
  * `categoryMix` preserves bundle order so the dashboard stack-bar always
  * paints categories in the same slot regardless of insertion order.
  */
-function aggregateStudent_(sources, highlights, bundle) {
+function aggregateStudent_(sources, highlights, bundle, requirements) {
+  const req = requirements || parseProjectRequirements_({});
+  const depth = computeEvidenceDepth_(sources, highlights, req);
   return {
     categoryMix: formatBundleCategoryMix_(highlights, bundle),
     sourceCount: sources.length,
     highlightCount: highlights.length,
-    completion: computeCompletionSummary_(sources),
+    completion: computeCompletionSummary_(sources, req),
     gaps: computeGaps_(sources),
+    sourcesProgress: computeSourcesProgress_(sources, req),
+    // Row payload: rollup only (omit perSource to keep the dashboard response small).
+    evidenceDepth: {
+      targetSet: depth.targetSet,
+      total: depth.total,
+      sourcesMeeting: depth.sourcesMeeting,
+      minHighlightsPerSource: depth.minHighlightsPerSource,
+      minDistinctCategories: depth.minDistinctCategories,
+    },
     lastActivity: computeLastActivity_(sources, highlights),
   };
 }
@@ -52,11 +64,16 @@ function aggregateStudent_(sources, highlights, bundle) {
 /**
  * Drill-down aggregates — richer than dashboard, includes activity-by-day.
  */
-function aggregateStudentDetail_(sources, highlights, bundle, projectCreatedAt) {
+function aggregateStudentDetail_(sources, highlights, bundle, projectCreatedAt, requirements) {
+  const req = requirements || parseProjectRequirements_({});
   return {
     categoryMix: formatBundleCategoryMix_(highlights, bundle),
     sourceCounts: computeSourceCounts_(sources),
     completion: computeCompletion_(sources),
+    sourcesProgress: computeSourcesProgress_(sources, req),
+    // Drill-down: full per-source list so the viewer can annotate each source.
+    evidenceDepth: computeEvidenceDepth_(sources, highlights, req),
+    requireAnnotation: req.requireAnnotation,
     activityByDay: computeActivityByDay_(sources, highlights, projectCreatedAt),
   };
 }
@@ -118,23 +135,78 @@ function computeCompletion_(sources) {
 
 /**
  * Headline completion for the dashboard row:
- *   percent = sources where ALL of (citation complete, classification set,
- *             annotation non-empty) / total. Zero sources → 0%.
+ *   percent = sources where ALL of (citation, classification, AND — only when
+ *   the project requires it — annotation) / total. Zero sources → 0%.
+ * `requirements` is the normalized object from parseProjectRequirements_ (or
+ * undefined for the legacy no-requirements behavior, which requires annotation).
  */
-function computeCompletionSummary_(sources) {
+function computeCompletionSummary_(sources, requirements) {
   if (sources.length === 0) return { percent: 0, complete: 0, total: 0 };
+  const needAnn = !requirements || requirements.requireAnnotation !== false;
   let complete = 0;
   sources.forEach((s) => {
     const parsed = parseCitationFields_(s);
     const citationOk = parsed.title && parsed.url;
     const classOk = s.primarySecondary && s.primarySecondary !== 'unset';
-    const annOk = s.annotation && String(s.annotation).trim().length > 0;
+    const annOk = !needAnn || (s.annotation && String(s.annotation).trim().length > 0);
     if (citationOk && classOk && annOk) complete++;
   });
   return {
     percent: Math.round((complete / sources.length) * 100),
     complete,
     total: sources.length,
+  };
+}
+
+/**
+ * Per-source "evidence depth" against the optional per-source targets. Only
+ * meaningful when minHighlightsPerSource and/or minDistinctCategories is set
+ * (targetSet). distinctCategoryCount counts distinct non-empty primaryCategory
+ * — secondary tags never count (dashboard counts primary only). An unset
+ * sub-target is vacuously met. Pure.
+ */
+function computeEvidenceDepth_(sources, highlights, requirements) {
+  const req = requirements || {};
+  const minH = req.minHighlightsPerSource || null;
+  const minC = req.minDistinctCategories || null;
+  const bySource = {};
+  highlights.forEach((h) => {
+    const sid = h.sourceId;
+    if (!bySource[sid]) bySource[sid] = { count: 0, cats: {} };
+    bySource[sid].count++;
+    if (h.primaryCategory) bySource[sid].cats[h.primaryCategory] = true;
+  });
+  const perSource = sources.map((s) => {
+    const g = bySource[s.sourceId] || { count: 0, cats: {} };
+    const distinct = Object.keys(g.cats).length;
+    const meetsHighlights = minH ? g.count >= minH : true;
+    const meetsCategories = minC ? distinct >= minC : true;
+    return {
+      sourceId: s.sourceId,
+      highlightCount: g.count,
+      distinctCategoryCount: distinct,
+      meetsHighlights,
+      meetsCategories,
+      meets: meetsHighlights && meetsCategories,
+    };
+  });
+  return {
+    targetSet: !!(minH || minC),
+    minHighlightsPerSource: minH,
+    minDistinctCategories: minC,
+    total: sources.length,
+    sourcesMeeting: perSource.filter((p) => p.meets).length,
+    perSource,
+  };
+}
+
+/** Project-level source-count progress against optional minSources. Pure. */
+function computeSourcesProgress_(sources, requirements) {
+  const min = (requirements && requirements.minSources) || null;
+  return {
+    minSources: min,
+    sourceCount: sources.length,
+    meets: min ? sources.length >= min : true,
   };
 }
 

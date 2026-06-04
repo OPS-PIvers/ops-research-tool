@@ -485,6 +485,84 @@ function devTestProjectRequirementsParse() {
   console.log(pass + '/' + (pass + fail) + ' passed');
 }
 
+function devTestCompletionRespectsAnnotationToggle() {
+  let pass = 0, fail = 0;
+  const check = (l, c) => { if (c) { pass++; console.log('PASS ' + l); } else { fail++; console.log('FAIL ' + l); } };
+  const sources = [
+    { sourceId: 's1', primarySecondary: 'primary',   annotation: '', citationFields: JSON.stringify({ title: 'A', url: 'u' }) },
+    { sourceId: 's2', primarySecondary: 'secondary', annotation: '', citationFields: JSON.stringify({ title: 'B', url: 'u' }) },
+  ];
+  const on  = computeCompletionSummary_(sources, parseProjectRequirements_({}));
+  check('annotations required → 0 complete', on.complete === 0);
+  const off = computeCompletionSummary_(sources, parseProjectRequirements_({ requirements: JSON.stringify({ requireAnnotation: false }) }));
+  check('annotations optional → 2 complete', off.complete === 2);
+  check('annotations optional → 100%',       off.percent === 100);
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
+
+function devTestEvidenceDepth() {
+  let pass = 0, fail = 0;
+  const check = (l, c) => { if (c) { pass++; console.log('PASS ' + l); } else { fail++; console.log('FAIL ' + l); } };
+  const sources = [{ sourceId: 's1' }, { sourceId: 's2' }, { sourceId: 's3' }];
+  const highlights = [
+    { sourceId: 's1', primaryCategory: 'A' }, { sourceId: 's1', primaryCategory: 'B' }, { sourceId: 's1', primaryCategory: 'A' }, // s1: 3 hl, 2 cats
+    { sourceId: 's2', primaryCategory: 'A' }, // s2: 1 hl, 1 cat
+    // s3: nothing
+  ];
+  const d = computeEvidenceDepth_(sources, highlights, { minHighlightsPerSource: 2, minDistinctCategories: 2 });
+  check('targetSet true',            d.targetSet === true);
+  check('total 3',                   d.total === 3);
+  check('s1 highlightCount 3',       d.perSource[0].highlightCount === 3);
+  check('s1 distinct 2',             d.perSource[0].distinctCategoryCount === 2);
+  check('s1 meets',                  d.perSource[0].meets === true);
+  check('s2 fails (1hl,1cat)',       d.perSource[1].meets === false);
+  check('s3 fails (empty)',          d.perSource[2].meets === false);
+  check('sourcesMeeting 1',          d.sourcesMeeting === 1);
+
+  const none = computeEvidenceDepth_(sources, highlights, {});
+  check('no target → targetSet false', none.targetSet === false);
+  check('no target → all meet',        none.sourcesMeeting === 3);
+
+  const onlyH = computeEvidenceDepth_(sources, highlights, { minHighlightsPerSource: 2 });
+  check('onlyH: s1 meets',           onlyH.perSource[0].meets === true);
+  check('onlyH: s2 fails',           onlyH.perSource[1].meets === false);
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
+
+function devTestSourcesProgress() {
+  let pass = 0, fail = 0;
+  const check = (l, c) => { if (c) { pass++; console.log('PASS ' + l); } else { fail++; console.log('FAIL ' + l); } };
+  const three = [{ sourceId: 'a' }, { sourceId: 'b' }, { sourceId: 'c' }];
+  const p1 = computeSourcesProgress_(three, { minSources: 5 });
+  check('3 of 5 → not meets', p1.meets === false && p1.sourceCount === 3 && p1.minSources === 5);
+  const p2 = computeSourcesProgress_(three, { minSources: 3 });
+  check('3 of 3 → meets',     p2.meets === true);
+  const p3 = computeSourcesProgress_(three, {});
+  check('no target → meets, null', p3.meets === true && p3.minSources === null);
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
+
+function devTestRequirementsBackCompat() {
+  let pass = 0, fail = 0;
+  const check = (l, c) => { if (c) { pass++; console.log('PASS ' + l); } else { fail++; console.log('FAIL ' + l); } };
+  const bundle = { bundleId: 'b', name: 'B', style: 'mla',
+    label1: 'Background', color1: '#1', label2: 'Build-Up', color2: '#2',
+    label3: 'Main Event', color3: '#3', label4: 'Short', color4: '#4', label5: 'Long', color5: '#5' };
+  const sources = [
+    { sourceId: 's1', primarySecondary: 'primary',   annotation: 'Good.', citationFields: JSON.stringify({ title: 'A', url: 'https://a' }), createdAt: '2026-05-20T10:00:00Z' },
+    { sourceId: 's2', primarySecondary: 'secondary', annotation: '',      citationFields: JSON.stringify({ title: 'B', url: 'https://b' }), createdAt: '2026-05-21T10:00:00Z' },
+    { sourceId: 's3', primarySecondary: 'unset',     annotation: 'N.',    citationFields: JSON.stringify({ title: '', url: '' }),          createdAt: '2026-05-22T10:00:00Z' },
+  ];
+  const highlights = [{ sourceId: 's1', primaryCategory: 'Background', createdAt: '2026-05-20T11:00:00Z' }];
+  const agg = aggregateStudent_(sources, highlights, bundle);   // NO requirements arg
+  check('completion.complete still 1',  agg.completion.complete === 1);
+  check('completion.percent still 33',  agg.completion.percent === 33);
+  check('gaps.annotation still 1',      agg.gaps.annotation === 1);
+  check('sourcesProgress inert',        agg.sourcesProgress.meets === true && agg.sourcesProgress.minSources === null);
+  check('evidenceDepth inert',          agg.evidenceDepth.targetSet === false);
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
+
 /**
  * Tests consoleGetContext + assertStaff_ behavior.
  * Note: this test uses the caller's real identity. The dev-seed harness
