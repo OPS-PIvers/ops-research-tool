@@ -1,15 +1,18 @@
 // Scene lengths in frames @30fps. TransitionSeries overlaps each transition,
 // so the composition total = sum(scenes) - sum(transitions).
 export const T = {
-  intro: 110,
-  highlight: 200,
-  citation: 205,
-  organize: 190,
-  docs: 220,
-  outro: 135,
-  trans: 20,
+  intro: 100,
+  highlight: 250,
+  citation: 185,
+  organize: 170,
+  modal: 205,
+  docs: 245,
+  dashboard: 200,
+  drilldown: 215,
+  outro: 130,
+  trans: 18,
 };
 
-// 5 transitions between the 6 scenes.
+// 8 transitions between the 9 scenes.
 export const TOTAL =
-  T.intro + T.highlight + T.citation + T.organize + T.docs + T.outro - 5 * T.trans;
+  T.intro + T.highlight + T.citation + T.organize + T.modal + T.docs + T.dashboard + T.drilldown + T.outro - 8 * T.trans;
