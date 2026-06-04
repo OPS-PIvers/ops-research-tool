@@ -1058,12 +1058,21 @@ function renderDashboard_(main) {
 
   main.appendChild(toolbar);
 
-  // Class-period toggle row (populated in paintDashboard_ once we know the
-  // caller's classes for this project; hidden when there's only one).
+  // Flex wrapper holding class tabs (left) and category legend (right)
+  const subRow = document.createElement('div');
+  subRow.className = 'db-sub-row';
+
   const classTabs = document.createElement('div');
   classTabs.className = 'db-classtabs';
   classTabs.id = 'db-classtabs';
-  main.appendChild(classTabs);
+  subRow.appendChild(classTabs);
+
+  const legend = document.createElement('div');
+  legend.className = 'db-legend';
+  legend.id = 'db-legend';
+  subRow.appendChild(legend);
+
+  main.appendChild(subRow);
 
   const body = document.createElement('div');
   body.className = 'db-body';
@@ -1202,6 +1211,7 @@ function paintDashboard_() {
   body.innerHTML = '';
 
   maybeRenderUnarchiveBanner_(body, dashboard.data);
+  paintDashboardLegend_(proj);
 
   if (dashboard.data.students.length === 0 && (dashboard.data.groups || []).length === 0) {
     const e = document.createElement('div');
@@ -1223,6 +1233,59 @@ function paintDashboard_() {
   }
 
   updateAsOf_();
+}
+
+function paintDashboardLegend_(proj) {
+  const host = document.getElementById('db-legend');
+  if (!host) return;
+  host.innerHTML = '';
+
+  const bundle = proj && proj.bundle;
+  if (!bundle) return;
+
+  const isCustom = !!bundle.custom;
+
+  // Title/Prefix
+  const title = document.createElement('span');
+  title.className = 'db-legend__title';
+  title.textContent = isCustom ? 'Custom categories (student-defined):' : 'Categories:';
+  host.appendChild(title);
+
+  // Legend Items
+  const itemsContainer = document.createElement('div');
+  itemsContainer.className = 'db-legend__items';
+
+  // Bundles always contain up to 5 categories
+  for (let i = 1; i <= 5; i++) {
+    const label = bundle['label' + i];
+    const color = bundle['color' + i];
+    if (!label) continue;
+
+    const item = document.createElement('div');
+    item.className = 'db-legend__item';
+
+    const dot = document.createElement('span');
+    dot.className = 'db-legend__dot';
+    dot.style.backgroundColor = color || '#dadce0';
+    item.appendChild(dot);
+
+    const txt = document.createElement('span');
+    txt.className = 'db-legend__label';
+    txt.textContent = label;
+    item.appendChild(txt);
+
+    itemsContainer.appendChild(item);
+  }
+
+  if (isCustom) {
+    host.classList.add('db-legend--disabled');
+    host.title = 'Students define their own categories for this project.';
+  } else {
+    host.classList.remove('db-legend--disabled');
+    host.removeAttribute('title');
+  }
+
+  host.appendChild(itemsContainer);
 }
 
 /**
