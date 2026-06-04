@@ -1,0 +1,144 @@
+import React from 'react';
+import {useCurrentFrame, useVideoConfig, spring, interpolate, Easing} from 'remotion';
+import {Brand} from '../components/Brand';
+import {Caption} from '../components/Caption';
+import {BrowserFrame} from '../components/BrowserFrame';
+import {Cursor} from '../components/Cursor';
+import {CAT} from '../theme';
+import {LEXEND} from '../fonts';
+import {fadeUp} from '../anim';
+
+// OPS-brand Docs-sidebar tokens (sidebar_css.html).
+const D = {
+  accent: '#2d3f89',
+  strong: '#1d2a5d',
+  muted: '#666666',
+  line: '#e0e0e0',
+  soft: '#f3f3f3',
+  blueSubtle: '#eaecf5',
+  redSubtle: '#e5c7c7',
+  bad: '#ad2122',
+  good: '#4356a9',
+};
+
+const ENTRIES = [
+  {who: 'Branch, Taylor. ', title: 'Parting the Waters: America in the King Years.', rest: ' Simon & Schuster, 1988.', note: 'Narrative history used to corroborate the sequence of events.'},
+  {who: 'King, Martin Luther, Jr. ', title: 'I Have a Dream: Writings and Speeches That Changed the World.', rest: ' HarperOne, 1992.', note: 'Primary text of the address analyzed in the main-event section.'},
+  {who: 'National Archives. “The March on Washington.” ', title: 'National Archives', rest: ', www.archives.gov/civil-rights. Accessed 4 June 2026.', note: 'Primary-source overview used for background on the march’s scale.'},
+];
+
+export const DocsEditor: React.FC = () => {
+  const f = useCurrentFrame();
+  const {fps} = useVideoConfig();
+
+  const winO = interpolate(f, [0, 12], [0, 1], {extrapolateRight: 'clamp'});
+  const winY = interpolate(spring({frame: f, fps, config: {damping: 16}}), [0, 1], [60, 0]);
+
+  const press1 = interpolate(f, [30, 38, 48], [0, 1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}); // open menu
+  const press2 = interpolate(f, [66, 74, 84], [0, 1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}); // pick annotated
+  const menuOpen = f >= 38 && f < 76;
+  const inserted = f >= 78;
+
+  // cursor: → Insert trigger (853) → up to Annotated item (762)
+  const cx = interpolate(f, [8, 30, 48, 64], [1720, 1460, 1460, 1460], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.cubic)});
+  const cy = interpolate(f, [8, 30, 48, 64], [980, 853, 853, 762], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.cubic)});
+  const cO = interpolate(f, [4, 14, 188, 198], [0, 1, 1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+
+  return (
+    <Brand>
+      <Caption step="Step 4" title="Insert it in Google Docs" />
+
+      <div style={{position: 'absolute', left: 290, top: 270, opacity: winO, transform: `translateY(${winY}px)`}}>
+        <BrowserFrame width={1340} url="https://docs.google.com/document/d/…/edit">
+          <div style={{display: 'flex', height: 564}}>
+            {/* doc page */}
+            <div style={{flex: 1, background: '#f6f7fb', padding: '34px 0', display: 'flex', justifyContent: 'center', overflow: 'hidden'}}>
+              <div style={{width: 640, background: '#fff', boxShadow: '0 2px 16px rgba(0,0,0,0.1)', padding: '44px 62px'}}>
+                <div style={{textAlign: 'center', fontSize: 17, color: '#222', marginBottom: 22, opacity: inserted ? 1 : 0.22}}>Annotated Bibliography</div>
+                {inserted ? (
+                  ENTRIES.map((e, i) => (
+                    <div key={i} style={{...fadeUp(f, 82 + i * 16, 16, 16), fontSize: 14.5, lineHeight: 1.7, color: '#222', textIndent: -28, paddingLeft: 28, marginBottom: 15}}>
+                      {e.who}<i>{e.title}</i>{e.rest}
+                      <div style={{textIndent: 0, paddingLeft: 0, color: '#475', fontSize: 13.5, marginTop: 3}}>{e.note}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{height: 2, width: 1, background: '#444', margin: '6px auto 0', opacity: interpolate(f % 30, [0, 14, 15, 29], [1, 1, 0, 0])}} />
+                )}
+              </div>
+            </div>
+
+            {/* OPS Docs sidebar */}
+            <div style={{width: 340, borderLeft: `1px solid ${D.line}`, background: '#fff', display: 'flex', flexDirection: 'column', position: 'relative'}}>
+              {/* header */}
+              <div style={{padding: '10px 14px', borderBottom: `1px solid ${D.line}`}}>
+                <div style={{fontFamily: LEXEND, fontSize: 15, fontWeight: 700, color: D.strong, letterSpacing: '-0.01em'}}>OPS Research Tool</div>
+                <div style={{fontSize: 11, color: D.muted, marginTop: 2}}>You · paul.ivers@orono.k12.mn.us</div>
+              </div>
+              {/* project */}
+              <div style={{padding: '8px 14px', borderBottom: `1px solid ${D.line}`, display: 'flex', flexDirection: 'column', gap: 4}}>
+                <span style={{fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em', color: D.muted}}>Project</span>
+                <div style={{padding: '6px 8px', border: `1.5px solid ${D.line}`, borderRadius: 6, fontSize: 12.5, display: 'flex', justifyContent: 'space-between'}}>Civil Rights — 7th Grade <span style={{color: D.muted}}>▾</span></div>
+              </div>
+              {/* viewmode */}
+              <div style={{padding: '6px 10px', borderBottom: `1px solid ${D.line}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                <div style={{display: 'inline-flex', background: D.soft, borderRadius: 999, padding: 2}}>
+                  <span style={{padding: '4px 12px', fontSize: 11, borderRadius: 999, background: '#fff', color: D.accent, fontWeight: 500, boxShadow: '0 1px 2px rgba(0,0,0,0.08)'}}>By evidence</span>
+                  <span style={{padding: '4px 12px', fontSize: 11, color: D.muted}}>By source</span>
+                </div>
+                <div style={{display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', border: `1.5px solid ${D.line}`, borderRadius: 6, fontSize: 12, fontWeight: 500, color: '#333'}}>Sort &amp; Filter <span style={{fontSize: 9, color: D.muted}}>▾</span></div>
+              </div>
+              {/* sources */}
+              <div style={{flex: 1, padding: '8px 0', overflow: 'hidden'}}>
+                {[
+                  {title: 'The March on Washington', url: 'archives.gov/civil-rights', chip: 'Primary', cat: CAT[0], hl: '“250,000 people gathered on the National Mall”'},
+                  {title: 'I Have a Dream — full text', url: 'archives.gov/i-have-a-dream', chip: 'Primary', cat: CAT[2], hl: '“a test of the nation’s founding promises”'},
+                ].map((s, i) => (
+                  <div key={i} style={{margin: '0 10px', padding: '10px 0', borderTop: i ? `1px solid ${D.line}` : 'none'}}>
+                    <div style={{display: 'flex', justifyContent: 'space-between', gap: 6, alignItems: 'flex-start'}}>
+                      <div style={{fontWeight: 500, fontSize: 13, color: '#333'}}>{s.title}</div>
+                      <span style={{fontSize: 10, padding: '2px 6px', borderRadius: 999, background: D.blueSubtle, color: D.strong, whiteSpace: 'nowrap'}}>{s.chip}</span>
+                    </div>
+                    <div style={{fontSize: 11, color: D.muted, marginTop: 2}}>{s.url}</div>
+                    <div style={{marginTop: 8, padding: '7px 9px', border: `1px solid ${D.line}`, borderRadius: 6, fontSize: 12}}>
+                      <div style={{fontSize: 10, color: D.muted, display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2}}>
+                        <span style={{width: 8, height: 8, borderRadius: '50%', background: s.cat}} /> highlight
+                      </div>
+                      <div style={{lineHeight: 1.4, color: '#333'}}>{s.hl}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* footer */}
+              <div style={{borderTop: `1px solid ${D.line}`, padding: '10px 12px', background: '#fff', position: 'relative'}}>
+                <div style={{padding: '7px 12px', textAlign: 'center', background: '#fff', color: D.accent, border: `1px solid ${D.accent}`, borderRadius: 4, fontWeight: 500, fontSize: 13, marginBottom: 6}}>Open Editor</div>
+                <div style={{padding: '8px 12px', textAlign: 'center', background: D.accent, color: '#fff', borderRadius: 4, fontWeight: 500, fontSize: 13, transform: `scale(${1 - press1 * 0.03})`}}>
+                  Insert References <span style={{fontSize: 9}}>▾</span>
+                </div>
+                <div style={{fontSize: 11, color: D.good, textAlign: 'center', marginTop: 6, minHeight: 14, opacity: interpolate(f, [86, 100], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'})}}>
+                  ✓ Inserted annotated bibliography — 6 sources
+                </div>
+
+                {/* insert popover (opens upward) */}
+                {menuOpen ? (
+                  <div style={{position: 'absolute', left: 12, right: 12, bottom: 'calc(100% - 2px)', background: '#fff', border: `1px solid ${D.line}`, borderRadius: 8, boxShadow: '0 8px 24px rgba(29,42,93,0.16)', padding: 4, display: 'flex', flexDirection: 'column', gap: 2, opacity: interpolate(f, [38, 44], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'})}}>
+                    <div style={{padding: '8px 10px', borderRadius: 6, background: f >= 60 && f < 76 ? D.soft : '#fff'}}>
+                      <div style={{fontSize: 13, fontWeight: 500, color: '#333'}}>Annotated Bibliography</div>
+                      <div style={{fontSize: 11, color: D.muted}}>Citations + your annotations</div>
+                    </div>
+                    <div style={{padding: '8px 10px', borderRadius: 6}}>
+                      <div style={{fontSize: 13, fontWeight: 500, color: '#333'}}>Works Cited</div>
+                      <div style={{fontSize: 11, color: D.muted}}>Citations only</div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </BrowserFrame>
+      </div>
+
+      <Cursor x={cx} y={cy} press={Math.max(press1, press2)} opacity={cO} />
+    </Brand>
+  );
+};

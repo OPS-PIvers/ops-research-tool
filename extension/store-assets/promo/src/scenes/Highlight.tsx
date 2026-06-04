@@ -35,12 +35,14 @@ export const Highlight: React.FC = () => {
   });
   const saved = interpolate(f, [106, 120], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
 
-  const cx = interpolate(f, [8, 40, 66, 96], [1640, 980, 980, 928], {
+  // tip lands on the Main Event swatch (3rd dot): toolbar left 700 + pad 22 +
+  // 2*(74+14) + half the 74-wide cell ≈ x 935; dot center ≈ y 678.
+  const cx = interpolate(f, [8, 40, 66, 96], [1640, 980, 980, 935], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
     easing: Easing.inOut(Easing.cubic),
   });
-  const cy = interpolate(f, [8, 40, 66, 96], [900, 520, 520, 648], {
+  const cy = interpolate(f, [8, 40, 66, 96], [900, 520, 520, 678], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
     easing: Easing.inOut(Easing.cubic),
