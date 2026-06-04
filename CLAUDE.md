@@ -75,8 +75,11 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     Empty-state for scanned PDFs ("no extractable text — save manually");
     "Save as source" button = Tier 1 fallback (creates source row, no
     highlights). Popup detects PDF tabs and shows a CTA button.
-  - In-page sidebar refresh — **code-complete on branch `sidebar-refresh`,
-    pending pilot QA** (not yet merged to `main`). Two tabs under the project
+  - In-page sidebar refresh — **merged to `main` and live** (the old
+    `sidebar-refresh` branch is gone; the work is in
+    [`extension/content/sidebar.js`](extension/content/sidebar.js) + backend
+    `previewCitation` / `doPost` `kind:'source'`). Still pending real-page pilot
+    QA. Two tabs under the project
     line: **Source** (citation form mirroring the Docs editor — source-type +
     per-type fields + primary/secondary segmented control + annotation + live
     MLA preview; autosaves through the sync queue; reachable only once the page
@@ -88,9 +91,10 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     Delete source. See §4 (in-extension citation editing) and the design/plan
     in [`docs/superpowers/`](docs/superpowers/).
   - **Code-complete.** Still TODO in Phase 2: real-page QA (news sites,
-    databases, PDFs, edge cases like shadow-DOM-heavy pages) — now including the
-    `sidebar-refresh` tabs/filter/toast; force-install setup with the district
-    Admin console; possible polish on roster-not-found UX.
+    databases, PDFs, edge cases like shadow-DOM-heavy pages) — including the
+    now-merged Source/Annotations tabs, facet filter, and last-note toast;
+    force-install setup with the district Admin console; possible polish on
+    roster-not-found UX.
 - **Phase 3 — Google Docs sidebar — CODE COMPLETE.**
   - Editor add-on entry points in
     [`50_docs_addon.js`](apps-script/src/50_docs_addon.js): `onInstall` /
@@ -276,7 +280,7 @@ These supersede or refine the spec — apply them before defaulting to plan text
   instead of duplicating it (the long-claimed-but-unwired `findSource` dedup is
   still NOT wired; this covers the same ground without a save-path round-trip).
 - **Students edit citation fields in the extension, not only the Docs sidebar**
-  (branch `sidebar-refresh`, pending QA). The in-page sidebar's **Source tab**
+  (merged to `main`; pending real-page QA). The in-page sidebar's **Source tab**
   reuses the SAME field set + precedence as
   [`source_editor_js.html`](apps-script/src/source_editor_js.html) so the two
   surfaces never drift. Writes go through the existing queue → `upsertSource_`
@@ -456,6 +460,46 @@ These supersede or refine the spec — apply them before defaulting to plan text
   means calling `createBundle_` from the editor. A teacher-facing "create bundle"
   surface is unbuilt.
 
+- **Projects carry optional teacher-set requirements (soft targets + nudges).**
+  A project may set any of four optional requirements, stored as a JSON blob in
+  the **`requirements`** column on the Projects registry row (positional append
+  to `HEADERS.PROJECTS`; same pattern as `citationFields`/`scrapedExtra`; empty
+  cell → defaults): **`minSources`** (project-level), **`minHighlightsPerSource`**
+  + **`minDistinctCategories`** (per-source; distinct counts primary category
+  only), and **`requireAnnotation`** (defaults **true**, so existing projects are
+  unchanged). Set at project creation AND editable afterward via
+  **`consoleUpdateProjectRequirements`** (staff-gated like archive). The single
+  parser is **`parseProjectRequirements_`** ([`62_aggregator.js`](apps-script/src/62_aggregator.js),
+  pure, normalizes each numeric to a positive int or `null`, caps
+  `minDistinctCategories` at 5); the single validator is
+  **`validateRequirementsInput_`** ([`61_console_api.js`](apps-script/src/61_console_api.js)).
+  The metric has **two independent tracks** (both inert when nothing is set, so
+  a no-requirements project's dashboard is byte-for-byte unchanged): (1) the
+  existing **cite/tag/note completion %** — only the `note` dimension becomes
+  conditional on `requireAnnotation` (when off, a source counts complete on
+  cite+tag and the note pill/chip is hidden; the **bibliography partition rule is
+  NOT touched** — annotation toggle is dashboard/sidebar-only); (2) a **separate
+  evidence-depth** per-source pass (`computeEvidenceDepth_`) + a **sources-progress**
+  count (`computeSourcesProgress_`), surfaced as their own indicators. Reflected
+  in the dashboard row (sources `N / target`, depth badge, note-pill gating —
+  inside the Gaps cell, since there is no Sources column), the drill-down
+  (per-source `h/min highlights · c/min categories` evidence line + note-chip
+  gating), the **in-page sidebar** (per-source evidence hint + annotation
+  required/optional label, from local `state.pageHighlights`), and the **Docs
+  sidebar** (`Sources: X / N` + per-source depth recap). `requirements` is served
+  on every project payload (`consoleGetMyProjects`, dashboard `resp.project`, the
+  extension `projects` GET, `sidebarGetContext.activeRequirements` +
+  `sidebarGetProjectData`), and folded into the dashboard cache key via
+  `shortHash_`. **Run `migrateAddRequirements_` once after deploy** to heal the
+  registry header (idempotent; `ensureHeaders_` trailing-append). Tests:
+  **`devTestRequirementsAll`** (parse, validation, annotation-toggle, evidence
+  depth, sources progress, a back-compat lock that no-requirements aggregates
+  equal today's, and a create/update round-trip). Soft + nudges only — no hard
+  gates, no save-path or bibliography change. Design/plan in
+  [`docs/superpowers/specs/2026-06-04-project-requirements-design.md`](docs/superpowers/specs/2026-06-04-project-requirements-design.md)
+  / [`docs/superpowers/plans/2026-06-04-project-requirements.md`](docs/superpowers/plans/2026-06-04-project-requirements.md).
+  On `feat/project-requirements`.
+
 ## 5. GAS V8 quirks discovered
 
 - `new URL(...)` **throws** in GAS V8. The global is advertised but unusable.
@@ -578,7 +622,7 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   email as its trailing token; both legacy bare-email and new
   `"<project> — Research — <email>"` names resolve; a longer local part / wrong
   email / group sheet are rejected. Pure (no Drive). See §4.
-- Extension Source tab (branch `sidebar-refresh`): `devTestPreviewCitation`
+- Extension Source tab (merged to `main`): `devTestPreviewCitation`
   (the `previewCitation` GET wraps `formatCitation` → `{text, italics}`),
   `devTestSourceDeleteViaPost` (`doPost` `kind:'source'` delete — orphan removed,
   referenced source refused), `devTestCitationSurvivesReassert` (locks that a
@@ -629,6 +673,15 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   needs `script.external_request` (one-time editor re-consent on first run) and
   the Drive scope — but NOT the Sheets API (it uses CSV-export; see §4). A red
   parity line prints the `SERIAL:` vs `PARALLEL:` diff.
+- Project requirements (§4) — **`devTestRequirementsAll`** runs:
+  `devTestProjectRequirementsParse`, `devTestRequirementsValidation`,
+  `devTestCompletionRespectsAnnotationToggle`, `devTestEvidenceDepth`,
+  `devTestSourcesProgress`, `devTestRequirementsBackCompat` (the keystone — a
+  no-requirements project's aggregates equal today's), and
+  `devTestConsoleUpdateRequirements` (create/update registry round-trip — needs
+  the Dev Project). The dashboard/sidebar pills + nudges are DOM-side — real-surface
+  QA only. After deploy, run **`migrateAddRequirements_`** once to heal the
+  Projects header.
 
 ## 9. How to start a session here
 
