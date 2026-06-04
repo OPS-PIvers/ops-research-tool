@@ -12,6 +12,7 @@ const state = {
   projectId: null,
   studentEmail: null,
   groupId: null,
+  className: null,        // dashboard class-period filter (null = all of the caller's classes)
   // Dashboard mode flags
   manageGroups: false,
   collapsedGroups: {},    // {groupId: true} — collapsed in this session
@@ -65,6 +66,7 @@ function applyHash_() {
   state.projectId = r.projectId;
   state.studentEmail = r.studentEmail;
   state.groupId = r.groupId || null;
+  state.className = r.className || null;
   renderShell_();
 }
 
@@ -72,7 +74,8 @@ function applyHash_() {
  * Parse the URL hash into a route descriptor.
  *
  *   ''  or '#/projects'                                 → MY_PROJECTS
- *   '#/projects/<id>'                                   → DASHBOARD
+ *   '#/projects/<id>'                                   → DASHBOARD (all classes)
+ *   '#/projects/<id>/class/<encodedClass>'              → DASHBOARD (one class period)
  *   '#/projects/<id>/students/<encodedEmail>'           → STUDENT
  *   anything else                                       → MY_PROJECTS (default)
  */
@@ -94,6 +97,8 @@ function parseHash_(hash) {
   if (parts[0] !== 'projects') return { view: 'MY_PROJECTS' };
   if (parts.length === 2)
     return { view: 'DASHBOARD', projectId: decodeURIComponent(parts[1]) };
+  if (parts.length === 4 && parts[2] === 'class')
+    return { view: 'DASHBOARD', projectId: decodeURIComponent(parts[1]), className: decodeURIComponent(parts[3]) };
   if (parts.length === 4 && parts[2] === 'students')
     return {
       view: 'STUDENT',
@@ -965,8 +970,9 @@ const dashboard = {
 };
 
 function renderDashboard_(main) {
-  // Reset cache if we navigated to a different project.
-  if (dashboard.loadedFor !== state.projectId) {
+  // Reset cache if we navigated to a different project OR class period.
+  const dashKey = state.projectId + '|' + (state.className || '');
+  if (dashboard.loadedFor !== dashKey) {
     dashboard.loadedFor = null;
     dashboard.data = null;
     state.manageGroups = false;
@@ -1021,6 +1027,13 @@ function renderDashboard_(main) {
 
   main.appendChild(toolbar);
 
+  // Class-period toggle row (populated in paintDashboard_ once we know the
+  // caller's classes for this project; hidden when there's only one).
+  const classTabs = document.createElement('div');
+  classTabs.className = 'db-classtabs';
+  classTabs.id = 'db-classtabs';
+  main.appendChild(classTabs);
+
   const body = document.createElement('div');
   body.className = 'db-body';
   body.id = 'db-body';
@@ -1064,7 +1077,7 @@ function fetchDashboard_(projectId, isRefresh) {
         setStatus('Could not load dashboard.', 'bad', 4000);
         return;
       }
-      dashboard.loadedFor = projectId;
+      dashboard.loadedFor = projectId + '|' + (state.className || '');
       dashboard.data = resp;
       paintDashboard_();
       const btn = document.getElementById('db-refresh');
@@ -1075,8 +1088,9 @@ function fetchDashboard_(projectId, isRefresh) {
       if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
       onFail_('loading dashboard')(e);
     })
-    // Refresh bypasses the server's short-TTL cache; normal loads use it.
-    .consoleGetProjectDashboard(projectId, null, !!isRefresh);
+    // Scope to the selected class period (null = all). Refresh bypasses the
+    // server's short-TTL cache; normal loads use it.
+    .consoleGetProjectDashboard(projectId, state.className || null, !!isRefresh);
 }
 
 function maybeRenderUnarchiveBanner_(main, data) {
@@ -1127,6 +1141,29 @@ function paintDashboard_() {
     let label = proj.name + ' · ' + classes + ' · ' + totalStudents + ' student' + (totalStudents === 1 ? '' : 's');
     if (groupCount > 0) label += ' · ' + groupCount + ' group' + (groupCount === 1 ? '' : 's');
     title.textContent = label;
+  }
+
+  // Class-period toggle — only when the caller teaches 2+ classes in this
+  // project. The active class is encoded in the URL, so a refresh comes back to it.
+  const tabsHost = document.getElementById('db-classtabs');
+  if (tabsHost) {
+    tabsHost.innerHTML = '';
+    const avail = proj.availableClasses || [];
+    if (avail.length >= 2) {
+      const active = proj.activeClass || null;   // null = All classes
+      const mkTab = (label, cls) => {
+        const b = document.createElement('button');
+        b.className = 'db-classtab' + (((cls || null) === active) ? ' db-classtab--on' : '');
+        b.textContent = label;
+        b.addEventListener('click', () => {
+          if ((cls || null) === active) return;
+          navigate_('/projects/' + encodeURIComponent(state.projectId) + (cls ? '/class/' + encodeURIComponent(cls) : ''));
+        });
+        return b;
+      };
+      tabsHost.appendChild(mkTab('All classes', null));
+      avail.forEach((c) => tabsHost.appendChild(mkTab(c, c)));
+    }
   }
 
   const body = document.getElementById('db-body');

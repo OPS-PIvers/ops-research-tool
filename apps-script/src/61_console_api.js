@@ -236,6 +236,9 @@ function consoleGetProjectDashboard(projectId, className, bypassCache) {
   let scopedClasses = isAdmin_(staff)
     ? projectClasses
     : projectClasses.filter((c) => teacherClasses.indexOf(c) >= 0);
+  // The caller's full set of classes for this project (BEFORE any single-class
+  // filter) — drives the dashboard's class-period toggle.
+  const availableClasses = scopedClasses.slice().sort();
   if (className) {
     const cn = String(className).trim();
     scopedClasses = scopedClasses.filter((c) => c === cn);
@@ -291,6 +294,8 @@ function consoleGetProjectDashboard(projectId, className, bypassCache) {
       bundleName: bundle ? bundle.name : '',
       memberClasses: projectClasses,
       scopedClasses,
+      availableClasses,                                   // all the caller's classes for this project
+      activeClass: className ? String(className).trim() : null,
     },
     students,
     groups,
