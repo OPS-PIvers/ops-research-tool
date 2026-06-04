@@ -2325,11 +2325,6 @@ function devDeleteBundleRow_(bundleId) {
   return false;
 }
 
-/**
- * Locks consoleCreateBundle: staff-gated wrapper over createBundle_ that
- * persists a reusable bundle; off-palette colors and wrong label counts are
- * rejected by the underlying validator.
- */
 function devTestRequirementsValidation() {
   let pass = 0, fail = 0;
   const check = (l, c) => { if (c) { pass++; console.log('PASS ' + l); } else { fail++; console.log('FAIL ' + l); } };
@@ -2370,6 +2365,11 @@ function devTestConsoleUpdateRequirements() {
   console.log(pass + '/' + (pass + fail) + ' passed');
 }
 
+/**
+ * Locks consoleCreateBundle: staff-gated wrapper over createBundle_ that
+ * persists a reusable bundle; off-palette colors and wrong label counts are
+ * rejected by the underlying validator.
+ */
 function devTestConsoleCreateBundle() {
   const checks = [];
   const created = [];
