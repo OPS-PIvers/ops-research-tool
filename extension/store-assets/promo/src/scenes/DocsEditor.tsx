@@ -38,7 +38,7 @@ export const DocsEditor: React.FC = () => {
 
   return (
     <Brand>
-      <Caption step="Step 5" title="Cite & insert in Google Docs" />
+      <Caption step="Step 5" title="Insert your bibliography" />
 
       <div style={{position: 'absolute', left: 290, top: 270, opacity: winO, transform: `translateY(${winY}px)`}}>
         <BrowserFrame width={1340} url="https://docs.google.com/document/d/…/edit">

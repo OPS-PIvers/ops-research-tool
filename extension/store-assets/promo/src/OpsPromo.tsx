@@ -8,6 +8,7 @@ import {Intro} from './scenes/Intro';
 import {Highlight} from './scenes/Highlight';
 import {Citation} from './scenes/Citation';
 import {Organize} from './scenes/Organize';
+import {DocsIntro} from './scenes/DocsIntro';
 import {Modal} from './scenes/Modal';
 import {DocsEditor} from './scenes/DocsEditor';
 import {Dashboard} from './scenes/Dashboard';
@@ -27,6 +28,8 @@ export const OpsPromo: React.FC = () => (
       <TransitionSeries.Sequence durationInFrames={T.citation}><Citation /></TransitionSeries.Sequence>
       <TransitionSeries.Transition presentation={slideR} timing={t} />
       <TransitionSeries.Sequence durationInFrames={T.organize}><Organize /></TransitionSeries.Sequence>
+      <TransitionSeries.Transition presentation={fade()} timing={t} />
+      <TransitionSeries.Sequence durationInFrames={T.docsIntro}><DocsIntro /></TransitionSeries.Sequence>
       <TransitionSeries.Transition presentation={fade()} timing={t} />
       <TransitionSeries.Sequence durationInFrames={T.modal}><Modal /></TransitionSeries.Sequence>
       <TransitionSeries.Transition presentation={fade()} timing={t} />

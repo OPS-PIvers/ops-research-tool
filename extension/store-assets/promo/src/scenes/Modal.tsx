@@ -46,7 +46,7 @@ export const Modal: React.FC = () => {
   return (
     <Brand>
       <AbsoluteFill style={{background: 'rgba(12,18,46,0.55)'}} />
-      <Caption step="Step 4" title="Edit any source in the full editor" />
+      <Caption step="Open Editor" title="Edit any source in full" />
 
       <div style={{position: 'absolute', left: M.left, top: M.top, width: M.w, height: M.h, background: '#fff', borderRadius: 14, boxShadow: '0 50px 110px rgba(8,14,40,0.6)', opacity: o, transform: `scale(${scale})`, display: 'flex', flexDirection: 'column', overflow: 'hidden', fontFamily: ROBOTO}}>
         {/* header: close + source switcher */}

@@ -5,14 +5,16 @@ export const T = {
   highlight: 250,
   citation: 185,
   organize: 170,
+  docsIntro: 150,
   modal: 205,
-  docs: 245,
+  docs: 215,
   dashboard: 200,
   drilldown: 215,
   outro: 130,
   trans: 18,
 };
 
-// 8 transitions between the 9 scenes.
+// 9 transitions between the 10 scenes.
 export const TOTAL =
-  T.intro + T.highlight + T.citation + T.organize + T.modal + T.docs + T.dashboard + T.drilldown + T.outro - 8 * T.trans;
+  T.intro + T.highlight + T.citation + T.organize + T.docsIntro + T.modal + T.docs +
+  T.dashboard + T.drilldown + T.outro - 9 * T.trans;
