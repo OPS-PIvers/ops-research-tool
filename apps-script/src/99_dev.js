@@ -2330,6 +2330,46 @@ function devDeleteBundleRow_(bundleId) {
  * persists a reusable bundle; off-palette colors and wrong label counts are
  * rejected by the underlying validator.
  */
+function devTestRequirementsValidation() {
+  let pass = 0, fail = 0;
+  const check = (l, c) => { if (c) { pass++; console.log('PASS ' + l); } else { fail++; console.log('FAIL ' + l); } };
+  const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } };
+
+  const ok = validateRequirementsInput_({ minSources: '5', minHighlightsPerSource: 3, minDistinctCategories: 2, requireAnnotation: false });
+  check('coerces "5" → 5',              ok.minSources === 5);
+  check('keeps requireAnnotation false', ok.requireAnnotation === false);
+
+  const blank = validateRequirementsInput_({ minSources: '', requireAnnotation: true });
+  check('blank minSources omitted',     blank.minSources === undefined);
+  check('default requireAnnotation true', blank.requireAnnotation === true);
+
+  check('rejects minSources 0',         throws(() => validateRequirementsInput_({ minSources: 0 })));
+  check('rejects negative',             throws(() => validateRequirementsInput_({ minHighlightsPerSource: -1 })));
+  check('rejects minDistinct 6',        throws(() => validateRequirementsInput_({ minDistinctCategories: 6 })));
+  check('rejects non-numeric',          throws(() => validateRequirementsInput_({ minSources: 'lots' })));
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
+
+function devTestConsoleUpdateRequirements() {
+  let pass = 0, fail = 0;
+  const check = (l, c) => { if (c) { pass++; console.log('PASS ' + l); } else { fail++; console.log('FAIL ' + l); } };
+  const proj = listActiveProjects_().find((p) => /dev/i.test(p.name));
+  if (!proj) { console.log('FAIL no Dev Project — run devSeedDevProject first'); return; }
+
+  consoleUpdateProjectRequirements(proj.projectId, { minSources: 4, minHighlightsPerSource: 2, minDistinctCategories: 3, requireAnnotation: false });
+  const after = parseProjectRequirements_(getProject_(proj.projectId));
+  check('minSources persisted 4',        after.minSources === 4);
+  check('minHighlights persisted 2',     after.minHighlightsPerSource === 2);
+  check('minDistinct persisted 3',       after.minDistinctCategories === 3);
+  check('requireAnnotation persisted false', after.requireAnnotation === false);
+
+  consoleUpdateProjectRequirements(proj.projectId, { requireAnnotation: true });
+  const reset = parseProjectRequirements_(getProject_(proj.projectId));
+  check('reset → minSources null',       reset.minSources === null);
+  check('reset → requireAnnotation true', reset.requireAnnotation === true);
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
+
 function devTestConsoleCreateBundle() {
   const checks = [];
   const created = [];

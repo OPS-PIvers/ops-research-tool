@@ -126,6 +126,29 @@ function projectClassList_(project) {
 }
 
 /**
+ * Validate raw requirements form input → a compact object suitable for
+ * JSON.stringify into the registry. Unset (blank/undefined) numeric fields are
+ * OMITTED; requireAnnotation always present (defaults true). Throws on a bad
+ * number so the teacher gets a clear message. Pure.
+ */
+function validateRequirementsInput_(raw) {
+  raw = raw || {};
+  const out = {};
+  const intField = (v, label, max) => {
+    if (v === '' || v === null || v === undefined) return undefined;  // unset
+    const n = Math.floor(Number(v));
+    if (!isFinite(n) || n < 1) throw new Error(label + ' must be a whole number ≥ 1');
+    if (max && n > max) throw new Error(label + ' cannot exceed ' + max);
+    return n;
+  };
+  const ms = intField(raw.minSources, 'Min sources');                          if (ms !== undefined) out.minSources = ms;
+  const mh = intField(raw.minHighlightsPerSource, 'Min highlights per source'); if (mh !== undefined) out.minHighlightsPerSource = mh;
+  const mc = intField(raw.minDistinctCategories, 'Min distinct categories', 5); if (mc !== undefined) out.minDistinctCategories = mc;
+  out.requireAnnotation = raw.requireAnnotation === false ? false : true;
+  return out;
+}
+
+/**
  * Create a project from the Console wizard. Server validates inputs and
  * calls the existing createProject_ helper, which provisions the project
  * folder. Returns the new project record (same shape as
@@ -157,9 +180,11 @@ function consoleCreateProject(args) {
     }
   }
 
+  const requirements = validateRequirementsInput_(args.requirements);
+
   const project = createProject_({
     name, schoolYear, bundleId, memberClasses,
-    createdBy: actorEmail,
+    createdBy: actorEmail, requirements,
   });
 
   // Return a shape compatible with consoleGetMyProjects entries (sans the
@@ -177,6 +202,7 @@ function consoleCreateProject(args) {
       scopedClasses: memberClasses,
       studentCount: 0,    // client will refetch for accurate counts
       status: project.status,
+      requirements: parseProjectRequirements_(project),
     },
   };
 }
@@ -201,6 +227,29 @@ function consoleUnarchiveProject(projectId) {
   if (!projectId) throw new Error('projectId required');
   const result = unarchiveProjectFully_(projectId, actorEmail, '');
   return { ok: true, projectId, errors: result.errors };
+}
+
+/**
+ * Edit a project's requirements after creation. Soft settings — staff-gated
+ * (any staff, like archive/unarchive), no class-ownership restriction. Rewrites
+ * only the requirements cell. Returns the normalized requirements.
+ */
+function consoleUpdateProjectRequirements(projectId, requirements) {
+  const actorEmail = getActorEmail_();
+  assertStaff_(actorEmail);
+  if (!projectId) throw new Error('projectId required');
+  const project = getProject_(projectId);
+  if (!project) throw new Error('Unknown project ' + projectId);
+  const validated = validateRequirementsInput_(requirements);
+  const ss = SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID);
+  const tab = getTab_(ss, TABS.PROJECTS);
+  ensureHeaders_(tab, HEADERS.PROJECTS);   // heals the trailing column if absent
+  const rowIdx = findRowByKey_(tab, HEADERS.PROJECTS, 'projectId', projectId);
+  if (rowIdx < 0) throw new Error('Unknown projectId ' + projectId);
+  const col = HEADERS.PROJECTS.indexOf('requirements') + 1;
+  const json = JSON.stringify(validated);
+  tab.getRange(rowIdx, col).setValue(json);
+  return { ok: true, projectId, requirements: parseProjectRequirements_({ requirements: json }) };
 }
 
 /**

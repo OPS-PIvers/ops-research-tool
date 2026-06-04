@@ -25,7 +25,7 @@ function listActiveProjectsForStudent_(actorEmail) {
  * Create a project. Returns the new project object.
  * Caller responsibility: ensure caller is staff (gating done at endpoint layer).
  */
-function createProject_({ name, schoolYear, bundleId, memberClasses, createdBy }) {
+function createProject_({ name, schoolYear, bundleId, memberClasses, createdBy, requirements }) {
   if (!name) throw new Error('Project name required');
   if (!schoolYear) throw new Error('schoolYear required');
   if (!bundleId) throw new Error('bundleId required');
@@ -44,6 +44,7 @@ function createProject_({ name, schoolYear, bundleId, memberClasses, createdBy }
     rootFolderId: projectFolder.getId(),
     createdBy,
     createdAt: nowIso_(),
+    requirements: JSON.stringify(requirements || { requireAnnotation: true }),
   };
   const ss = SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID);
   appendRow_(getTab_(ss, TABS.PROJECTS), HEADERS.PROJECTS, project);
@@ -56,4 +57,16 @@ function archiveProject_(projectId) {
 
 function unarchiveProject_(projectId) {
   flipProjectStatus_(projectId, PROJECT_STATUS.ACTIVE);
+}
+
+/**
+ * One-time (idempotent): ensure the Projects tab header row carries the
+ * trailing `requirements` column. ensureHeaders_ appends a missing trailing
+ * label and is a no-op once present. Existing rows need no backfill — an empty
+ * cell parses to defaults. Run once from the editor after deploy.
+ */
+function migrateAddRequirements_() {
+  const ss = SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID);
+  ensureHeaders_(getTab_(ss, TABS.PROJECTS), HEADERS.PROJECTS);
+  return { ok: true, headers: HEADERS.PROJECTS };
 }
