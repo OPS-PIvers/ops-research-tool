@@ -340,6 +340,38 @@ function enroll_(email, className) {
   return { ok: true };
 }
 
+/**
+ * Enroll many students in a class in ONE batched append (skips those already
+ * enrolled). Returns the number newly enrolled. Used by the bulk class import so
+ * a 30-student paste is a single write, not 30.
+ */
+function enrollMany_(emails, className) {
+  ensureClassSchema_();
+  const cls = String(className || '').trim();
+  if (!cls) throw new Error('class required');
+  const tab = getTab_(rosterWorkbook_(), TABS.ENROLLMENTS);
+  const have = new Set(
+    readAllAsObjects_(tab, HEADERS.ENROLLMENTS)
+      .filter((e) => String(e.Class).trim() === cls)
+      .map((e) => String(e.Email).toLowerCase())
+  );
+  const emailCol = HEADERS.ENROLLMENTS.indexOf('Email');
+  const toAdd = [];
+  (emails || []).forEach((em) => {
+    const e = String(em || '').trim().toLowerCase();
+    if (e && !have.has(e)) {
+      have.add(e);
+      const row = []; row[emailCol] = e; row[HEADERS.ENROLLMENTS.indexOf('Class')] = cls;
+      toAdd.push(HEADERS.ENROLLMENTS.map((h, i) => row[i] || ''));
+    }
+  });
+  if (toAdd.length) {
+    tab.getRange(tab.getLastRow() + 1, 1, toAdd.length, HEADERS.ENROLLMENTS.length).setValues(toAdd);
+  }
+  invalidateRosterMemo_();
+  return toAdd.length;
+}
+
 /** Remove a student from a class (idempotent). */
 function unenroll_(email, className) {
   ensureClassSchema_();

@@ -1310,10 +1310,16 @@ function openManageClassStudentsModal_(c, host) {
     <div class="admin-modal__header">Students in ${esc_(c.Class)}</div>
     <div class="admin-modal__form">
       <div class="admin-class-enrolled" id="class-enrolled"><div class="skel-lines" style="width:100%"><div class="db-skel-bar db-skel-bar--wide"></div><div class="db-skel-bar"></div><div class="db-skel-bar db-skel-bar--narrow"></div></div></div>
-      <label>Add student
+      <label>Add one student
         <select id="class-add-pick"><option value="">Loading students…</option></select>
       </label>
       <button class="admin-btn-secondary" id="class-add-btn" disabled>Add to class</button>
+      <div class="admin-bulk-sep">— or paste a class list —</div>
+      <label>Paste students
+        <span class="admin-bulk-hint">One per line: <code>First, Last, email</code> (tab- or comma-separated; paste straight from a spreadsheet). New names are created; a bare email enrolls an existing student.</span>
+        <textarea id="class-bulk" rows="5" class="admin-bulk-ta" placeholder="Ada&#9;Lovelace&#9;ada.lovelace@orono.k12.mn.us&#10;Alan, Turing, alan.turing@orono.k12.mn.us"></textarea>
+      </label>
+      <button class="admin-btn-secondary" id="class-bulk-btn" disabled>Import list</button>
     </div>
     <div class="admin-modal__actions">
       <button class="admin-modal__cancel">Done</button>
@@ -1385,22 +1391,47 @@ function openManageClassStudentsModal_(c, host) {
       .adminEnrollStudent(email, c.Class);
   });
 
-  // Load the class roster.
-  google.script.run
-    .withSuccessHandler((resp) => {
-      enrolled = (resp.students || []).map((s) => ({
-        Email: s.Email,
-        name: (String(s.Last || '') + ', ' + String(s.First || '')).replace(/^, |, $/g, '') || s.Email,
-      }));
-      repaintEnrolled();
-      if (adminClasses.students) repaintPicker();
-    })
-    .withFailureHandler((e) => { enrolledHost.innerHTML = '<div class="console-empty">Could not load: ' + esc_(String(e && e.message || e)) + '</div>'; })
-    .adminGetClassRoster(c.Class);
+  // Bulk paste-to-enroll a class list.
+  const bulkTa = modal.querySelector('#class-bulk');
+  const bulkBtn = modal.querySelector('#class-bulk-btn');
+  bulkTa.addEventListener('input', () => { bulkBtn.disabled = !bulkTa.value.trim(); });
+  bulkBtn.addEventListener('click', () => {
+    const rows = parsePastedStudents_(bulkTa.value);
+    if (!rows.length) { setStatus('Nothing to import.', 'bad', 2000); return; }
+    bulkBtn.disabled = true; bulkBtn.textContent = '…';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        bulkBtn.textContent = 'Import list'; bulkTa.value = ''; bulkBtn.disabled = true;
+        const parts = [resp.enrolled + ' enrolled'];
+        if (resp.created) parts.push(resp.created + ' new');
+        if (resp.alreadyEnrolled) parts.push(resp.alreadyEnrolled + ' already in class');
+        if (resp.errors && resp.errors.length) parts.push(resp.errors.length + ' skipped');
+        setStatus('Imported: ' + parts.join(', '), (resp.enrolled === 0 && resp.errors && resp.errors.length) ? 'bad' : 'good', 6000);
+        c.studentCount += resp.enrolled;
+        if (state.view === 'ADMIN_CLASSES') renderShell_();
+        adminClasses.students = null;   // new students may have been created → refresh picker source
+        loadEnrolled();
+        loadPickerSource();
+      })
+      .withFailureHandler((e) => { bulkBtn.disabled = false; bulkBtn.textContent = 'Import list'; setStatus(String(e && e.message || e), 'bad', 4000); })
+      .adminBulkEnroll(c.Class, rows);
+  });
 
-  // Load the distinct-students picker source (cached).
-  if (adminClasses.students) { repaintPicker(); }
-  else {
+  function loadEnrolled() {
+    google.script.run
+      .withSuccessHandler((resp) => {
+        enrolled = (resp.students || []).map((s) => ({
+          Email: s.Email,
+          name: (String(s.Last || '') + ', ' + String(s.First || '')).replace(/^, |, $/g, '') || s.Email,
+        }));
+        repaintEnrolled();
+        if (adminClasses.students) repaintPicker();
+      })
+      .withFailureHandler((e) => { enrolledHost.innerHTML = '<div class="console-empty">Could not load: ' + esc_(String(e && e.message || e)) + '</div>'; })
+      .adminGetClassRoster(c.Class);
+  }
+  function loadPickerSource() {
+    if (adminClasses.students) { repaintPicker(); return; }
     google.script.run
       .withSuccessHandler((resp) => {
         const byEmail = {};
@@ -1414,6 +1445,24 @@ function openManageClassStudentsModal_(c, host) {
       .withFailureHandler(() => { pick.innerHTML = '<option value="">(could not load students)</option>'; })
       .adminGetRoster();
   }
+  loadEnrolled();
+  loadPickerSource();
+}
+
+/**
+ * Parse a pasted class list into [{ID,First,Last,Email}] rows. One student per
+ * line; fields tab- or comma-separated (spreadsheet paste). The token with '@'
+ * is the email, an all-digits token is the ID, the remaining tokens are
+ * First/Last. A bare email line → enroll an existing student.
+ */
+function parsePastedStudents_(text) {
+  return String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((line) => {
+    const toks = line.split(/\t|,/).map((t) => t.trim()).filter(Boolean);
+    const email = toks.find((t) => t.indexOf('@') > 0) || '';
+    const id = toks.find((t) => /^\d+$/.test(t)) || '';
+    const names = toks.filter((t) => t !== email && t !== id);
+    return { ID: id, First: names[0] || '', Last: names[1] || '', Email: email };
+  });
 }
 
 function renderAdminLifecycle_(main) {

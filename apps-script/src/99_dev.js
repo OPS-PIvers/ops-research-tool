@@ -915,6 +915,44 @@ function devTestMultiClassEnrollment() {
 }
 
 /**
+ * Bulk paste-to-enroll: creates new students (with names), enrolls an existing
+ * student (email-only), counts already-enrolled, and reports per-row errors for
+ * a blank email and an unknown email with no name. Cleans up the new students.
+ */
+function devTestBulkEnroll() {
+  const checks = [];
+  const check = (label, ok) => { checks.push({ label, ok }); };
+  devSeedDevProject();          // ensures the DEV class + the actor enrolled in it
+  ensureClassSchema_();
+  const e1 = 'bulk.one@orono.k12.mn.us';
+  const e2 = 'bulk.two@orono.k12.mn.us';
+  const me = getActorEmail_();
+  try {
+    const resp = adminBulkEnroll('DEV', [
+      { First: 'Bulk', Last: 'One', Email: e1 },
+      { First: 'Bulk', Last: 'Two', Email: e2 },
+      { Email: me },                                  // existing + already in DEV
+      { First: 'No', Last: 'Email', Email: '' },      // error: blank email
+      { Email: 'unknown.person@orono.k12.mn.us' },    // error: unknown, no name
+    ]);
+    check('created 2 new students', resp.created === 2);
+    check('enrolled 2 new', resp.enrolled === 2);
+    check('1 already enrolled', resp.alreadyEnrolled === 1);
+    check('2 rows errored', resp.errors.length === 2);
+    check('e1 enrolled in DEV', getStudentClasses_(e1).indexOf('DEV') >= 0);
+    check('e2 student created', !!getStudentIdentity_(e2));
+    const again = adminBulkEnroll('DEV', [{ Email: e1 }, { Email: e2 }]);
+    check('idempotent re-run enrolls 0', again.enrolled === 0 && again.alreadyEnrolled === 2);
+  } finally {
+    try { deleteStudent_(e1); } catch (e) {}
+    try { deleteStudent_(e2); } catch (e) {}
+  }
+  const pass = checks.every((c) => c.ok);
+  console.log(JSON.stringify({ ok: pass, checks }, null, 2));
+  return { ok: pass };
+}
+
+/**
  * Locks the solo-Sheet naming + lookup invariant (pure — no Drive): the
  * friendly file name keeps the email as its trailing token, and
  * soloSheetNameMatches_ resolves both the legacy bare-email name and the new

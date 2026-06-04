@@ -824,6 +824,55 @@ function adminSetStudentClasses(email, classNames) {
 }
 
 /**
+ * Bulk-enroll students into a class from a pasted list. Each row is
+ * {ID?, First?, Last?, Email}. A row with First+Last creates (or updates) the
+ * student identity; an email-only row enrolls an existing student and errors if
+ * that email is unknown (we can't create a student without a name). Enrollments
+ * are written in one batch. Returns
+ *   { ok, class, enrolled, created, alreadyEnrolled, errors:[{rowIndex,error}] }.
+ */
+function adminBulkEnroll(className, rows) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  const cls = String(className || '').trim();
+  if (!cls) throw new Error('class name required');
+  if (!Array.isArray(rows)) throw new Error('rows must be an array');
+  ensureClassSchema_();
+  if (!getClassRecord_(cls)) throw new Error('No such class: ' + cls);
+
+  const alreadyBefore = new Set(enrollmentsForClass_(cls).map((e) => e.toLowerCase()));
+  const errors = [];
+  const toEnroll = [];
+  let created = 0;
+  rows.forEach((r, i) => {
+    try {
+      const email = String((r && r.Email) || '').trim().toLowerCase();
+      if (!email || email.indexOf('@') < 1 || email.indexOf('.') < 0) {
+        errors.push({ rowIndex: i + 1, error: 'missing/invalid email' });
+        return;
+      }
+      const first = String((r && r.First) || '').trim();
+      const last = String((r && r.Last) || '').trim();
+      const id = String((r && r.ID) || '').trim();
+      const existing = getStudentIdentity_(email);
+      if (!existing) {
+        if (!first || !last) { errors.push({ rowIndex: i + 1, error: 'new student needs First + Last: ' + email }); return; }
+        upsertStudent_({ ID: id, First: first, Last: last, Email: email });
+        created++;
+      } else if (first || last || id) {
+        upsertStudent_({ ID: id || existing.ID, First: first || existing.First, Last: last || existing.Last, Email: email });
+      }
+      toEnroll.push(email);
+    } catch (e) {
+      errors.push({ rowIndex: i + 1, error: String(e && e.message || e) });
+    }
+  });
+  const enrolled = enrollMany_(toEnroll, cls);
+  const alreadyEnrolled = toEnroll.filter((e) => alreadyBefore.has(e)).length;
+  return { ok: true, class: cls, enrolled, created, alreadyEnrolled, errors };
+}
+
+/**
  * Bulk archive every active project in the given year. Confirm phrase
  * must equal `ARCHIVE <schoolYear>` exactly (server re-checks client
  * gating).
