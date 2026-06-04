@@ -360,8 +360,10 @@ select, input, textarea { font: inherit; }
 /* Layout row above the body to align tabs (left) and legend (right) */
 .db-sub-row {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: flex-end;
+  gap: 12px;
   padding: 2px 0 12px;
 }
 .db-classtabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 0; }
