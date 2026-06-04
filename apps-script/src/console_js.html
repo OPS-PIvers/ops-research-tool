@@ -83,10 +83,11 @@ function parseHash_(hash) {
 
   // Admin routes.
   if (parts[0] === 'admin') {
+    if (parts[1] === 'classes')       return { view: 'ADMIN_CLASSES' };
     if (parts[1] === 'roster')        return { view: 'ADMIN_ROSTER' };
     if (parts[1] === 'staff')         return { view: 'ADMIN_STAFF' };
     if (parts[1] === 'archive-year')  return { view: 'ADMIN_LIFECYCLE' };
-    return { view: 'ADMIN_ROSTER' };  // default admin landing
+    return { view: 'ADMIN_CLASSES' };  // default admin landing
   }
 
   // Existing teacher routes.
@@ -161,6 +162,7 @@ function renderView_(main) {
     case 'DASHBOARD':      return renderDashboard_(main);
     case 'STUDENT':        return renderStudentDetail_(main);
     case 'GROUP':          return renderGroupDetail_(main);
+    case 'ADMIN_CLASSES':  return renderAdminClasses_(main);
     case 'ADMIN_ROSTER':   return renderAdminRoster_(main);
     case 'ADMIN_STAFF':    return renderAdminStaff_(main);
     case 'ADMIN_LIFECYCLE':return renderAdminLifecycle_(main);
@@ -2409,6 +2411,7 @@ function buildAdminDropdown_() {
   const menu = document.createElement('div');
   menu.className = 'console-header__admin-menu';
   const opts = [
+    { label: 'Classes',               path: '/admin/classes' },
     { label: 'Roster',                path: '/admin/roster' },
     { label: 'Staff',                 path: '/admin/staff' },
     { label: 'Archive school year',   path: '/admin/archive-year' },

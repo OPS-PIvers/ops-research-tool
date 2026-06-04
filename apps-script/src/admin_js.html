@@ -25,6 +25,13 @@ const adminStaff = {
   openMenuEmail: null,
 };
 
+const adminClasses = {
+  classes: null,      // [{Class,TeacherEmail,teacherName,SchoolYear,Status,studentCount}]
+  staff: null,        // teacher picker source
+  students: null,     // distinct students for the enroll picker [{Email,name}]
+  openMenuClass: null,
+};
+
 const adminLifecycle = {
   years: null,
   selectedYear: null,
@@ -45,6 +52,10 @@ document.addEventListener('click', () => {
   if (adminStaff.openMenuEmail !== null) {
     adminStaff.openMenuEmail = null;
     if (state.view === 'ADMIN_STAFF') changed = true;
+  }
+  if (adminClasses.openMenuClass !== null) {
+    adminClasses.openMenuClass = null;
+    if (state.view === 'ADMIN_CLASSES') changed = true;
   }
   if (changed) renderShell_();
 });
@@ -1091,6 +1102,312 @@ function openDeleteStaffModal_(r, host) {
         .adminDeleteStaffRow(r.Email);
     }),
   });
+}
+
+// ============================================================
+// ADMIN_CLASSES — Classes v2 management (create, assign teacher, enroll)
+// ============================================================
+
+function renderAdminClasses_(main) {
+  const createBtn = document.createElement('button');
+  createBtn.className = 'admin-btn-primary';
+  createBtn.textContent = '+ Create class';
+  createBtn.addEventListener('click', openCreateClassModal_);
+  main.appendChild(buildAdminBreadcrumb_('Classes', createBtn));
+
+  const host = document.createElement('div');
+  host.className = 'admin-table-host';
+  main.appendChild(host);
+
+  // Load staff (teacher picker) + classes, then render.
+  if (adminClasses.staff === null) {
+    host.innerHTML = '<div class="admin-skeleton">Loading…</div>';
+    google.script.run
+      .withSuccessHandler((resp) => { adminClasses.staff = resp.rows || []; renderAdminClasses_(main); })
+      .withFailureHandler(onFail_('loading staff'))
+      .adminGetStaff();
+    return;
+  }
+  if (adminClasses.classes === null) {
+    host.innerHTML = '<div class="admin-skeleton">Loading classes…</div>';
+    google.script.run
+      .withSuccessHandler((resp) => { adminClasses.classes = resp.classes || []; renderClassesTable_(host); })
+      .withFailureHandler(onFail_('loading classes'))
+      .adminListClasses();
+  } else {
+    renderClassesTable_(host);
+  }
+}
+
+function renderClassesTable_(host) {
+  host.innerHTML = '';
+  if (!adminClasses.classes.length) {
+    const empty = document.createElement('div');
+    empty.className = 'console-empty';
+    empty.textContent = 'No classes yet. Click + Create class to get started.';
+    host.appendChild(empty);
+    return;
+  }
+  const table = document.createElement('table');
+  table.className = 'admin-table';
+  table.innerHTML = '<thead><tr><th>Class</th><th>Teacher</th><th>Students</th><th></th></tr></thead>';
+  const tbody = document.createElement('tbody');
+  adminClasses.classes
+    .slice()
+    .sort((a, b) => String(a.Class).localeCompare(String(b.Class)))
+    .forEach((c) => tbody.appendChild(buildClassRow_(c, host)));
+  table.appendChild(tbody);
+  host.appendChild(table);
+}
+
+function buildClassRow_(c, host) {
+  const tr = document.createElement('tr');
+
+  const nameTd = document.createElement('td');
+  nameTd.innerHTML = '<strong>' + esc_(c.Class) + '</strong>';
+  tr.appendChild(nameTd);
+
+  // Teacher — select from Staff (assigned once per class).
+  const teacherTd = document.createElement('td');
+  teacherTd.appendChild(buildTeacherSelect_(c));
+  tr.appendChild(teacherTd);
+
+  // Students — count + Manage.
+  const studTd = document.createElement('td');
+  const manage = document.createElement('button');
+  manage.className = 'admin-link-btn';
+  manage.textContent = c.studentCount + ' · Manage';
+  manage.addEventListener('click', () => openManageClassStudentsModal_(c, host));
+  studTd.appendChild(manage);
+  tr.appendChild(studTd);
+
+  // Kebab — delete.
+  const kebabTd = document.createElement('td');
+  kebabTd.className = 'admin-table__kebab';
+  const kebab = document.createElement('button');
+  kebab.className = 'admin-table__kebab-btn';
+  kebab.textContent = '⋯';
+  kebab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    adminClasses.openMenuClass = adminClasses.openMenuClass === c.Class ? null : c.Class;
+    renderClassesTable_(host);
+  });
+  kebabTd.appendChild(kebab);
+  if (adminClasses.openMenuClass === c.Class) {
+    const menu = document.createElement('div');
+    menu.className = 'admin-table__kebab-menu';
+    const del = document.createElement('button');
+    del.className = 'admin-table__kebab-danger';
+    del.textContent = 'Delete class…';
+    del.addEventListener('click', (e) => { e.stopPropagation(); openDeleteClassModal_(c, host); });
+    menu.appendChild(del);
+    kebabTd.appendChild(menu);
+  }
+  tr.appendChild(kebabTd);
+  return tr;
+}
+
+function buildTeacherSelect_(c) {
+  const sel = document.createElement('select');
+  sel.className = 'admin-staff__role';
+  const none = document.createElement('option');
+  none.value = ''; none.textContent = '(unassigned)';
+  sel.appendChild(none);
+  (adminClasses.staff || []).forEach((s) => {
+    const o = document.createElement('option');
+    o.value = s.Email;
+    o.textContent = (s.Name ? s.Name + ' · ' : '') + s.Email;
+    if (String(s.Email).toLowerCase() === String(c.TeacherEmail || '').toLowerCase()) o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.addEventListener('change', () => {
+    const prev = c.TeacherEmail;
+    google.script.run
+      .withSuccessHandler(() => { c.TeacherEmail = sel.value; setStatus('Teacher updated.', 'good', 1500); })
+      .withFailureHandler((e) => { sel.value = prev; setStatus(String(e && e.message || e), 'bad', 4000); })
+      .adminUpdateClass(c.Class, { TeacherEmail: sel.value });
+  });
+  return sel;
+}
+
+function openCreateClassModal_() {
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'admin-modal';
+  const teacherOpts = (adminClasses.staff || [])
+    .map((s) => '<option value="' + esc_(s.Email) + '">' + esc_((s.Name ? s.Name + ' · ' : '') + s.Email) + '</option>')
+    .join('');
+  modal.innerHTML = `
+    <div class="admin-modal__header">Create class</div>
+    <div class="admin-modal__form">
+      <label>Class name<input data-field="name" type="text" required placeholder="e.g. NHD Period 3"></label>
+      <label>Teacher
+        <select data-field="teacherEmail"><option value="">(choose from staff)</option>${teacherOpts}</select>
+      </label>
+      <label>School year (optional)<input data-field="schoolYear" type="text" placeholder="2025-26"></label>
+    </div>
+    <div class="admin-modal__actions">
+      <button class="admin-modal__cancel">Cancel</button>
+      <button class="admin-modal__primary" disabled>Create class</button>
+    </div>`;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  const nameInput = modal.querySelector('input[data-field="name"]');
+  const primary = modal.querySelector('.admin-modal__primary');
+  nameInput.addEventListener('input', () => { primary.disabled = !nameInput.value.trim(); });
+  const close = () => overlay.parentNode && overlay.parentNode.removeChild(overlay);
+  modal.querySelector('.admin-modal__cancel').addEventListener('click', close);
+  primary.addEventListener('click', () => {
+    const args = {
+      name: nameInput.value.trim(),
+      teacherEmail: modal.querySelector('select[data-field="teacherEmail"]').value,
+      schoolYear: modal.querySelector('input[data-field="schoolYear"]').value.trim(),
+    };
+    primary.disabled = true; primary.textContent = '…';
+    google.script.run
+      .withSuccessHandler(() => {
+        adminClasses.classes = null;   // refetch (count/teacherName)
+        close(); applyHash_();
+        setStatus('Class created.', 'good', 2000);
+      })
+      .withFailureHandler((e) => {
+        primary.disabled = false; primary.textContent = 'Create class';
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      })
+      .adminCreateClass(args);
+  });
+}
+
+function openDeleteClassModal_(c, host) {
+  typedConfirmModal_({
+    title: 'Delete class?',
+    bodyHtml: `<p>Delete <strong>${esc_(c.Class)}</strong> and remove its ${c.studentCount} enrollment(s)?</p>
+               <p>Per-student work Sheets are preserved. Projects that list this class by name keep it until you edit them.</p>`,
+    phrase: 'DELETE',
+    dangerLabel: 'Delete class',
+    onConfirm: () => new Promise((resolve, reject) => {
+      google.script.run
+        .withSuccessHandler(() => { adminClasses.classes = null; applyHash_(); setStatus('Class deleted.', 'good', 2000); resolve(); })
+        .withFailureHandler((e) => reject(e))
+        .adminDeleteClass(c.Class);
+    }),
+  });
+}
+
+function openManageClassStudentsModal_(c, host) {
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'admin-modal admin-modal--wide';
+  modal.innerHTML = `
+    <div class="admin-modal__header">Students in ${esc_(c.Class)}</div>
+    <div class="admin-modal__form">
+      <div class="admin-class-enrolled" id="class-enrolled"><div class="admin-skeleton">Loading…</div></div>
+      <label>Add student
+        <select id="class-add-pick"><option value="">Loading students…</option></select>
+      </label>
+      <button class="admin-btn-secondary" id="class-add-btn" disabled>Add to class</button>
+    </div>
+    <div class="admin-modal__actions">
+      <button class="admin-modal__cancel">Done</button>
+    </div>`;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  const close = () => overlay.parentNode && overlay.parentNode.removeChild(overlay);
+  modal.querySelector('.admin-modal__cancel').addEventListener('click', close);
+
+  const enrolledHost = modal.querySelector('#class-enrolled');
+  const pick = modal.querySelector('#class-add-pick');
+  const addBtn = modal.querySelector('#class-add-btn');
+  let enrolled = [];   // [{Email, name}]
+
+  function bumpCount(delta) {
+    c.studentCount += delta;
+    if (state.view === 'ADMIN_CLASSES') renderShell_();
+  }
+  function repaintPicker() {
+    const enrolledSet = {};
+    enrolled.forEach((e) => { enrolledSet[String(e.Email).toLowerCase()] = true; });
+    const opts = (adminClasses.students || [])
+      .filter((s) => !enrolledSet[String(s.Email).toLowerCase()])
+      .map((s) => '<option value="' + esc_(s.Email) + '">' + esc_(s.name + ' · ' + s.Email) + '</option>')
+      .join('');
+    pick.innerHTML = '<option value="">— choose a student —</option>' + opts;
+    addBtn.disabled = true;
+  }
+  function repaintEnrolled() {
+    enrolledHost.innerHTML = '';
+    if (!enrolled.length) { enrolledHost.innerHTML = '<div class="console-empty">No students enrolled yet.</div>'; return; }
+    enrolled.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach((s) => {
+      const chip = document.createElement('div');
+      chip.className = 'admin-enroll-chip';
+      chip.innerHTML = '<span>' + esc_(s.name) + ' · ' + esc_(s.Email) + '</span>';
+      const rm = document.createElement('button');
+      rm.className = 'admin-enroll-chip__rm';
+      rm.textContent = '×';
+      rm.title = 'Remove from class';
+      rm.addEventListener('click', () => {
+        rm.disabled = true;
+        google.script.run
+          .withSuccessHandler(() => {
+            enrolled = enrolled.filter((e) => e.Email !== s.Email);
+            bumpCount(-1); repaintEnrolled(); repaintPicker();
+            setStatus('Removed.', 'good', 1500);
+          })
+          .withFailureHandler((e) => { rm.disabled = false; setStatus(String(e && e.message || e), 'bad', 4000); })
+          .adminUnenrollStudent(s.Email, c.Class);
+      });
+      chip.appendChild(rm);
+      enrolledHost.appendChild(chip);
+    });
+  }
+
+  pick.addEventListener('change', () => { addBtn.disabled = !pick.value; });
+  addBtn.addEventListener('click', () => {
+    const email = pick.value;
+    if (!email) return;
+    addBtn.disabled = true;
+    google.script.run
+      .withSuccessHandler(() => {
+        const s = (adminClasses.students || []).find((x) => x.Email === email) || { Email: email, name: email };
+        enrolled.push(s);
+        bumpCount(1); repaintEnrolled(); repaintPicker();
+        setStatus('Added.', 'good', 1500);
+      })
+      .withFailureHandler((e) => { addBtn.disabled = false; setStatus(String(e && e.message || e), 'bad', 4000); })
+      .adminEnrollStudent(email, c.Class);
+  });
+
+  // Load the class roster.
+  google.script.run
+    .withSuccessHandler((resp) => {
+      enrolled = (resp.students || []).map((s) => ({
+        Email: s.Email,
+        name: (String(s.Last || '') + ', ' + String(s.First || '')).replace(/^, |, $/g, '') || s.Email,
+      }));
+      repaintEnrolled();
+      if (adminClasses.students) repaintPicker();
+    })
+    .withFailureHandler((e) => { enrolledHost.innerHTML = '<div class="console-empty">Could not load: ' + esc_(String(e && e.message || e)) + '</div>'; })
+    .adminGetClassRoster(c.Class);
+
+  // Load the distinct-students picker source (cached).
+  if (adminClasses.students) { repaintPicker(); }
+  else {
+    google.script.run
+      .withSuccessHandler((resp) => {
+        const byEmail = {};
+        (resp.rows || []).forEach((r) => {
+          const em = String(r.Email).toLowerCase();
+          if (!byEmail[em]) byEmail[em] = { Email: em, name: (String(r.Last || '') + ', ' + String(r.First || '')).replace(/^, |, $/g, '') || em };
+        });
+        adminClasses.students = Object.keys(byEmail).map((k) => byEmail[k]);
+        repaintPicker();
+      })
+      .withFailureHandler(() => { pick.innerHTML = '<option value="">(could not load students)</option>'; })
+      .adminGetRoster();
+  }
 }
 
 function renderAdminLifecycle_(main) {
