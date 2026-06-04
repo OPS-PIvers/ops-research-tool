@@ -102,6 +102,44 @@ const SIDEBAR_CSS = `
   color: #5f6368; font-size: 12px; line-height: 1.5;
 }
 
+/* Skeleton placeholder rows shown while a page-open / project-switch fetch is
+   in flight, so the list reads as "loading" instead of falsely "empty". A light
+   sweep animates across a neutral-gray base; honors prefers-reduced-motion. */
+.skel {
+  position: relative; margin: 6px 12px; padding: 10px 12px 10px 16px;
+  background: #fff; border: 1px solid #ecedef; border-radius: 6px;
+}
+.skel__bar {
+  position: absolute; top: 8px; bottom: 8px; left: 4px;
+  width: 4px; border-radius: 2px; background: #e8eaed;
+}
+.skel__line {
+  height: 9px; border-radius: 4px; margin-bottom: 8px;
+  background-color: #eceff1;
+  background-image: linear-gradient(90deg,
+    rgba(255,255,255,0) 0, rgba(255,255,255,0.65) 50%, rgba(255,255,255,0) 100%);
+  background-repeat: no-repeat; background-size: 140px 100%;
+  animation: opsShimmer 1.3s ease-in-out infinite;
+}
+.skel__line:last-child { margin-bottom: 0; }
+.skel__line--cat { width: 40%; height: 8px; margin-bottom: 10px; }
+.skel__line--full { width: 100%; }
+.skel__line--short { width: 78%; }
+@keyframes opsShimmer {
+  0% { background-position: -140px 0; }
+  100% { background-position: calc(100% + 140px) 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel__line { animation: none; }
+}
+/* Source-tab skeleton: stacked label + field placeholders, shown only while a
+   fetch is in flight and the page's source hasn't arrived yet. */
+.skel-src { padding: 12px 14px 16px; }
+.skel-src__fld { margin-bottom: 13px; }
+.skel__line--label { width: 32%; height: 7px; margin-bottom: 7px; }
+.skel__line--input { width: 100%; height: 30px; border-radius: 6px; }
+.skel__line--ta { width: 100%; height: 52px; border-radius: 6px; }
+
 .entry {
   position: relative; margin: 6px 12px; padding: 10px 12px 10px 16px;
   background: #fff; border: 1px solid #dadce0; border-radius: 6px;
@@ -326,6 +364,7 @@ const OpsSidebar = (function () {
     projects: [],         // all active projects the student belongs to (drives the picker)
     bundle: null,
     filter: null,         // null | category label
+    loadingHighlights: false, // true while a page-open / project-switch fetch is in flight (drives skeleton)
     editingId: null,      // highlightId currently being edited
     altPickerOpenId: null, // highlightId whose alt-pill picker is open
     confirmingDeleteId: null, // highlightId whose Delete button is showing "Confirm?"
@@ -447,50 +486,57 @@ const OpsSidebar = (function () {
     if (self.OpsEnabled && !self.OpsEnabled.get()) return;
     state.launcherEl.style.display = 'flex';
     state.launcherEl.title = 'OPS Research Tool — click to open the research panel';
+    // Enter the loading state so the list shows skeleton rows (not a false
+    // "empty") while we fetch. The finally clears it on every exit path —
+    // success, offline, or backend error — so the skeleton never sticks.
+    state.loadingHighlights = true;
     render_();
 
-    let resp;
     try {
-      resp = await chrome.runtime.sendMessage({ type: 'loadPageHighlights', rawUrl: opsPageUrl() });
-    } catch (e) {
-      return; // offline / backend down; launcher already visible, nothing more to do
-    }
-    if (!resp || !resp.ok) return;
-    if (resp && resp.ok && resp.source) {
-      const incoming = normalizeSourceObj_(resp.source);
-      const dirty = state.pageSource
-        && state.pageSource.sourceId === incoming.sourceId
-        && state.sourceSaveStatus === 'pending';
-      if (!dirty) state.pageSource = incoming;
-    }
-    if (!resp.highlights || resp.highlights.length === 0) { render_(); return; }
-    resp.highlights.forEach((h) => {
-      if (state.pageHighlights.some((x) => x.highlightId === h.highlightId)) return;
-      state.pageHighlights.push({
-        highlightId: h.highlightId,
-        sourceId: h.sourceId,
-        primaryCategory: h.primaryCategory,
-        secondaryCategory: h.secondaryCategory || '',
-        text: h.highlightedText,
-        note: h.note || '',
-        color: colorForLabel_(h.primaryCategory) || '#fff8c4',
-        syncStatus: 'saved',
+      let resp;
+      try {
+        resp = await chrome.runtime.sendMessage({ type: 'loadPageHighlights', rawUrl: opsPageUrl() });
+      } catch (e) {
+        return; // offline / backend down; launcher already visible, nothing more to do
+      }
+      if (!resp || !resp.ok) return;
+      if (resp.source) {
+        const incoming = normalizeSourceObj_(resp.source);
+        const dirty = state.pageSource
+          && state.pageSource.sourceId === incoming.sourceId
+          && state.sourceSaveStatus === 'pending';
+        if (!dirty) state.pageSource = incoming;
+      }
+      if (!resp.highlights || resp.highlights.length === 0) return;
+      resp.highlights.forEach((h) => {
+        if (state.pageHighlights.some((x) => x.highlightId === h.highlightId)) return;
+        state.pageHighlights.push({
+          highlightId: h.highlightId,
+          sourceId: h.sourceId,
+          primaryCategory: h.primaryCategory,
+          secondaryCategory: h.secondaryCategory || '',
+          text: h.highlightedText,
+          note: h.note || '',
+          color: colorForLabel_(h.primaryCategory) || '#fff8c4',
+          syncStatus: 'saved',
+        });
       });
-    });
 
-    // Try to re-anchor on the page so the colored spans come back too.
-    // Failures are surfaced per-entry in the sidebar; no silent misanchoring.
-    //
-    // Defer mode (OPS_DEFER_REANCHOR === true, set by the PDF panel before
-    // this script loads) skips the document-wide walk because the host
-    // renders content lazily — the panel will call reanchorIn() once per
-    // page as it comes on screen. Without this we'd mark every highlight
-    // as "page changed" on first load, since no pages are in the DOM yet.
-    if (self.reAnchorHighlights && !self.OPS_DEFER_REANCHOR) {
-      scheduleReanchorRetries_(resp.highlights);
+      // Try to re-anchor on the page so the colored spans come back too.
+      // Failures are surfaced per-entry in the sidebar; no silent misanchoring.
+      //
+      // Defer mode (OPS_DEFER_REANCHOR === true, set by the PDF panel before
+      // this script loads) skips the document-wide walk because the host
+      // renders content lazily — the panel will call reanchorIn() once per
+      // page as it comes on screen. Without this we'd mark every highlight
+      // as "page changed" on first load, since no pages are in the DOM yet.
+      if (self.reAnchorHighlights && !self.OPS_DEFER_REANCHOR) {
+        scheduleReanchorRetries_(resp.highlights);
+      }
+    } finally {
+      state.loadingHighlights = false;
+      render_();
     }
-
-    render_();
   }
 
   // Re-anchoring can run before late-rendered / hydrated / lazy-loaded body
@@ -631,6 +677,9 @@ const OpsSidebar = (function () {
     state.editingId = null;
     state.altPickerOpenId = null;
     state.sourceSaveStatus = null;
+    // Skeleton the list right away so the switch doesn't flash an empty state
+    // before loadForCurrentPage's fetch comes back with the new project's work.
+    state.loadingHighlights = true;
     try {
       await chrome.runtime.sendMessage({ type: 'setActiveProject', projectId });
     } catch (e) {
@@ -766,21 +815,56 @@ const OpsSidebar = (function () {
     }
 
     // ----- Annotations tab -----
-    if (state.bundle) state.panelEl.appendChild(renderFacetList_());
+    // While the first fetch is in flight with nothing loaded yet, suppress the
+    // facets (their counts would all read 0) and skeleton the list instead.
+    const loadingEmpty = state.loadingHighlights && state.pageHighlights.length === 0;
+    if (state.bundle && !loadingEmpty) state.panelEl.appendChild(renderFacetList_());
 
     // List
     state.listEl = el_('div', 'list');
-    const filtered = filteredHighlights_();
-    if (filtered.length === 0) {
-      const empty = el_('div', 'list__empty');
-      empty.textContent = state.pageHighlights.length === 0
-        ? 'Highlight some text on this page to start.'
-        : 'No highlights match this filter.';
-      state.listEl.appendChild(empty);
+    if (loadingEmpty) {
+      for (let i = 0; i < 3; i++) state.listEl.appendChild(renderSkeletonEntry_());
     } else {
-      filtered.forEach((h) => state.listEl.appendChild(renderEntry_(h)));
+      const filtered = filteredHighlights_();
+      if (filtered.length === 0) {
+        const empty = el_('div', 'list__empty');
+        empty.textContent = state.pageHighlights.length === 0
+          ? 'Highlight some text on this page to start.'
+          : 'No highlights match this filter.';
+        state.listEl.appendChild(empty);
+      } else {
+        filtered.forEach((h) => state.listEl.appendChild(renderEntry_(h)));
+      }
     }
     state.panelEl.appendChild(state.listEl);
+  }
+
+  // A single shimmering placeholder card matching the .entry footprint.
+  function renderSkeletonEntry_() {
+    const skel = el_('div', 'skel');
+    skel.setAttribute('aria-hidden', 'true');
+    skel.appendChild(el_('div', 'skel__bar'));
+    skel.appendChild(el_('div', 'skel__line skel__line--cat'));
+    skel.appendChild(el_('div', 'skel__line skel__line--full'));
+    skel.appendChild(el_('div', 'skel__line skel__line--short'));
+    return skel;
+  }
+
+  // Placeholder for the Source tab's citation form while the page's source loads.
+  function renderSourceSkeleton_() {
+    const wrap = el_('div', 'skel-src');
+    wrap.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < 5; i++) {
+      const fld = el_('div', 'skel-src__fld');
+      fld.appendChild(el_('div', 'skel__line skel__line--label'));
+      fld.appendChild(el_('div', 'skel__line skel__line--input'));
+      wrap.appendChild(fld);
+    }
+    const anno = el_('div', 'skel-src__fld');
+    anno.appendChild(el_('div', 'skel__line skel__line--label'));
+    anno.appendChild(el_('div', 'skel__line skel__line--ta'));
+    wrap.appendChild(anno);
+    return wrap;
   }
 
   const SRC_TYPES = ['website', 'article', 'book', 'primary'];
@@ -834,6 +918,9 @@ const OpsSidebar = (function () {
 
   function renderSourceTab_() {
     if (!state.pageSource) {
+      // Same fetch window as the list: skeleton while loading, false-empty only
+      // once the load has settled and there's genuinely no source yet.
+      if (state.loadingHighlights) return renderSourceSkeleton_();
       return el_('div', 'src__empty', 'Highlight something on this page to start its citation.');
     }
     const src = state.pageSource;
