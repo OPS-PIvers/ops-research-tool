@@ -293,6 +293,40 @@ These supersede or refine the spec — apply them before defaulting to plan text
   `.sb-modal__evidence { gap: 12px }` rule (cards were stacking flush, borders
   abutting). DOM-side — real-Doc QA only.
 
+- **The script runs on a STANDARD GCP project, and broad Drive needs an org
+  "Trusted" mark — this is a real landmine.** As of 2026-06-03 the Apps Script
+  project is linked to the standard GCP project **`ops-research-tool` /
+  `251187181508`** (no longer the default Google-managed one). Consequences,
+  learned the hard way:
+  - The Apps Script web-app OAuth client is
+    **`251187181508-326ovtqm8iajos191suv388jpd9pt7i5.apps.googleusercontent.com`**
+    (Auth Platform → Clients → "Apps Script", auto-generated, can't be edited).
+    The Chrome-extension client (`…-37t9…`) is separate.
+  - **`https://www.googleapis.com/auth/drive` is a RESTRICTED scope.** On the old
+    default project the Google-owned client was implicitly trusted org-wide; on the
+    standard project the app has its *own* client, which Orono's Workspace gates.
+    Until a Super Admin marks that client **Trusted** (Admin console → Security →
+    Access and data control → **API controls → App access control**), the symptom
+    is brutal and misleading: `ScriptApp.getOAuthToken()` returns an **invalid
+    token** (tokeninfo 400), every `DriveApp` call throws **"Authorization is
+    required to perform that action,"** yet `SpreadsheetApp` keeps working (the
+    `spreadsheets` *sensitive* scope isn't gated) and identity resolves fine. So
+    "create a project" (first `DriveApp.createFolder`) fails while everything else
+    looks healthy. Fix = trust the client; it's **one-time + permanent** (stable
+    client id, survives redeploys + future scope adds). Joel is the Super Admin.
+  - **`DriveApp` hard-requires the broad `drive` scope — it will NOT run on
+    `drive.file`** ("Specified permissions are not sufficient to call
+    DriveApp.createFolder. Required: …/auth/drive"). So you can't dodge the trust
+    requirement by narrowing the scope without rewriting every `DriveApp.*` call to
+    the Drive REST API / advanced service **and** making the script own its root
+    folder (the manual root `13bA8…` isn't app-created, so `drive.file` can't touch
+    it). Considered and rejected as disproportionate; revisit only if the org-trust
+    path ever becomes untenable.
+  - Manifest now declares explicit `oauthScopes` (incl. `drive`) rather than
+    relying on inference — keeps the requested set unambiguous across re-consents.
+  - Reverting to the default GCP project is **not possible** once moved to a
+    standard one (Google blocks it).
+
 - **Teacher dashboard reads are PARALLEL (the #1 perf lever).** Build plan §perf
   concern: the dashboard fans out across every student's Sheet, and GAS has no
   threads, so the old serial `openById`+`getValues` loop was O(N) × ~0.5s.
@@ -300,11 +334,12 @@ These supersede or refine the spec — apply them before defaulting to plan text
   reads all Sheets CONCURRENTLY via `UrlFetchApp.fetchAll` against the **Drive
   CSV-export endpoint** (`docs.google.com/.../export?format=csv&gid=`,
   [`22_batch_read.js`](apps-script/src/22_batch_read.js)). **Why CSV-export and
-  not the Sheets REST API:** the script runs on a *default* (Google-managed) GCP
-  project where the Sheets API can't be enabled (Paul can't even `describe` it;
-  `gcloud services enable` → PERMISSION_DENIED). CSV-export rides on the **Drive
-  scope already granted** (+ `script.external_request`, a one-time re-consent
-  added when UrlFetchApp shipped) — no GCP change. Sheet ids + the Sources/
+  not the Sheets REST API:** historically the script ran on a *default*
+  (Google-managed) GCP project where the Sheets API couldn't be enabled; CSV-export
+  sidesteps that, riding on the **Drive scope already granted** (+
+  `script.external_request`). The project has since moved to a **standard GCP
+  project** (see the GCP-project bullet below) where the Sheets API *could* now be
+  enabled, but CSV-export still works and is retained — no reason to rewrite it. Sheet ids + the Sources/
   Highlights **tab gids** come from a `SheetManifest` tab on the Projects
   registry ([`15_sheet_manifest.js`](apps-script/src/15_sheet_manifest.js)),
   written at provisioning (`findOrCreateSoloSheet_`) so the dashboard skips the
