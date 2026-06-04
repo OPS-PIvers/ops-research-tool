@@ -30,6 +30,13 @@ const CONFIG = {
   // retained in the queue (never silently dropped) — they just retry less
   // aggressively until success.
   MAX_BACKOFF_MS: 5 * 60 * 1000,
+
+  // How long the in-page sidebar trusts its cached projects/bundles list before
+  // re-fetching on the next context read. The popup refreshes unconditionally on
+  // open, but the sidebar is the student's primary surface and may never be
+  // accompanied by a popup open — without this TTL, a project created after the
+  // cache warmed would never appear in the sidebar's picker.
+  PROJECTS_CACHE_TTL_MS: 2 * 60 * 1000,
 };
 
 // Export to globals — both content scripts (via include order) and the
