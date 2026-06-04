@@ -328,6 +328,24 @@ select, input, textarea { font: inherit; }
   color: var(--c-bad); font-size: 12px; margin-top: 6px;
 }
 
+/* ---- Optional-requirements fieldset (create + edit-requirements modals) ---- */
+.req-fieldset { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--c-line); }
+.req-fieldset__head {
+  font-weight: 600; font-size: 13px; color: var(--c-heading); margin-bottom: 6px;
+}
+/* Number inputs aren't matched by the text/select rule above — size them to match. */
+.req-fieldset input[type="number"] {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--c-line);
+  border-radius: 4px; font-size: 14px;
+}
+.req-toggle {
+  padding: 6px 14px; border-radius: 999px; border: 1px solid var(--c-line);
+  background: var(--c-soft); color: var(--c-muted); font-weight: 600; cursor: pointer;
+}
+.req-toggle--on {
+  background: var(--c-brand-primary); border-color: var(--c-brand-primary); color: #fff;
+}
+
 /* ---- Dashboard scaffolding ---- */
 .db-toolbar {
   display: flex; align-items: center; gap: 16px;
@@ -527,6 +545,26 @@ select, input, textarea { font: inherit; }
 }
 .db-gap--warn { background: var(--stop-warn-bg); color: var(--stop-warn); }
 .db-gap--bad  { background: var(--stop-bad-bg); color: var(--stop-bad); }
+/* Allow the depth badge/pill to wrap under the cite/tag/note chips rather than
+   overflow the 200px gaps cell. With only the 3 chips it still fits one line. */
+.db-gaps { flex-wrap: wrap; row-gap: 4px; }
+
+/* ---- Requirement-driven dashboard signals ---- */
+/* Sources-count progress (shown only when a minSources requirement is set). */
+.db-srcprog {
+  display: block; margin-bottom: 4px;
+  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--c-text);
+}
+.db-srcprog--unmet { color: var(--c-brand-secondary); font-weight: 600; }
+.db-srcprog--met   { color: var(--stop-good);          font-weight: 600; }
+/* Evidence-depth badge + met/unmet pill. */
+.db-depth-badge {
+  display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px;
+  font-variant-numeric: tabular-nums; background: var(--c-brand-primary-tint); color: var(--c-brand-primary);
+}
+.db-evpill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; margin-left: 4px; }
+.db-evpill--bad  { background: var(--stop-bad-bg);  color: var(--stop-bad); }
+.db-evpill--good { background: var(--stop-good-bg); color: var(--stop-good); }
 
 /* Activity — relative timestamp */
 .db-activity {
@@ -659,6 +697,9 @@ select, input, textarea { font: inherit; }
 .dd-source-card__annotation {
   font-size: 12px; color: var(--c-text); margin-top: 6px; font-style: italic;
 }
+/* Per-source evidence-depth line (shown only when the project sets a depth target). */
+.dd-source-card__evidence { font-size: 12px; color: var(--c-muted); margin-top: 4px; }
+.dd-source-card__evidence.is-met { color: var(--stop-good); }
 .dd-cat-group {
   margin-top: 8px;
 }

@@ -393,6 +393,7 @@ function openCreateProjectModal_() {
     schoolYear: defaultSchoolYear_(),
     bundleId: '',
     memberClasses: [],
+    requirements: { minSources: '', minHighlightsPerSource: '', minDistinctCategories: '', requireAnnotation: true },
   };
 
   // Need the bundle list + the class list. Bundles come from one fetch;
@@ -526,6 +527,11 @@ function renderCreateModal_(fields, bundles, classOptions, palette) {
 
   function toggleCreateSetForm_(show) { setForm.style.display = show ? 'block' : 'none'; }
 
+  // Optional requirements — same fieldset the edit-requirements modal uses, so
+  // create + edit never drift. Blank inputs ride along to the server as '' and
+  // validateRequirementsInput_ treats blank as unset.
+  body.appendChild(buildRequirementsFields_(fields.requirements));
+
   // Classes
   body.appendChild((() => {
     const wrap = document.createElement('div');
@@ -609,6 +615,50 @@ function makeField_(labelText, control) {
   lab.textContent = labelText;
   wrap.appendChild(lab);
   wrap.appendChild(control);
+  return wrap;
+}
+
+/**
+ * Builds the optional-requirements fieldset bound to a `req` object
+ * ({minSources, minHighlightsPerSource, minDistinctCategories, requireAnnotation}).
+ * Shared by the create modal and the edit modal. Blank number input = unset.
+ */
+function buildRequirementsFields_(req) {
+  const wrap = document.createElement('div');
+  wrap.className = 'req-fieldset';
+  const head = document.createElement('div');
+  head.className = 'req-fieldset__head';
+  head.textContent = 'Requirements (optional)';
+  wrap.appendChild(head);
+
+  const numField = (label, key, max) => {
+    const f = makeField_(label, (() => {
+      const i = document.createElement('input');
+      i.type = 'number'; i.min = '1'; if (max) i.max = String(max);
+      i.placeholder = 'no minimum';
+      i.value = req[key] === '' || req[key] == null ? '' : String(req[key]);
+      i.addEventListener('input', () => { req[key] = i.value; });
+      return i;
+    })());
+    wrap.appendChild(f);
+  };
+  numField('Min sources', 'minSources');
+  numField('Min highlights per source', 'minHighlightsPerSource');
+  numField('Min distinct categories per source', 'minDistinctCategories', 5);
+
+  const tgl = makeField_('Annotations required', (() => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'req-toggle' + (req.requireAnnotation ? ' req-toggle--on' : '');
+    btn.textContent = req.requireAnnotation ? 'Required' : 'Optional';
+    btn.addEventListener('click', () => {
+      req.requireAnnotation = !req.requireAnnotation;
+      btn.className = 'req-toggle' + (req.requireAnnotation ? ' req-toggle--on' : '');
+      btn.textContent = req.requireAnnotation ? 'Required' : 'Optional';
+    });
+    return btn;
+  })());
+  wrap.appendChild(tgl);
   return wrap;
 }
 
@@ -765,6 +815,84 @@ function submitCreate_(fields, btn) {
       if (errEl) errEl.textContent = String(e && e.message || e);
     })
     .consoleCreateProject(fields);
+}
+
+/**
+ * Edit the live project's requirements from the dashboard header. Seeds the
+ * shared requirements fieldset from dashboard.data.project.requirements (nulls
+ * coerced to '' for the number inputs), then persists via
+ * consoleUpdateProjectRequirements and re-fetches the dashboard so the new
+ * pills/badges render. Staff-gated server-side.
+ */
+function openEditRequirementsModal_() {
+  if (!dashboard.data || !dashboard.data.project) return;
+  closeModal_();
+
+  const r = (dashboard.data.project && dashboard.data.project.requirements) || {};
+  const editReq = {
+    minSources: r.minSources == null ? '' : r.minSources,
+    minHighlightsPerSource: r.minHighlightsPerSource == null ? '' : r.minHighlightsPerSource,
+    minDistinctCategories: r.minDistinctCategories == null ? '' : r.minDistinctCategories,
+    requireAnnotation: r.requireAnnotation !== false,
+  };
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.id = 'modal-backdrop';
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal_(); });
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+
+  const header = document.createElement('div');
+  header.className = 'modal__header';
+  header.textContent = 'Edit requirements';
+  modal.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'modal__body';
+  body.appendChild(buildRequirementsFields_(editReq));
+
+  const errMsg = document.createElement('div');
+  errMsg.className = 'modal__error';
+  errMsg.id = 'edit-req-error';
+  body.appendChild(errMsg);
+
+  modal.appendChild(body);
+
+  const footer = document.createElement('div');
+  footer.className = 'modal__footer';
+  const cancel = document.createElement('button');
+  cancel.className = 'modal__btn';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', closeModal_);
+  footer.appendChild(cancel);
+
+  const save = document.createElement('button');
+  save.className = 'modal__btn modal__btn--primary';
+  save.textContent = 'Save';
+  save.addEventListener('click', () => {
+    save.disabled = true; save.textContent = 'Saving…';
+    errMsg.textContent = '';
+    const projectId = dashboard.data.project.projectId;
+    google.script.run
+      .withSuccessHandler(() => {
+        setStatus('Requirements updated', 'good', 2000);
+        closeModal_();
+        fetchDashboard_(projectId, true);
+      })
+      .withFailureHandler((e) => {
+        save.disabled = false; save.textContent = 'Save';
+        errMsg.textContent = String(e && e.message || e);
+        onFail_('updating requirements')(e);
+      })
+      .consoleUpdateProjectRequirements(projectId, editReq);
+  });
+  footer.appendChild(save);
+
+  modal.appendChild(footer);
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
 }
 
 /**
@@ -1032,6 +1160,13 @@ function renderDashboard_(main) {
   refresh.textContent = '↻ Refresh';
   refresh.addEventListener('click', () => fetchDashboard_(state.projectId, true));
   toolbar.appendChild(refresh);
+
+  const editReqBtn = document.createElement('button');
+  editReqBtn.className = 'db-refresh';   // same toolbar-button style as Refresh
+  editReqBtn.id = 'db-edit-req';
+  editReqBtn.textContent = 'Edit requirements';
+  editReqBtn.addEventListener('click', () => openEditRequirementsModal_());
+  toolbar.appendChild(editReqBtn);
 
   const manageBtn = document.createElement('button');
   manageBtn.className = 'db-manage' + (state.manageGroups ? ' db-manage--on' : '');
@@ -1582,6 +1717,7 @@ function buildGroupHeaderRow_(group, members) {
   tr.appendChild(tdName);
 
   // Aggregate columns mirror the student row's
+  const reqs = (dashboard.data && dashboard.data.project && dashboard.data.project.requirements) || null;
   const tdMix = document.createElement('td');
   tdMix.appendChild(buildMixBar_(group.categoryMix));
   tr.appendChild(tdMix);
@@ -1589,7 +1725,8 @@ function buildGroupHeaderRow_(group, members) {
   tdComp.appendChild(buildCompletionCell_(group.completion));
   tr.appendChild(tdComp);
   const tdGaps = document.createElement('td');
-  tdGaps.appendChild(buildGapsCell_(group.gaps));
+  if (reqs && reqs.minSources) tdGaps.appendChild(buildSourcesProgressCell_(group, reqs));
+  tdGaps.appendChild(buildGapsCell_(group.gaps, group, reqs));
   tr.appendChild(tdGaps);
   const tdAct = document.createElement('td');
   tdAct.className = 'db-activity' + (group.lastActivity ? '' : ' db-activity--never');
@@ -1604,6 +1741,44 @@ function buildGroupHeaderRow_(group, members) {
   });
 
   return tr;
+}
+
+/**
+ * Sources-count cell. With a minSources requirement it reads "<count> / <min>"
+ * colored met/unmet; without one it falls back to the plain count so an
+ * unset-requirements project looks unchanged. `requirements` = the project's
+ * requirements object (may be null/empty).
+ */
+function buildSourcesProgressCell_(s, requirements) {
+  const span = document.createElement('span');
+  if (requirements && requirements.minSources) {
+    span.className = 'db-srcprog ' + (s.sourcesProgress && s.sourcesProgress.meets ? 'db-srcprog--met' : 'db-srcprog--unmet');
+    span.textContent = (s.sourceCount || 0) + ' / ' + requirements.minSources;
+  } else {
+    span.className = 'db-srcprog';
+    span.textContent = String(s.sourceCount || 0);
+  }
+  return span;
+}
+
+/**
+ * Evidence-depth badge (+ met/unmet pill) for a dashboard row. Returns null
+ * when the project sets no per-source depth target, so rows stay unchanged
+ * when requirements are unset. Works for both student and group rows (both
+ * carry evidenceDepth).
+ */
+function buildDepthBadge_(s) {
+  if (!s.evidenceDepth || !s.evidenceDepth.targetSet) return null;
+  const allMet = s.evidenceDepth.sourcesMeeting === s.evidenceDepth.total && s.evidenceDepth.total > 0;
+  const frag = document.createDocumentFragment();
+  const b = document.createElement('span');
+  b.className = 'db-depth-badge';
+  b.textContent = s.evidenceDepth.sourcesMeeting + '/' + s.evidenceDepth.total + ' meet depth';
+  const pill = document.createElement('span');
+  pill.className = 'db-evpill ' + (allMet ? 'db-evpill--good' : 'db-evpill--bad');
+  pill.textContent = allMet ? 'depth ✓' : 'depth';
+  frag.appendChild(b); frag.appendChild(pill);
+  return frag;
 }
 
 function buildStudentRow_(s, parentGroup) {
@@ -1644,6 +1819,7 @@ function buildStudentRow_(s, parentGroup) {
   }
   tr.appendChild(tdName);
 
+  const reqs = (dashboard.data && dashboard.data.project && dashboard.data.project.requirements) || null;
   const tdMix = document.createElement('td');
   tdMix.appendChild(buildMixBar_(s.categoryMix));
   tr.appendChild(tdMix);
@@ -1651,7 +1827,8 @@ function buildStudentRow_(s, parentGroup) {
   tdComp.appendChild(buildCompletionCell_(s.completion));
   tr.appendChild(tdComp);
   const tdGaps = document.createElement('td');
-  tdGaps.appendChild(buildGapsCell_(s.gaps));
+  if (reqs && reqs.minSources) tdGaps.appendChild(buildSourcesProgressCell_(s, reqs));
+  tdGaps.appendChild(buildGapsCell_(s.gaps, s, reqs));
   tr.appendChild(tdGaps);
   const tdAct = document.createElement('td');
   tdAct.className = 'db-activity' + (s.lastActivity ? '' : ' db-activity--never');
@@ -1803,12 +1980,21 @@ function buildCompletionCell_(comp) {
   return wrap;
 }
 
-function buildGapsCell_(gaps) {
+/**
+ * Status-signals cell for a dashboard row: cite/tag/note gap pills plus (when
+ * the project sets requirements) the evidence-depth badge. The Note pill is
+ * suppressed when the project marks annotations optional (requireAnnotation
+ * === false); Cite and Tag are always shown. `row` carries evidenceDepth;
+ * `requirements` is the project's requirements object (may be null/empty).
+ */
+function buildGapsCell_(gaps, row, requirements) {
   const wrap = document.createElement('div');
   wrap.className = 'db-gaps';
   const labels = { citation: 'Cite', classification: 'Tag', annotation: 'Note' };
   const fulls  = { citation: 'citation', classification: 'classification', annotation: 'annotation' };
+  const annotationRequired = !requirements || requirements.requireAnnotation !== false;
   ['citation', 'classification', 'annotation'].forEach((kind) => {
+    if (kind === 'annotation' && !annotationRequired) return;   // annotations optional → no Note gap
     const n = gaps[kind] || 0;
     const chip = document.createElement('span');
     const klass = n === 0 ? '' : (n <= 3 ? 'db-gap--warn' : 'db-gap--bad');
@@ -1817,6 +2003,10 @@ function buildGapsCell_(gaps) {
     chip.title = n + ' source' + (n === 1 ? '' : 's') + ' missing ' + fulls[kind];
     wrap.appendChild(chip);
   });
+  if (row) {
+    const depth = buildDepthBadge_(row);
+    if (depth) wrap.appendChild(depth);
+  }
   return wrap;
 }
 
@@ -2103,9 +2293,34 @@ function buildSourcesViewer_() {
   return wrap;
 }
 
+/**
+ * Per-source evidence-depth line for a drill-down source card. Returns null
+ * when the project sets no per-source depth target. `depth` =
+ * d.aggregates.evidenceDepth (carries minHighlightsPerSource / minDistinctCategories
+ * and a perSource[] keyed by sourceId).
+ */
+function buildEvidenceLine_(sourceId, depth) {
+  if (!depth || !depth.targetSet) return null;
+  const ps = (depth.perSource || []).find((p) => p.sourceId === sourceId);
+  if (!ps) return null;
+  const line = document.createElement('div');
+  line.className = 'dd-source-card__evidence' + (ps.meets ? ' is-met' : '');
+  const bits = [];
+  if (depth.minHighlightsPerSource) bits.push(ps.highlightCount + '/' + depth.minHighlightsPerSource + ' highlights');
+  if (depth.minDistinctCategories)  bits.push(ps.distinctCategoryCount + '/' + depth.minDistinctCategories + ' categories');
+  line.textContent = bits.join(' · ') + (ps.meets ? ' ✓' : '');
+  return line;
+}
+
 function buildSourceCard_(s) {
   const card = document.createElement('div');
   card.className = 'dd-source-card';
+
+  // Drill-down aggregates carry the project's evidence-depth target + per-source
+  // detail, and whether annotations are required. Read off the module-level
+  // studentDetail.data (same pattern as colorForCategoryInDrill_).
+  const agg = (studentDetail.data && studentDetail.data.aggregates) || {};
+  const annotationRequired = agg.requireAnnotation !== false;
 
   // Head: title + ps chip + count + completion flags
   const head = document.createElement('div');
@@ -2129,10 +2344,14 @@ function buildSourceCard_(s) {
   flags.className = 'dd-source-card__flags';
   flags.appendChild(makeFlagChip_('Cite', s.completionFlags.citation));
   flags.appendChild(makeFlagChip_('Tag', s.completionFlags.classification));
-  flags.appendChild(makeFlagChip_('Note', s.completionFlags.annotation));
+  if (annotationRequired) flags.appendChild(makeFlagChip_('Note', s.completionFlags.annotation));
   head.appendChild(flags);
 
   card.appendChild(head);
+
+  // Per-source evidence-depth progress (highlights / categories), when targeted.
+  const evidence = buildEvidenceLine_(s.sourceId, agg.evidenceDepth);
+  if (evidence) card.appendChild(evidence);
 
   // Citation (with italics)
   if (s.formattedCitation && s.formattedCitation.text) {
