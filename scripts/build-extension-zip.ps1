@@ -55,7 +55,21 @@ $zip = [System.IO.Compression.ZipFile]::Open($zipPath, 'Create')
 try {
   foreach ($f in $files) {
     $entry = $f.FullName.Substring($src.Length + 1).Replace('\','/')
-    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $f.FullName, $entry, 'Optimal') | Out-Null
+    if ($entry -eq 'manifest.json') {
+      # The Chrome Web Store REJECTS a `key` field ("key field is not allowed in
+      # manifest") — it assigns the published ID itself. We keep `key` in the
+      # SOURCE manifest only to pin the unpacked-dev ID; strip it from the
+      # uploaded zip here so the same source serves both dev and the store.
+      $mtext = Get-Content $f.FullName -Raw
+      $stripped = [regex]::Replace($mtext, '\s*"key"\s*:\s*"[^"]*",', '')
+      $null = $stripped | ConvertFrom-Json                 # guard: still valid JSON
+      if ($stripped -match '"key"\s*:') { throw "key strip failed" }
+      $e = $zip.CreateEntry($entry, [System.IO.Compression.CompressionLevel]::Optimal)
+      $w = New-Object System.IO.StreamWriter($e.Open(), (New-Object System.Text.UTF8Encoding($false)))
+      $w.Write($stripped); $w.Flush(); $w.Dispose()
+    } else {
+      [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $f.FullName, $entry, 'Optimal') | Out-Null
+    }
   }
 } finally { $zip.Dispose() }
 

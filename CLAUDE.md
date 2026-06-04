@@ -710,24 +710,41 @@ through the Chrome Web Store (private) + Google Admin console force-install.
 
 ### The fixed extension ID
 
-The extension ID is pinned to **`nmelakoijagkfanhilcnagkochhfmacn`** by the
-`key` field in [`extension/manifest.json`](extension/manifest.json). This makes
-the **unpacked-dev ID and the published ID identical**, so a single OAuth
-client works for both. The matching private key is at
+The `key` field in [`extension/manifest.json`](extension/manifest.json) pins the
+**unpacked-dev** extension ID to **`nmelakoijagkfanhilcnagkochhfmacn`** (stable
+"Load unpacked" id for the pilot + its OAuth client). The matching private key is
 `C:\Users\paul.ivers\Desktop\ops-research-tool-extension-key.pem` (outside the
-repo — back it up; you only need it if you ever re-pack manually, the Web Store
-re-signs with its own key but the `key` field keeps the ID stable regardless).
+repo — back it up).
 
-### One-time: point the OAuth client at the fixed ID
+**The Chrome Web Store does NOT honor `key` — it REJECTS it** ("key field is not
+allowed in manifest") and assigns the published item its own id. So
+[`scripts/build-extension-zip.ps1`](scripts/build-extension-zip.ps1) **strips
+`key` from the uploaded zip** (source keeps it for dev). Consequence: the
+**published id is store-assigned and differs from the unpacked-dev id** until you
+make them match (below). *(Earlier this file claimed the `key` made the two ids
+identical — that was wrong; it bit the first upload.)*
 
-The OAuth client in the GCP project (APIs & Services → Credentials, the
-Chrome-Extension-type client whose ID is in `manifest.json`'s `oauth2` block)
-was originally keyed to the path-derived unpacked ID. Set its **Application ID**
-to `nmelakoijagkfanhilcnagkochhfmacn`. Until this is done,
-`chrome.identity.getAuthToken` will fail with a redirect/clientid mismatch on
-**both** the reloaded unpacked extension and the published one. Also set the
-**OAuth consent screen to "Internal"** (Workspace-only) so domain users skip
-the unverified-app warning — the only scopes are `userinfo.email` + `openid`.
+### Make dev + published ids match (once, right after the first publish)
+
+1. Upload the (key-stripped) zip → the store creates the item and assigns id `X`
+   (on the dashboard / item URL).
+2. Copy that item's **public key** into the SOURCE `manifest.json` `key` field
+   (Dashboard → item → package info, or extract from the published `.crx`). Now
+   unpacked-dev id == published id == `X`, and a single OAuth client serves both.
+   The build script keeps stripping `key` for uploads regardless.
+
+### Point the OAuth client at the *running* id
+
+The Chrome-Extension-type OAuth client in the GCP project (APIs & Services →
+Credentials; its id is in `manifest.json`'s `oauth2` block) must have its
+**Application ID = the extension id that's actually running**:
+- pilot / unpacked: `nmelakoijagkfanhilcnagkochhfmacn`;
+- published: the **store-assigned id `X`** (or, once you've done the match step
+  above, `X` == `nmela…` so one value covers both).
+Until the Application ID matches the running id, `chrome.identity.getAuthToken`
+fails with a redirect/clientid mismatch. Also set the **OAuth consent screen to
+"Internal"** (Workspace-only) so domain users skip the unverified-app warning —
+the only scopes are `userinfo.email` + `openid`.
 
 ### Publish to the Chrome Web Store (private)
 
