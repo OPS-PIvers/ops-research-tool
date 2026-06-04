@@ -19,6 +19,8 @@ const els = {
   lastSync: document.getElementById('last-sync'),
   enabledToggle: document.getElementById('enabled-toggle'),
   enabledLabel: document.getElementById('enabled-label'),
+  teacherSection: document.getElementById('teacher-section'),
+  goToProjects: document.getElementById('go-to-projects'),
 };
 
 const SYNC_STATUS_TEXT = {
@@ -95,15 +97,26 @@ function renderIdentity(meResp) {
   if (!meResp || !meResp.ok) {
     els.name.textContent = '—';
     els.email.textContent = '';
+    if (els.teacherSection) els.teacherSection.hidden = true;
     return;
   }
   const roster = meResp.roster;
-  if (roster) {
+  const staff = meResp.staff;
+
+  if (staff) {
+    const roleLabel = staff.Role === 'admin' ? 'Admin' : 'Teacher';
+    els.name.textContent = staff.Name || meResp.actor || '';
+    els.email.textContent = `${meResp.actor || ''} (${roleLabel})`;
+    els.error.hidden = true;
+    if (els.teacherSection) els.teacherSection.hidden = false;
+  } else if (roster) {
     els.name.textContent = roster.Name || meResp.actor || '';
     els.email.textContent = meResp.actor || '';
+    if (els.teacherSection) els.teacherSection.hidden = true;
   } else {
     els.name.textContent = meResp.actor || '';
     els.email.textContent = 'not on the roster yet';
+    if (els.teacherSection) els.teacherSection.hidden = true;
     showError('You are not on the OPS Research Tool roster. Contact your teacher to add you.');
   }
 }
@@ -182,3 +195,8 @@ function clearAllCachedAuthTokens_() {
     }
   });
 }
+
+// Redirect teachers directly to the GAS web app projects list (WEB_APP_URL)
+els.goToProjects.addEventListener('click', () => {
+  chrome.tabs.create({ url: CONFIG.WEB_APP_URL });
+});
