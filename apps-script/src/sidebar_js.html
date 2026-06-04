@@ -524,6 +524,11 @@ function render() {
     if (state.selectedCats.length === 0) return true;
     return filteredHighlightsForSource(s.sourceId).length > 0;
   }));
+  // Overall progress renders above the list AND above the empty state, so a
+  // student with no sources yet still sees "Sources: 0 / N" (the motivating
+  // case). Null when no minSources requirement → no extra DOM.
+  const srcProg = renderSourcesProgress_();
+  if (srcProg) els.main.appendChild(srcProg);
   if (visibleSources.length === 0) {
     const e = document.createElement('div'); e.className = 'sb-empty';
     e.textContent = state.sources.length === 0
@@ -532,8 +537,6 @@ function render() {
     els.main.appendChild(e);
     return;
   }
-  const srcProg = renderSourcesProgress_();
-  if (srcProg) els.main.appendChild(srcProg);
   visibleSources.forEach((s) => els.main.appendChild(renderSource(s)));
 }
 
