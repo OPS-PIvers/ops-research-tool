@@ -340,6 +340,10 @@ const SIDEBAR_CSS = `
 .src__status { font-size:10.5px; color:#0f9d58; margin-top:8px; min-height:14px; }
 .src__status--pending { color:#b06000; }
 .src__status--error { color:#d93025; }
+/* Subtle per-source evidence-target nudge (shown only when this project sets a
+   minHighlightsPerSource / minDistinctCategories requirement). */
+.src__hint { font-size:10.5px; color:#80868b; margin-top:6px; line-height:1.4; }
+.facet__hint { padding:2px 8px 6px; font-size:10.5px; color:#80868b; line-height:1.4; }
 .toast {
   position:absolute; left:12px; right:12px; bottom:12px; z-index:5;
   background:#202124; color:#fff; border-radius:8px; padding:10px 12px;
@@ -892,7 +896,14 @@ const OpsSidebar = (function () {
     // While the first fetch is in flight with nothing loaded yet, suppress the
     // facets (their counts would all read 0) and skeleton the list instead.
     const loadingEmpty = state.loadingHighlights && state.pageHighlights.length === 0;
-    if (state.bundle && !loadingEmpty) state.panelEl.appendChild(renderFacetList_());
+    if (state.bundle && !loadingEmpty) {
+      state.panelEl.appendChild(renderFacetList_());
+      // Same evidence-target nudge as the Source tab, under the facets. Computed
+      // each render from pageHighlights; null (and so nothing) when no depth
+      // requirement is set, so no-requirements projects are unchanged.
+      const annHint = evidenceHint_(state.pageHighlights, state.project && state.project.requirements);
+      if (annHint) state.panelEl.appendChild(el_('div', 'facet__hint', annHint));
+    }
 
     // List
     state.listEl = el_('div', 'list');
@@ -1051,9 +1062,18 @@ const OpsSidebar = (function () {
     tagWrap.appendChild(seg);
     form.appendChild(tagWrap);
 
-    // Annotation
+    // Per-source evidence-target nudge (computed each render from the live
+    // pageHighlights, so it tracks add/remove/recategorize). Renders nothing
+    // when the project sets no highlight/category depth requirement.
+    const hintText = evidenceHint_(state.pageHighlights, state.project && state.project.requirements);
+    if (hintText) form.appendChild(el_('div', 'src__hint', hintText));
+
+    // Annotation — label flags required vs optional from the project requirement
+    // (default: required; only "optional" when requireAnnotation is explicitly false).
+    const annOptional = !!(state.project && state.project.requirements
+      && state.project.requirements.requireAnnotation === false);
     const annWrap = el_('div', 'src__fld');
-    annWrap.appendChild(el_('label', null, 'Annotation'));
+    annWrap.appendChild(el_('label', null, 'Annotation (' + (annOptional ? 'optional' : 'required') + ')'));
     const ta = document.createElement('textarea');
     ta.className = 'src__ta'; ta.value = src.annotation || '';
     ta.placeholder = '2–3 sentence annotation…';
@@ -1466,6 +1486,25 @@ const OpsSidebar = (function () {
   function countByCategory_(cat) {
     if (!cat) return state.pageHighlights.length;
     return state.pageHighlights.filter((h) => h.primaryCategory === cat || h.secondaryCategory === cat).length;
+  }
+
+  // Pure: given this source's highlights + the project's requirements, return a
+  // short nudge string (or null when no evidence-depth requirement is set, so
+  // nothing renders for no-requirements projects). Distinct categories count
+  // distinct non-empty PRIMARY categories only — secondary tags never count.
+  function evidenceHint_(highlightsForSource, req) {
+    if (!req || (!req.minHighlightsPerSource && !req.minDistinctCategories)) return null;
+    const count = highlightsForSource.length;
+    const cats = {};
+    highlightsForSource.forEach((h) => { if (h.primaryCategory) cats[h.primaryCategory] = true; });
+    const distinct = Object.keys(cats).length;
+    const needH = req.minHighlightsPerSource ? Math.max(0, req.minHighlightsPerSource - count) : 0;
+    const needC = req.minDistinctCategories ? Math.max(0, req.minDistinctCategories - distinct) : 0;
+    if (needH === 0 && needC === 0) return 'Meets this project’s evidence target ✓';
+    const parts = [];
+    if (needH > 0) parts.push(needH + ' more highlight' + (needH > 1 ? 's' : ''));
+    if (needC > 0) parts.push(needC + ' more categor' + (needC > 1 ? 'ies' : 'y'));
+    return 'Needs ' + parts.join(' and ');
   }
 
   function filteredHighlights_() {

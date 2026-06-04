@@ -9,6 +9,7 @@ const state = {
   projectId: null,
   sources: [],
   highlights: [],
+  requirements: null,  // project requirements from sidebarGetProjectData (null = none set)
   selectedCats: [],    // multi-select category filter; [] = all categories
   sortBy: 'recent',    // 'recent' | 'title' | 'evidence' — source card order
   filterPS: { primary: true, secondary: true, unset: true },
@@ -194,6 +195,7 @@ function onProjectData(resp) {
   }
   state.sources = resp.sources || [];
   state.highlights = resp.highlights || [];
+  state.requirements = resp.requirements || null;
   els.insertTrigger.disabled = state.sources.length === 0;
   els.openEditor.disabled = state.sources.length === 0;
   setStatus('');
@@ -354,6 +356,27 @@ function hlCountForSource_(s) {
   return state.highlights.filter((h) => h.sourceId === s.sourceId).length;
 }
 
+// Per-source depth recap string (or null when no depth requirement is set).
+// "h/min highlights · c/min categories" — only the figures that have a
+// requirement are shown. Categories = distinct non-empty PRIMARY categories
+// only (secondary tags never count). Returns null for no-requirements projects
+// so nothing renders.
+function sourceDepthRecap_(source) {
+  const req = state.requirements;
+  if (!req || (!req.minHighlightsPerSource && !req.minDistinctCategories)) return null;
+  const rows = state.highlights.filter((h) => h.sourceId === source.sourceId);
+  const parts = [];
+  if (req.minHighlightsPerSource) {
+    parts.push(rows.length + '/' + req.minHighlightsPerSource + ' highlights');
+  }
+  if (req.minDistinctCategories) {
+    const cats = {};
+    rows.forEach((h) => { if (h.primaryCategory) cats[h.primaryCategory] = true; });
+    parts.push(Object.keys(cats).length + '/' + req.minDistinctCategories + ' categories');
+  }
+  return parts.join(' · ');
+}
+
 function categoryBreakdownForSource(sourceId) {
   // Returns ordered [{label, color, count}] for categories that have at least one highlight in this source.
   const bundle = activeBundle();
@@ -509,7 +532,25 @@ function render() {
     els.main.appendChild(e);
     return;
   }
+  const srcProg = renderSourcesProgress_();
+  if (srcProg) els.main.appendChild(srcProg);
   visibleSources.forEach((s) => els.main.appendChild(renderSource(s)));
+}
+
+// Overall "Sources: X / N" line at the top of the source list — shown only when
+// the project sets a minSources requirement (returns null otherwise, so the
+// list is unchanged for no-requirements projects). X = the student's total
+// source count for this project; emphasized when under target.
+function renderSourcesProgress_() {
+  const req = state.requirements;
+  if (!req || !req.minSources) return null;
+  const have = state.sources.length;
+  const need = req.minSources;
+  const met = have >= need;
+  const line = document.createElement('div');
+  line.className = 'sb-srcprog' + (met ? ' sb-srcprog--met' : ' sb-srcprog--unmet');
+  line.textContent = 'Sources: ' + have + ' / ' + need;
+  return line;
 }
 
 function renderSource(source) {
@@ -608,6 +649,16 @@ function renderSource(source) {
   const countSpan = document.createElement('span');
   countSpan.textContent = filteredHighlightsForSource(source.sourceId).length + ' highlight(s)';
   meta.appendChild(countSpan);
+  // Per-source depth recap (e.g. "2/3 highlights · 1/2 categories"), shown only
+  // when the project sets a highlight/category depth requirement. Counts use the
+  // source's full highlight set (unfiltered) so the recap tracks real progress.
+  const recap = sourceDepthRecap_(source);
+  if (recap) {
+    const recapSpan = document.createElement('span');
+    recapSpan.className = 'sb-source__depth';
+    recapSpan.textContent = recap;
+    meta.appendChild(recapSpan);
+  }
   const spacer = document.createElement('span');
   spacer.style.flex = '1';
   meta.appendChild(spacer);
@@ -908,6 +959,7 @@ function onPollResponse_(resp) {
   state.lastDataJson = json;
   state.sources = resp.sources || [];
   state.highlights = resp.highlights || [];
+  state.requirements = resp.requirements || null;
   els.insertTrigger.disabled = state.sources.length === 0;
   els.openEditor.disabled = state.sources.length === 0;
   renderFilter();

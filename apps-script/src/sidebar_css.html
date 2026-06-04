@@ -292,6 +292,19 @@ select, input, textarea { font: inherit; }
 .sb-source__action:hover { text-decoration: underline; }
 .sb-source__expand { /* keep selector for back-compat — handled by .sb-source__action */ }
 
+/* Per-source depth recap (shown only when a depth requirement is set). Subtle,
+   tabular figures so "h/min · c/min" stays legible inline in the meta row. */
+.sb-source__depth {
+  font-size: 11px; color: var(--c-muted); font-variant-numeric: tabular-nums;
+}
+
+/* Overall "Sources: X / N" progress line (shown only when minSources is set). */
+.sb-srcprog {
+  margin: 0 0 8px; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--c-text);
+}
+.sb-srcprog--unmet { color: var(--c-warn); font-weight: 600; }
+.sb-srcprog--met   { color: var(--c-good); font-weight: 600; }
+
 .sb-source__breakdown {
   display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
   margin-top: 5px;
