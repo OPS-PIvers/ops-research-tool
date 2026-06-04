@@ -1284,6 +1284,51 @@ function buildDashboardSkeleton_(rowCount) {
   return table;
 }
 
+/**
+ * Shared shimmer skeletons (reuse the dashboard's .db-skel-bar). Used by the
+ * admin tables, drill-downs, and modals so every console page animates while it
+ * loads instead of showing a static "Loading…".
+ */
+function buildSkeletonLines_(count, widths) {
+  const wrap = document.createElement('div');
+  wrap.className = 'skel-lines';
+  const w = widths || ['db-skel-bar--wide', '', 'db-skel-bar--narrow'];
+  for (let i = 0; i < (count || 4); i++) {
+    const bar = document.createElement('div');
+    bar.className = 'db-skel-bar ' + (w[i % w.length] || '');
+    wrap.appendChild(bar);
+  }
+  return wrap;
+}
+
+/** Shimmer skeleton table matching the .admin-table shape (last col = kebab, blank). */
+function buildAdminTableSkeleton_(headers, rowCount, colWidths) {
+  const n = Math.min(Math.max(rowCount || 6, 3), 30);
+  const table = document.createElement('table');
+  table.className = 'admin-table admin-table--skeleton';
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  headers.forEach((h) => { const th = document.createElement('th'); th.textContent = h; trh.appendChild(th); });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  for (let i = 0; i < n; i++) {
+    const tr = document.createElement('tr');
+    headers.forEach((h, c) => {
+      const td = document.createElement('td');
+      if (c < headers.length - 1) {   // skip the trailing kebab column
+        const bar = document.createElement('div');
+        bar.className = 'db-skel-bar ' + ((colWidths && colWidths[c]) || '');
+        td.appendChild(bar);
+      }
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return table;
+}
+
 function startAsOfTicker_() {
   if (dashboard.asOfTickHandle) clearInterval(dashboard.asOfTickHandle);
   dashboard.asOfTickHandle = setInterval(updateAsOf_, 10000);
@@ -1795,15 +1840,7 @@ function renderStudentDetail_(main) {
     paintStudentDetail_();
   } else {
     body.innerHTML = '';
-    const loader = document.createElement('div');
-    loader.className = 'mp-loading';
-    const sp = document.createElement('div');
-    sp.className = 'console-spinner';
-    loader.appendChild(sp);
-    const txt = document.createElement('div');
-    txt.textContent = 'Loading student detail…';
-    loader.appendChild(txt);
-    body.appendChild(loader);
+    body.appendChild(buildSkeletonLines_(6));
     fetchStudentDetail_(state.projectId, state.studentEmail);
   }
 }
@@ -1848,15 +1885,7 @@ function renderGroupDetail_(main) {
     paintGroupDetail_();
   } else {
     body.innerHTML = '';
-    const loader = document.createElement('div');
-    loader.className = 'mp-loading';
-    const sp = document.createElement('div');
-    sp.className = 'console-spinner';
-    loader.appendChild(sp);
-    const txt = document.createElement('div');
-    txt.textContent = 'Loading group…';
-    loader.appendChild(txt);
-    body.appendChild(loader);
+    body.appendChild(buildSkeletonLines_(6));
     fetchGroupDetail_(state.projectId, state.groupId);
   }
 }

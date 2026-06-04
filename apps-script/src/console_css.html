@@ -214,11 +214,12 @@ select, input, textarea { font: inherit; }
 .mp-skeleton {
   background: var(--c-bg); border: 1px solid var(--c-line);
   border-radius: 8px; padding: 16px 20px;
-  animation: console-pulse 1.4s ease-in-out infinite;
 }
 .mp-skeleton__line {
-  height: 12px; background: var(--c-line); border-radius: 4px;
-  margin-bottom: 8px;
+  height: 12px; border-radius: 4px; margin-bottom: 8px;
+  background: linear-gradient(90deg, var(--c-soft) 25%, #e8e8e8 37%, var(--c-soft) 63%);
+  background-size: 400% 100%;
+  animation: db-shimmer 1.4s ease infinite;
 }
 .mp-skeleton__line--mid   { width: 60%; }
 .mp-skeleton__line--long  { width: 90%; }
@@ -407,6 +408,14 @@ select, input, textarea { font: inherit; }
   0%   { background-position: 100% 0; }
   100% { background-position: -100% 0; }
 }
+
+/* Shared shimmer skeletons — reuse .db-skel-bar / db-shimmer so every console
+   page animates while it fetches (admin tables, drill-downs, modals). */
+.skel-lines { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; }
+.skel-lines .db-skel-bar { height: 14px; }
+.admin-table--skeleton tbody tr { cursor: default; }
+.admin-table--skeleton tbody tr:hover { background: transparent; }
+.admin-table--skeleton .db-skel-bar { height: 13px; }
 @media (prefers-reduced-motion: reduce) {
   .db-skel-bar { animation: none; }
 }

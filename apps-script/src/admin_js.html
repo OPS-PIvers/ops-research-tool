@@ -114,7 +114,8 @@ function renderAdminRoster_(main) {
 
   // Initial load
   if (adminRoster.rows === null) {
-    tableHost.innerHTML = '<div class="admin-skeleton">Loading roster…</div>';
+    tableHost.innerHTML = '';
+    tableHost.appendChild(buildAdminTableSkeleton_(['ID', 'Name', 'Email', 'Class', 'Teacher', 'Teacher email', ''], 10, ['db-skel-bar--narrow', '', 'db-skel-bar--wide', 'db-skel-bar--narrow', '', 'db-skel-bar--wide']));
     google.script.run
       .withSuccessHandler((resp) => {
         adminRoster.rows = resp.rows || [];
@@ -840,7 +841,8 @@ function renderAdminStaff_(main) {
   main.appendChild(tableHost);
 
   if (adminStaff.rows === null) {
-    tableHost.innerHTML = '<div class="admin-skeleton">Loading staff…</div>';
+    tableHost.innerHTML = '';
+    tableHost.appendChild(buildAdminTableSkeleton_(['Name', 'Email', 'Role', ''], 8, ['', 'db-skel-bar--wide', 'db-skel-bar--narrow']));
     google.script.run
       .withSuccessHandler((resp) => {
         adminStaff.rows = resp.rows || [];
@@ -1119,9 +1121,13 @@ function renderAdminClasses_(main) {
   host.className = 'admin-table-host';
   main.appendChild(host);
 
+  const classesSkeleton = () => {
+    host.innerHTML = '';
+    host.appendChild(buildAdminTableSkeleton_(['Class', 'Teacher', 'Students', ''], 6, ['', 'db-skel-bar--wide', 'db-skel-bar--narrow']));
+  };
   // Load staff (teacher picker) + classes, then render.
   if (adminClasses.staff === null) {
-    host.innerHTML = '<div class="admin-skeleton">Loading…</div>';
+    classesSkeleton();
     google.script.run
       .withSuccessHandler((resp) => { adminClasses.staff = resp.rows || []; renderAdminClasses_(main); })
       .withFailureHandler(onFail_('loading staff'))
@@ -1129,7 +1135,7 @@ function renderAdminClasses_(main) {
     return;
   }
   if (adminClasses.classes === null) {
-    host.innerHTML = '<div class="admin-skeleton">Loading classes…</div>';
+    classesSkeleton();
     google.script.run
       .withSuccessHandler((resp) => { adminClasses.classes = resp.classes || []; renderClassesTable_(host); })
       .withFailureHandler(onFail_('loading classes'))
@@ -1303,7 +1309,7 @@ function openManageClassStudentsModal_(c, host) {
   modal.innerHTML = `
     <div class="admin-modal__header">Students in ${esc_(c.Class)}</div>
     <div class="admin-modal__form">
-      <div class="admin-class-enrolled" id="class-enrolled"><div class="admin-skeleton">Loading…</div></div>
+      <div class="admin-class-enrolled" id="class-enrolled"><div class="skel-lines" style="width:100%"><div class="db-skel-bar db-skel-bar--wide"></div><div class="db-skel-bar"></div><div class="db-skel-bar db-skel-bar--narrow"></div></div></div>
       <label>Add student
         <select id="class-add-pick"><option value="">Loading students…</option></select>
       </label>
@@ -1466,7 +1472,8 @@ function renderAdminLifecycle_(main) {
 function onPickYear_(year, previewHost, confirmHost) {
   adminLifecycle.selectedYear = year;
   adminLifecycle.preview = null;
-  previewHost.innerHTML = '<div class="admin-skeleton">Loading…</div>';
+  previewHost.innerHTML = '';
+  previewHost.appendChild(buildSkeletonLines_(3));
   confirmHost.innerHTML = '';
   google.script.run
     .withSuccessHandler((resp) => {
