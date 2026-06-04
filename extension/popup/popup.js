@@ -97,7 +97,7 @@ function renderIdentity(meResp) {
   if (!meResp || !meResp.ok) {
     els.name.textContent = '—';
     els.email.textContent = '';
-    if (els.teacherSection) els.teacherSection.hidden = true;
+    els.teacherSection.hidden = true;
     return;
   }
   const roster = meResp.roster;
@@ -108,15 +108,15 @@ function renderIdentity(meResp) {
     els.name.textContent = staff.Name || meResp.actor || '';
     els.email.textContent = `${meResp.actor || ''} (${roleLabel})`;
     els.error.hidden = true;
-    if (els.teacherSection) els.teacherSection.hidden = false;
+    els.teacherSection.hidden = false;
   } else if (roster) {
     els.name.textContent = roster.Name || meResp.actor || '';
     els.email.textContent = meResp.actor || '';
-    if (els.teacherSection) els.teacherSection.hidden = true;
+    els.teacherSection.hidden = true;
   } else {
     els.name.textContent = meResp.actor || '';
     els.email.textContent = 'not on the roster yet';
-    if (els.teacherSection) els.teacherSection.hidden = true;
+    els.teacherSection.hidden = true;
     showError('You are not on the OPS Research Tool roster. Contact your teacher to add you.');
   }
 }

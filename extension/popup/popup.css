@@ -5,16 +5,15 @@
   --color-bg: #ffffff;
   --color-accent: #2d3f89; /* Orono Brand Blue */
   --color-accent-hover: #1d2a5d; /* Orono Brand Strong Blue */
-  --color-accent-active: #ad2122; /* Orono Brand Red */
-  --color-good: #2d3f89; /* success is brand blue */
+  --color-accent-active: #1d2a5d; /* Orono Brand Strong Blue */
   --color-warn: #e2b714;
   --color-bad: #ad2122; /* failure is brand red */
-  
+
   --font-stack: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
-* { 
-  box-sizing: border-box; 
+* {
+  box-sizing: border-box;
 }
 
 body {
@@ -36,6 +35,7 @@ header {
 }
 
 h1 {
+  font-family: 'Lexend', var(--font-stack);
   margin: 0;
   font-size: 15px;
   font-weight: 700;
@@ -69,13 +69,13 @@ h1 {
   display: flex;
   flex-direction: column;
 }
-.power-toggle__label { 
-  font-weight: 600; 
+.power-toggle__label {
+  font-weight: 600;
   font-size: 13px;
 }
-.power-toggle__hint { 
-  font-size: 11px; 
-  color: var(--color-muted); 
+.power-toggle__hint {
+  font-size: 11px;
+  color: var(--color-muted);
 }
 
 .switch {
@@ -115,14 +115,14 @@ h1 {
   padding-bottom: 14px;
   border-bottom: 1px solid var(--color-line);
 }
-.identity__name { 
-  font-weight: 600; 
+.identity__name {
+  font-weight: 600;
   font-size: 14px;
   color: var(--color-text);
 }
-.identity__email { 
-  font-size: 12px; 
-  color: var(--color-muted); 
+.identity__email {
+  font-size: 12px;
+  color: var(--color-muted);
   margin-top: 1px;
 }
 
