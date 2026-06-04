@@ -129,7 +129,8 @@ function handleGet_(e) {
         };
 
       case 'projects':
-        return { ok: true, projects: listActiveProjectsForStudent_(actorEmail) };
+        return { ok: true, projects: listActiveProjectsForStudent_(actorEmail)
+          .map((p) => Object.assign({}, p, { requirements: parseProjectRequirements_(p) })) };
 
       case 'bundles':
         return { ok: true, bundles: listBundles_() };

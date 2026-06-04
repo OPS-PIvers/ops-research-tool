@@ -155,3 +155,11 @@ function upsertByKey_(tab, headers, keyCol, obj) {
     tab.getRange(rowIdx, 1, 1, headers.length).setValues([row]);
   }
 }
+
+/** Tiny stable string hash (djb2) → base36. For cache-key fingerprints. */
+function shortHash_(str) {
+  let h = 5381;
+  const s = String(str);
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}

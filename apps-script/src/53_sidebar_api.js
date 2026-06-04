@@ -43,6 +43,7 @@ function sidebarGetContext() {
     activeProjectId,
     activeProject,
     activeBundle,
+    activeRequirements: parseProjectRequirements_(activeProject),
   };
 }
 
@@ -120,7 +121,7 @@ function sidebarGetProjectData(projectId) {
       flattenRowDatesForTransfer_(s);
     });
     highlights.forEach(flattenRowDatesForTransfer_);
-    return { ok: true, sources, highlights };
+    return { ok: true, sources, highlights, requirements: parseProjectRequirements_(project) };
   } catch (e) {
     return { ok: false, error: String(e && e.message || e) };
   }

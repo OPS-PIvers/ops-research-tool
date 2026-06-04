@@ -105,6 +105,7 @@ function consoleGetMyProjects(filter) {
       scopedClasses,         // classes the caller actually sees
       studentCount,
       status: p.status,
+      requirements: parseProjectRequirements_(p),
     };
   });
 
@@ -299,8 +300,9 @@ function consoleGetProjectDashboard(projectId, className, bypassCache) {
   const cache = CacheService.getScriptCache();
   // Sample-data state changes the enrolled set, so it must key the cache —
   // otherwise toggling would serve a stale (with/without sample) dashboard.
+  const reqFp = shortHash_(JSON.stringify(parseProjectRequirements_(project)));
   const cacheKey = 'dash:v1:' + projectId + ':' + scopedClasses.slice().sort().join(',') +
-    (consoleSampleDataEnabled_() ? ':s1' : ':s0');
+    (consoleSampleDataEnabled_() ? ':s1' : ':s0') + ':r' + reqFp;
   if (!bypassCache) {
     const hit = cache.get(cacheKey);
     if (hit) { try { return JSON.parse(hit); } catch (e) { /* corrupt — recompute */ } }
@@ -352,6 +354,7 @@ function consoleGetProjectDashboard(projectId, className, bypassCache) {
       scopedClasses,
       availableClasses,                                   // all the caller's classes for this project
       activeClass: className ? String(className).trim() : null,
+      requirements: parseProjectRequirements_(project),
     },
     students,
     groups,
@@ -389,6 +392,7 @@ function dashboardEnrolled_(scopedClasses) {
  */
 function computeDashboardParallel_(project, scopedClasses, bundle) {
   const enrolled = dashboardEnrolled_(scopedClasses);
+  const requirements = parseProjectRequirements_(project);
 
   // Groups in scope — opens each group Sheet once (O(groups)) for membership +
   // tab gids.
@@ -456,7 +460,7 @@ function computeDashboardParallel_(project, scopedClasses, bundle) {
     const isGroup = studentIsGroup[r.Email];
     const personalSources    = isGroup ? fetched.sources.filter((s)    => String(s.createdByEmail).toLowerCase()    === String(r.Email).toLowerCase()) : fetched.sources;
     const personalHighlights = isGroup ? fetched.highlights.filter((h) => String(h.createdByEmail).toLowerCase() === String(r.Email).toLowerCase()) : fetched.highlights;
-    const agg = aggregateStudent_(personalSources, personalHighlights, bundle);
+    const agg = aggregateStudent_(personalSources, personalHighlights, bundle, requirements);
     return {
       email: r.Email,
       name:  composeStudentName_(r),
@@ -466,6 +470,8 @@ function computeDashboardParallel_(project, scopedClasses, bundle) {
       sourceCount:    agg.sourceCount,
       highlightCount: agg.highlightCount,
       completion:     agg.completion,
+      sourcesProgress: agg.sourcesProgress,
+      evidenceDepth:   agg.evidenceDepth,
       gaps:           agg.gaps,
       lastActivity:   agg.lastActivity,
     };
@@ -473,7 +479,7 @@ function computeDashboardParallel_(project, scopedClasses, bundle) {
 
   const groups = groupsInProject.map((g) => {
     const fetched = readFor(g.sheetId);
-    const agg = aggregateStudent_(fetched.sources, fetched.highlights, bundle);
+    const agg = aggregateStudent_(fetched.sources, fetched.highlights, bundle, requirements);
     return {
       groupId: g.groupId,
       name: g.name,
@@ -484,6 +490,8 @@ function computeDashboardParallel_(project, scopedClasses, bundle) {
       sourceCount:    agg.sourceCount,
       highlightCount: agg.highlightCount,
       completion:     agg.completion,
+      sourcesProgress: agg.sourcesProgress,
+      evidenceDepth:   agg.evidenceDepth,
       gaps:           agg.gaps,
       lastActivity:   agg.lastActivity,
     };
@@ -502,6 +510,7 @@ function computeDashboardParallel_(project, scopedClasses, bundle) {
  */
 function computeDashboardSerial_(project, scopedClasses, bundle) {
   const enrolled = dashboardEnrolled_(scopedClasses);
+  const requirements = parseProjectRequirements_(project);
 
   const sheetCache = {};  // sheetId → { sources, highlights }
   function readForActor_(email) {
@@ -523,7 +532,7 @@ function computeDashboardSerial_(project, scopedClasses, bundle) {
     const fetched = readForActor_(r.Email);
     const personalSources    = fetched.isGroup ? fetched.sources.filter((s)    => String(s.createdByEmail).toLowerCase()    === String(r.Email).toLowerCase()) : fetched.sources;
     const personalHighlights = fetched.isGroup ? fetched.highlights.filter((h) => String(h.createdByEmail).toLowerCase() === String(r.Email).toLowerCase()) : fetched.highlights;
-    const agg = aggregateStudent_(personalSources, personalHighlights, bundle);
+    const agg = aggregateStudent_(personalSources, personalHighlights, bundle, requirements);
     return {
       email: r.Email,
       name:  composeStudentName_(r),
@@ -533,6 +542,8 @@ function computeDashboardSerial_(project, scopedClasses, bundle) {
       sourceCount:    agg.sourceCount,
       highlightCount: agg.highlightCount,
       completion:     agg.completion,
+      sourcesProgress: agg.sourcesProgress,
+      evidenceDepth:   agg.evidenceDepth,
       gaps:           agg.gaps,
       lastActivity:   agg.lastActivity,
     };
@@ -550,7 +561,7 @@ function computeDashboardSerial_(project, scopedClasses, bundle) {
           highlights: readAllAsObjects_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS),
         };
       }
-      const agg = aggregateStudent_(sheetCache[sheetId].sources, sheetCache[sheetId].highlights, bundle);
+      const agg = aggregateStudent_(sheetCache[sheetId].sources, sheetCache[sheetId].highlights, bundle, requirements);
       return {
         groupId: g.groupId,
         name: g.name,
@@ -561,6 +572,8 @@ function computeDashboardSerial_(project, scopedClasses, bundle) {
         sourceCount:    agg.sourceCount,
         highlightCount: agg.highlightCount,
         completion:     agg.completion,
+        sourcesProgress: agg.sourcesProgress,
+        evidenceDepth:   agg.evidenceDepth,
         gaps:           agg.gaps,
         lastActivity:   agg.lastActivity,
       };
@@ -738,7 +751,7 @@ function consoleGetStudentDetail(projectId, studentEmail) {
   // Sort sources by createdAt desc (newest first) for the viewer.
   enriched.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
-  const aggregates = aggregateStudentDetail_(sources, highlights, bundle, project.createdAt);
+  const aggregates = aggregateStudentDetail_(sources, highlights, bundle, project.createdAt, parseProjectRequirements_(project));
 
   return {
     ok: true,
@@ -1238,7 +1251,7 @@ function consoleGetGroupDashboard(projectId, groupId) {
   });
   enriched.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
-  const aggregates = aggregateStudentDetail_(sources, highlights, bundle, project.createdAt);
+  const aggregates = aggregateStudentDetail_(sources, highlights, bundle, project.createdAt, parseProjectRequirements_(project));
 
   return {
     ok: true,
