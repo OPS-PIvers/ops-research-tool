@@ -60,7 +60,9 @@ try {
       # manifest") — it assigns the published ID itself. We keep `key` in the
       # SOURCE manifest only to pin the unpacked-dev ID; strip it from the
       # uploaded zip here so the same source serves both dev and the store.
-      $mtext = Get-Content $f.FullName -Raw
+      # Read as UTF-8 explicitly (.NET defaults to UTF-8; PS Get-Content can fall
+      # back to ANSI and corrupt non-ASCII chars on the round-trip).
+      $mtext = [System.IO.File]::ReadAllText($f.FullName, (New-Object System.Text.UTF8Encoding($false)))
       $stripped = [regex]::Replace($mtext, '\s*"key"\s*:\s*"[^"]*",', '')
       $null = $stripped | ConvertFrom-Json                 # guard: still valid JSON
       if ($stripped -match '"key"\s*:') { throw "key strip failed" }
