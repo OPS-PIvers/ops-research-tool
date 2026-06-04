@@ -32,6 +32,19 @@ let draftCategory = null;   // currently chosen primary category label or null
 let draftColor = null;
 let draftNote = '';
 
+// Borrow the sidebar's already-resolved project/bundle when our own context
+// read came back empty (cold start). Only fills gaps — never overwrites a
+// project we already have.
+function adoptSidebarContext_() {
+  if (projectCache && bundleCache) return;
+  if (!self.OpsSidebar || !self.OpsSidebar.getContext) return;
+  const sc = self.OpsSidebar.getContext();
+  if (sc && sc.project) {
+    projectCache = projectCache || sc.project;
+    bundleCache = bundleCache || sc.bundle;
+  }
+}
+
 function eventInOurUI_(e) {
   if (!e || !e.target) return false;
   if (toolbarEl && toolbarEl.contains(e.target)) return true;
@@ -93,14 +106,22 @@ async function onSelectionMaybeChanged() {
 
   try {
     const ctx = await chrome.runtime.sendMessage({ type: 'getActiveProject' });
-    if (ctx && ctx.ok) {
+    // Only adopt a result that actually carries a project. A transient null
+    // (cold service worker, failed/empty background refresh) must NOT blank a
+    // previously-good projectCache — that null is exactly what used to flash
+    // "No active project" in the toolbar while the sidebar still showed the
+    // project. Fall back to the sidebar's already-resolved context when ours is
+    // empty, so the two surfaces can never disagree.
+    if (ctx && ctx.ok && ctx.project) {
       projectCache = ctx.project;
       bundleCache = ctx.bundle;
     } else {
-      console.warn('[OPS] getActiveProject returned:', ctx);
+      console.warn('[OPS] getActiveProject returned no project:', ctx);
+      adoptSidebarContext_();
     }
   } catch (e) {
     console.warn('[OPS] getActiveProject failed:', e);
+    adoptSidebarContext_();
   }
 
   showToolbar(rect, capturedRange, text);
@@ -279,6 +300,16 @@ function renderToolbar_() {
 // Toggled off mid-page: tear down any in-flight toolbar so a stale draft
 // doesn't linger after the student silences the extension.
 if (self.OpsEnabled) self.OpsEnabled.onChange((on) => { if (!on) hideToolbar(); });
+
+// Warm the project/bundle cache as soon as the content script loads, so the
+// FIRST selection already has its save target instead of racing a cold service
+// worker and rendering "No active project". The sidebar's own load kicks the
+// same (now single-flighted) refresh, so this rides along for free.
+chrome.runtime.sendMessage({ type: 'getActiveProject' })
+  .then((ctx) => {
+    if (ctx && ctx.ok && ctx.project) { projectCache = ctx.project; bundleCache = ctx.bundle; }
+  })
+  .catch(() => {});
 
 async function syncHighlight_(highlightId, primaryCategory, text, note) {
   try {

@@ -22,6 +22,18 @@ importScripts(
 const DRAIN_ALARM = 'opsResearch.drain';
 let drainLock = false;
 
+// Single-flight guard for refreshContext. Page load fires getActiveProject +
+// loadPageHighlights while a highlight fires another getActiveProject — without
+// this, each would launch its own 3-call refresh against a (possibly cold) GAS
+// instance, serializing server-side and compounding the cold-start latency that
+// made the launcher feel dead. Concurrent callers now share one refresh.
+let _ctxRefreshInFlight = null;
+function refreshContextOnce_() {
+  if (_ctxRefreshInFlight) return _ctxRefreshInFlight;
+  _ctxRefreshInFlight = refreshContext().finally(() => { _ctxRefreshInFlight = null; });
+  return _ctxRefreshInFlight;
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
   await chrome.alarms.create(DRAIN_ALARM, { periodInMinutes: CONFIG.DRAIN_PERIOD_MINUTES });
   console.log('OPS Research Tool: installed; drain alarm registered.');
@@ -169,7 +181,9 @@ async function handleMessage(msg, sender) {
       });
       return { ok: true };
     case 'refreshContext':
-      return refreshContext();
+      // Share the single-flight so a popup-open doesn't fire a second 3-call
+      // refresh on top of one the sidebar/toolbar already kicked.
+      return refreshContextOnce_();
     case 'getSyncStatus':
       return getSyncStatus();
     case 'forceDrain':
@@ -502,31 +516,51 @@ async function getActiveProjectInfo() {
   let projects = (await getCache('cachedProjects')) || [];
   let bundles = (await getCache('cachedBundles')) || [];
   let project = projects.find((p) => p.projectId === activeProjectId) || null;
-  // Cold/stale cache: the projects/bundles caches were historically only warmed
-  // when the popup opened. The sidebar now owns project selection and runs on
-  // every page, so refresh from the server when we have no project list at all,
-  // an active id we can't resolve, OR the cache has aged past the TTL. The TTL is
-  // what lets a newly created project reach the sidebar's picker — without it the
-  // list froze at whatever was cached the first time and never picked up new
-  // projects (the popup's unconditional refresh was the only way in).
+
+  // Stale-while-revalidate. The projects/bundles caches were historically only
+  // warmed when the popup opened; the sidebar + toolbar now read context on every
+  // page, so we keep refreshing — but the refresh must NOT sit on the hot path.
+  //
+  // "Usable" = we can answer right now without the network: a non-empty project
+  // list, and either no active id yet (auto-pick below handles it) or an active
+  // id that resolves to a project. Only a genuinely cold/unresolvable cache
+  // BLOCKS on a refresh; a merely-stale-but-usable cache is served instantly and
+  // refreshed in the BACKGROUND for next time. The TTL still lets a newly created
+  // project reach the picker — just without freezing highlighting / the panel
+  // behind a (possibly cold) GAS round-trip, which was the cold-start "dead
+  // launcher" + "No active project" bug. Crucially this never returns
+  // project:null when a usable cached project exists just because a refresh was
+  // due or failed — that null is what the toolbar surfaced as "No active project"
+  // while the sidebar still showed the (cached) one.
   const cachedAt = (await getCache('cachedContextAt')) || 0;
   const stale = (Date.now() - cachedAt) > CONFIG.PROJECTS_CACHE_TTL_MS;
-  if (projects.length === 0 || (activeProjectId && !project) || stale) {
+  const usable = projects.length > 0 && (!activeProjectId || project);
+  if (!usable) {
     try {
-      await refreshContext();
+      await refreshContextOnce_();
       projects = (await getCache('cachedProjects')) || [];
       bundles = (await getCache('cachedBundles')) || [];
       project = projects.find((p) => p.projectId === activeProjectId) || null;
     } catch (e) {
       console.debug('[OPS] getActiveProjectInfo refresh failed (offline?):', e.message || e);
     }
+  } else if (stale) {
+    refreshContextOnce_().catch((e) => {
+      console.debug('[OPS] background context refresh failed:', e.message || e);
+    });
   }
-  // Auto-pick the first project when none is active yet, so a single-project
-  // student never has to choose and highlighting always has a target. This used
-  // to live in the popup; it's centralized here now that the sidebar owns the
-  // project dropdown. Persist + best-effort server sync (so the Docs sidebar
-  // matches), exactly as the popup did.
-  if (!activeProjectId && projects.length > 0) {
+  // Auto-pick the first project when none is active yet — OR when the sticky
+  // activeProjectId is DANGLING (set, but no longer in the caller's project
+  // list, e.g. the project was archived/recreated with a new id). Without the
+  // dangling-id case, a stale sticky id strands the user on project:null forever
+  // (the refresh above can't resolve an id the server no longer returns), which
+  // reads as "No active project" in the toolbar while the sidebar dropdown still
+  // shows a project — its <select> just defaults to the first option when none
+  // is selected. Self-heal by repointing to the first available project and
+  // persisting the correction (+ best-effort server sync so the Docs sidebar
+  // matches). A single-project student then never has to choose, and a stale id
+  // fixes itself on the next read.
+  if (projects.length > 0 && (!activeProjectId || !project)) {
     activeProjectId = projects[0].projectId;
     await setActiveProjectId(activeProjectId);
     apiPost({ action: 'setActiveProject', projectId: activeProjectId }).catch(() => {});

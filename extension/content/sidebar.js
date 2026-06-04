@@ -415,14 +415,16 @@ const OpsSidebar = (function () {
 
   async function show() {
     await ensureInit_();
-    // Re-resolve the active project/bundle each open. At init the projects
-    // cache can be cold (popup never opened), leaving state.project null and a
-    // false "No active project" subheader; reloading here (now self-healing in
-    // the service worker) corrects it without needing a page refresh.
-    if (!state.project || !state.bundle) await loadContext_();
+    // Open IMMEDIATELY from whatever context we already have — never gate the
+    // panel behind a network round-trip. A cold GAS call here used to make the
+    // launcher click feel dead for seconds; the panel now paints at once and the
+    // project/bundle fill in a moment later if they weren't cached yet.
     state.panelEl.style.display = 'flex';
     state.launcherEl.style.display = 'none';
     render_();
+    if (!state.project || !state.bundle) {
+      loadContext_().then(() => render_()).catch(() => {});
+    }
   }
 
   async function hide() {
@@ -447,7 +449,10 @@ const OpsSidebar = (function () {
   async function ensureInit_() {
     if (state.initialized) return;
     state.initialized = true;
-    await loadContext_();
+    // Build + paint the shadow host (launcher + empty panel) FIRST, so the edge
+    // tab appears the instant the page settles instead of waiting on a (possibly
+    // cold) GAS round-trip. render_ tolerates a null project/bundle, so resolve
+    // context in the BACKGROUND and re-render when it lands.
     await buildHost_();
     if (self.OpsEnabled) {
       applyEnabled_(self.OpsEnabled.get());
@@ -460,6 +465,7 @@ const OpsSidebar = (function () {
       });
     }
     render_();
+    loadContext_().then(() => render_()).catch(() => {});
   }
 
   // Hide every on-page surface when the extension is switched off. The host
@@ -654,13 +660,25 @@ const OpsSidebar = (function () {
     try {
       const ctx = await chrome.runtime.sendMessage({ type: 'getActiveProject' });
       if (ctx && ctx.ok) {
-        state.project = ctx.project;
-        state.bundle = ctx.bundle;
-        state.projects = ctx.projects || [];
+        // Don't clobber a previously-resolved project with a transient null
+        // (cold service worker / failed background refresh). Holding last-good
+        // is what keeps the picker stable and lets the toolbar borrow it.
+        if (ctx.project) {
+          state.project = ctx.project;
+          state.bundle = ctx.bundle;
+        }
+        if (ctx.projects && ctx.projects.length) state.projects = ctx.projects;
       }
     } catch (e) {
       console.warn('[OPS sidebar] could not load active project:', e);
     }
+  }
+
+  // The sidebar's last-resolved context. Exposed so the selection toolbar can
+  // borrow it when its own getActiveProject call comes back empty during a cold
+  // start — the two surfaces then can't disagree about the active project.
+  function getContext() {
+    return { project: state.project, bundle: state.bundle, projects: state.projects };
   }
 
   // Switch the active project from the sidebar's picker. Persists + server-syncs
@@ -1538,7 +1556,7 @@ const OpsSidebar = (function () {
     }
   }
 
-  return { addHighlight, markSynced, markError, focus, show, hide, toggle, _setSourceId, loadForCurrentPage, reanchorIn, whenLoaded };
+  return { addHighlight, markSynced, markError, focus, show, hide, toggle, _setSourceId, loadForCurrentPage, reanchorIn, whenLoaded, getContext };
 })();
 
 self.OpsSidebar = OpsSidebar;
