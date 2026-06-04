@@ -505,8 +505,13 @@ async function getActiveProjectInfo() {
   // Cold/stale cache: the projects/bundles caches were historically only warmed
   // when the popup opened. The sidebar now owns project selection and runs on
   // every page, so refresh from the server when we have no project list at all,
-  // or an active id we can't resolve. Once warmed, this never re-fetches.
-  if (projects.length === 0 || (activeProjectId && !project)) {
+  // an active id we can't resolve, OR the cache has aged past the TTL. The TTL is
+  // what lets a newly created project reach the sidebar's picker — without it the
+  // list froze at whatever was cached the first time and never picked up new
+  // projects (the popup's unconditional refresh was the only way in).
+  const cachedAt = (await getCache('cachedContextAt')) || 0;
+  const stale = (Date.now() - cachedAt) > CONFIG.PROJECTS_CACHE_TTL_MS;
+  if (projects.length === 0 || (activeProjectId && !project) || stale) {
     try {
       await refreshContext();
       projects = (await getCache('cachedProjects')) || [];
@@ -539,7 +544,12 @@ async function refreshContext() {
     apiGet({ action: 'bundles' }),
   ]);
   if (me.ok) await setCache('cachedMe', me);
-  if (projects.ok) await setCache('cachedProjects', projects.projects);
+  if (projects.ok) {
+    await setCache('cachedProjects', projects.projects);
+    // Stamp freshness only when the projects list actually updated, so a failed
+    // (e.g. AUTH_REQUIRED) fetch leaves the cache stale and keeps retrying.
+    await setCache('cachedContextAt', Date.now());
+  }
   if (bundles.ok) await setCache('cachedBundles', bundles.bundles);
   return { ok: true, me, projects, bundles };
 }

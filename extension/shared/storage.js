@@ -16,6 +16,8 @@
  *   cachedProjects                    Last successful 'projects' response.
  *   cachedBundles                     Last successful 'bundles' response.
  *   cachedMe                          Last successful 'me' response.
+ *   cachedContextAt                   Date.now() of the last projects refresh;
+ *                                     drives the sidebar's TTL re-fetch.
  */
 
 const QUEUE_PREFIX = 'q:';
