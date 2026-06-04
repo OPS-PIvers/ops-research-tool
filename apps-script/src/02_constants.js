@@ -11,7 +11,10 @@ const NAMES = {
 };
 
 const TABS = {
-  ROSTER: 'Roster',
+  ROSTER: 'Roster',          // legacy flat roster — preserved as backup + migration source (see Classes v2)
+  STUDENTS: 'Students',      // Classes v2: identity, one row per person
+  CLASSES: 'Classes',        // Classes v2: one row per class (teacher assigned once)
+  ENROLLMENTS: 'Enrollments',// Classes v2: student↔class many-to-many join
   STAFF: 'Staff',
   PROJECTS: 'Projects',
   BUNDLES: 'Bundles',
@@ -23,7 +26,16 @@ const TABS = {
 };
 
 const HEADERS = {
+  // Legacy flat roster (kept for backup + one-time migration into the v2 trio).
   ROSTER: ['ID', 'First', 'Last', 'Email', 'Class', 'Teacher', 'TeacherEmail'],
+
+  // Classes v2 normalized trio. `Class` (name) stays the string key used by
+  // Projects.memberClasses + Drive class folders — the Classes tab only adds
+  // metadata. Enrollments is the student↔class many-to-many join.
+  STUDENTS: ['ID', 'First', 'Last', 'Email'],
+  CLASSES: ['Class', 'TeacherEmail', 'SchoolYear', 'Status'],
+  ENROLLMENTS: ['Email', 'Class'],
+
   STAFF: ['Name', 'Email', 'Role'],
 
   PROJECTS: [
@@ -71,6 +83,14 @@ const ROLES = {
 };
 
 const PROJECT_STATUS = {
+  ACTIVE: 'active',
+  ARCHIVED: 'archived',
+};
+
+// A class can be retired without deleting its history (its name still appears in
+// archived projects' memberClasses). Active classes are the ones offered in the
+// New Project wizard + teacher pickers.
+const CLASS_STATUS = {
   ACTIVE: 'active',
   ARCHIVED: 'archived',
 };

@@ -58,16 +58,14 @@ function devDiagnoseSidebarData() {
 function devSeedDevProject() {
   const me = Session.getEffectiveUser().getEmail();
 
-  // Add owner to the roster as a fake student (in class "DEV") if missing.
-  const rosterSs = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const rosterTab = getTab_(rosterSs, TABS.ROSTER);
-  if (findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', me) < 0) {
-    appendRow_(rosterTab, HEADERS.ROSTER, {
-      ID: '', First: 'Dev', Last: 'Owner', Email: me, Class: 'DEV',
-      Teacher: 'Dev Owner', TeacherEmail: me,
-    });
-  }
+  // Add owner to the roster as a fake student in class "DEV" (Classes v2).
+  ensureClassSchema_();
+  if (!getClassRecord_('DEV')) createClass_('DEV', me, '');
+  if (!getStudentIdentity_(me)) upsertStudent_({ ID: '', First: 'Dev', Last: 'Owner', Email: me });
+  enroll_(me, 'DEV');
+
   // Add owner to staff as admin if missing.
+  const rosterSs = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
   const staffTab = getTab_(rosterSs, TABS.STAFF);
   if (findRowByKey_(staffTab, HEADERS.STAFF, 'Email', me) < 0) {
     appendRow_(staffTab, HEADERS.STAFF, { Name: 'Dev Owner', Email: me, Role: ROLES.ADMIN });
@@ -803,9 +801,9 @@ function devTestAdminRosterReplace() {
   const checks = [];
   const check = (label, ok) => { checks.push({ label, ok }); };
 
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const tab = getTab_(ss, TABS.STAFF);
-  const before = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER);
+  // Snapshot the CURRENT roster from the v2 model (not the stale legacy tab) so
+  // the restore in `finally` puts back exactly what was there.
+  const before = currentFlatRoster_();
   const tester = getActorEmail_();
   try {
     const sample = [
@@ -830,6 +828,87 @@ function devTestAdminRosterReplace() {
     })));
   }
 
+  const pass = checks.every((c) => c.ok);
+  console.log(JSON.stringify({ ok: pass, checks }, null, 2));
+  return { ok: pass };
+}
+
+/**
+ * Classes v2: the legacy→normalized migration transform + that ensureClassSchema_
+ * stands up the Students/Classes/Enrollments tabs. The pure transform is also
+ * covered by apps-script/test/roster_model.node.test.js; this re-asserts it
+ * in-engine and checks the live tabs exist.
+ */
+function devTestClassSchemaMigration() {
+  const checks = [];
+  const check = (label, ok) => { checks.push({ label, ok }); };
+  const built = buildClassSchemaFromLegacy_([
+    { ID: '1', First: 'A', Last: 'A', Email: 'a@x.org', Class: 'C1', TeacherEmail: 't1@x.org' },
+    { ID: '1', First: 'A', Last: 'A', Email: 'a@x.org', Class: 'C2', TeacherEmail: 't2@x.org' },
+    { ID: '2', First: 'B', Last: 'B', Email: 'b@x.org', Class: 'C1', TeacherEmail: '' },
+  ]);
+  check('students deduped by email (2)', built.students.length === 2);
+  check('multi-class student kept once', built.students.filter((s) => s.Email === 'a@x.org').length === 1);
+  check('2 classes', built.classes.length === 2);
+  check('C1 teacher from first row', (built.classes.find((c) => c.Class === 'C1') || {}).TeacherEmail === 't1@x.org');
+  check('3 enrollments', built.enrollments.length === 3);
+
+  ensureClassSchema_();
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  check('Students tab exists', !!ss.getSheetByName(TABS.STUDENTS));
+  check('Classes tab exists', !!ss.getSheetByName(TABS.CLASSES));
+  check('Enrollments tab exists', !!ss.getSheetByName(TABS.ENROLLMENTS));
+
+  const pass = checks.every((c) => c.ok);
+  console.log(JSON.stringify({ ok: pass, checks }, null, 2));
+  return { ok: pass };
+}
+
+/**
+ * Classes v2 keystone: a student in MULTIPLE classes sees every project any of
+ * their classes is in, and has exactly ONE Sheet per project regardless of how
+ * many classes they're in (class-agnostic lookup never orphans/duplicates).
+ * Seeds + cleans up after itself (trashes the provisioned Sheet, drops the
+ * student + scratch classes).
+ */
+function devTestMultiClassEnrollment() {
+  const checks = [];
+  const check = (label, ok) => { checks.push({ label, ok }); };
+  const project = devSeedDevProject();   // covers class DEV
+  const se = 'multiclass.student@orono.k12.mn.us';
+  ensureClassSchema_();
+  ['MCA', 'MCB'].forEach((c) => { if (!getClassRecord_(c)) createClass_(c, getActorEmail_(), ''); });
+  upsertStudent_({ ID: '', First: 'Multi', Last: 'Class', Email: se });
+  try {
+    enroll_(se, 'DEV');
+    enroll_(se, 'MCA');
+    check('enrolled in DEV + MCA',
+      JSON.stringify(getStudentClasses_(se).sort()) === JSON.stringify(['DEV', 'MCA']));
+
+    const elig = studentEligibleProjects_(getStudentClasses_(se), [
+      { name: 'P-DEV', memberClasses: 'DEV' },
+      { name: 'P-MCA', memberClasses: 'MCA,OTHER' },
+      { name: 'P-NONE', memberClasses: 'ZZZ' },
+    ]).map((p) => p.name).sort();
+    check('eligible for both classes\' projects',
+      JSON.stringify(elig) === JSON.stringify(['P-DEV', 'P-MCA']));
+
+    // One Sheet per (student, project) even as classes are added afterward.
+    const s1 = findOrCreateSoloSheet_(se, project);
+    enroll_(se, 'MCB');                       // add a 3rd class AFTER the Sheet exists
+    const s2 = findOrCreateSoloSheet_(se, project);
+    check('one Sheet per project across classes', s1.getId() === s2.getId());
+
+    const s3 = getSoloSheetIfExists_(se, project);
+    check('read path resolves the same Sheet', !!s3 && s3.getId() === s1.getId());
+  } finally {
+    try {
+      const ss = getSoloSheetIfExists_(se, project);
+      if (ss) { DriveApp.getFileById(ss.getId()).setTrashed(true); forgetSoloSheetId_(project.projectId, se); }
+    } catch (e) {}
+    try { deleteStudent_(se); } catch (e) {}
+    ['MCA', 'MCB'].forEach((c) => { try { deleteClass_(c); } catch (e) {} });
+  }
   const pass = checks.every((c) => c.ok);
   console.log(JSON.stringify({ ok: pass, checks }, null, 2));
   return { ok: pass };
@@ -1012,18 +1091,14 @@ function devTestArchiveSchoolYear() {
  */
 function devGroupsSeedRoster_(count) {
   const me = Session.getEffectiveUser().getEmail();
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const tab = getTab_(ss, TABS.ROSTER);
+  ensureClassSchema_();
+  if (!getClassRecord_('DEV')) createClass_('DEV', me, '');
   const emails = [];
   for (let i = 1; i <= count; i++) {
     const email = 'devgroups.student' + i + '@orono.k12.mn.us';
     emails.push(email);
-    if (findRowByKey_(tab, HEADERS.ROSTER, 'Email', email) < 0) {
-      appendRow_(tab, HEADERS.ROSTER, {
-        ID: '', First: 'DevG' + i, Last: 'Student',
-        Email: email, Class: 'DEV', Teacher: 'Dev Owner', TeacherEmail: me,
-      });
-    }
+    if (!getStudentIdentity_(email)) upsertStudent_({ ID: '', First: 'DevG' + i, Last: 'Student', Email: email });
+    enroll_(email, 'DEV');
   }
   return emails;
 }
@@ -1060,12 +1135,10 @@ function devGroupsTestCleanup_(emails) {
     });
   }
 
-  // Remove roster rows.
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const tab = getTab_(ss, TABS.ROSTER);
+  // Remove students (identity + enrollments).
+  ensureClassSchema_();
   emails.forEach((email) => {
-    const idx = findRowByKey_(tab, HEADERS.ROSTER, 'Email', email);
-    if (idx > 0) { try { tab.deleteRow(idx); } catch (e) {} }
+    if (getStudentIdentity_(email)) { try { deleteStudent_(email); } catch (e) {} }
   });
 }
 
@@ -1397,19 +1470,15 @@ function devTestGroupAddToGroup() {
  */
 function devTestGroupAuthorizationGate() {
   const project = devSeedDevProject();
-  const emails = devGroupsSeedRoster_(3);
-  // Add two DEV2 roster rows so mixed-class is reproducible.
+  const emails = devGroupsSeedRoster_(5);   // 5 DEV students; [3],[4] stay free for the scope test
   const me = Session.getEffectiveUser().getEmail();
-  const rosterSs = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const rosterTab = getTab_(rosterSs, TABS.ROSTER);
+  ensureClassSchema_();
+  // DEV2 class owned by a different teacher, with two students (Classes v2).
+  if (!getClassRecord_('DEV2')) createClass_('DEV2', 'somebody.else@orono.k12.mn.us', '');
   const dev2 = ['devgroups.dev2a@orono.k12.mn.us', 'devgroups.dev2b@orono.k12.mn.us'];
   dev2.forEach((e, i) => {
-    if (findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', e) < 0) {
-      appendRow_(rosterTab, HEADERS.ROSTER, {
-        ID:'', First:'DG2'+i, Last:'Student', Email:e, Class:'DEV2',
-        Teacher:'Other', TeacherEmail:'somebody.else@orono.k12.mn.us',
-      });
-    }
+    if (!getStudentIdentity_(e)) upsertStudent_({ ID:'', First:'DG2'+i, Last:'Student', Email:e });
+    enroll_(e, 'DEV2');
   });
 
   const { check, state } = devGroupsChecker_();
@@ -1427,41 +1496,31 @@ function devTestGroupAuthorizationGate() {
     catch (e) { alreadyThrew = true; check('already-in-a-group merge throws', /already in a group/i.test(e.message)); }
     if (!alreadyThrew) check('already-in-a-group merge throws', false);
 
-    // Teacher-out-of-scope: demote actor to teacher of a phantom class, attempt DEV merge → throws.
-    const staffTab = getTab_(rosterSs, TABS.STAFF);
+    // Teacher-out-of-scope: demote actor to teacher AND reassign DEV's teacher to
+    // a phantom (so listClassesTaughtBy_(me) is empty), then merging two free DEV
+    // students must throw — the actor teaches nothing.
+    const staffTab = getTab_(SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID), TABS.STAFF);
     const sIdx = findRowByKey_(staffTab, HEADERS.STAFF, 'Email', me);
-    const origRole = staffTab.getRange(sIdx, HEADERS.STAFF.indexOf('Role') + 1).getValue();
-    staffTab.getRange(sIdx, HEADERS.STAFF.indexOf('Role') + 1).setValue(ROLES.TEACHER);
+    const roleCol = HEADERS.STAFF.indexOf('Role') + 1;
+    const origRole = staffTab.getRange(sIdx, roleCol).getValue();
+    const origTeacher = getClassRecord_('DEV').TeacherEmail;
+    staffTab.getRange(sIdx, roleCol).setValue(ROLES.TEACHER);
+    updateClass_('DEV', { TeacherEmail: 'phantom.teacher@orono.k12.mn.us' });
     try {
-      // Also temporarily flip our roster TeacherEmail to nobody, so listClassesTaughtBy_(me) returns [].
-      const rIdx = findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', emails[0]);
-      const teCol = HEADERS.ROSTER.indexOf('TeacherEmail') + 1;
-      // We can't easily flip every row, but we can stash and flip rows for emails we care about.
-      const stashed = emails.map((e) => {
-        const idx = findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', e);
-        const orig = rosterTab.getRange(idx, teCol).getValue();
-        rosterTab.getRange(idx, teCol).setValue('phantom.teacher@orono.k12.mn.us');
-        return { idx, orig };
-      });
       let scopeThrew = false;
-      try { consoleGroupCreate(project.projectId, 'OutOfScope', [emails[2], dev2[1]]); }
-      catch (e) { scopeThrew = true; check('teacher out-of-scope throws', /scope|same class/i.test(e.message)); }
-      if (!scopeThrew) check('teacher out-of-scope throws', false);
-      // Restore stashed TeacherEmail values.
-      stashed.forEach((s) => rosterTab.getRange(s.idx, teCol).setValue(s.orig));
+      try { consoleGroupCreate(project.projectId, 'OutOfScope', [emails[3], emails[4]]); }
+      catch (e) { scopeThrew = true; }
+      check('teacher out-of-scope throws', scopeThrew);
     } finally {
-      // Restore role.
-      staffTab.getRange(sIdx, HEADERS.STAFF.indexOf('Role') + 1).setValue(origRole);
+      updateClass_('DEV', { TeacherEmail: origTeacher });
+      staffTab.getRange(sIdx, roleCol).setValue(origRole);
     }
 
     // Disband the AlreadyInGroup group before cleanup.
     try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {}
   } finally {
-    // Remove DEV2 roster rows + clean up.
-    dev2.forEach((e) => {
-      const idx = findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', e);
-      if (idx > 0) { try { rosterTab.deleteRow(idx); } catch (err) {} }
-    });
+    dev2.forEach((e) => { if (getStudentIdentity_(e)) { try { deleteStudent_(e); } catch (err) {} } });
+    try { deleteClass_('DEV2'); } catch (e) {}
     try {
       resetGroupSheetCache_();
       const groups = listGroupsForProject_(project, 'DEV');

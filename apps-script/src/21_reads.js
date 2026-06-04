@@ -12,15 +12,15 @@ function getStudentSheetIfExists_(actorEmail, project) {
   return getSoloSheetIfExists_(actorEmail, project);
 }
 
-/** Per-student Sheet if it exists, else null. SOLO ONLY (bypasses groups). */
+/**
+ * Per-student Sheet if it exists, else null. SOLO ONLY (bypasses groups).
+ * Class-agnostic: resolves by (project, email) via findSoloSheetInProject_
+ * (manifest-first, then a walk of all class folders), so a multi-class student
+ * is found wherever their single per-project Sheet lives.
+ */
 function getSoloSheetIfExists_(actorEmail, project) {
-  const roster = getStudentRosterEntry_(actorEmail);
-  if (!roster) return null;
-  const projectFolder = DriveApp.getFolderById(project.rootFolderId);
-  const classFolder = findChildFolder_(projectFolder, roster.Class);
-  if (!classFolder) return null;
-  const file = findSoloSheetFile_(classFolder, actorEmail);
-  return file ? SpreadsheetApp.openById(file.getId()) : null;
+  if (!getStudentIdentity_(actorEmail)) return null;
+  return findSoloSheetInProject_(actorEmail, project);
 }
 
 function readSourcesForActor_(actorEmail, projectId) {

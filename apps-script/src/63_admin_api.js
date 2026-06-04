@@ -23,22 +23,37 @@
 function adminGetRoster() {
   const actorEmail = getActorEmail_();
   assertAdmin_(actorEmail);
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const rows = excludeSampleIfDisabled_(readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER));
+  ensureClassSchema_();
   const workEmails = listAllStudentSheetEmails_();
-  return {
-    ok: true,
-    rows: rows.map((r) => ({
-      ID: String(r.ID || ''),
-      First: String(r.First || ''),
-      Last: String(r.Last || ''),
-      Email: String(r.Email || '').toLowerCase(),
-      Class: String(r.Class || ''),
-      Teacher: String(r.Teacher || ''),
-      TeacherEmail: String(r.TeacherEmail || '').toLowerCase(),
-      hasWork: workEmails[String(r.Email || '').toLowerCase()] === true,
-    })),
-  };
+  const classTeacherOf = {};
+  listClasses_().forEach((c) => { classTeacherOf[c.Class] = c.TeacherEmail; });
+
+  // One row per ENROLLMENT so a multi-class student appears once per class; a
+  // student with no enrollments still shows (blank Class) so they're editable.
+  const data = rosterData_();
+  const enrollByEmail = {};
+  data.enrollments.forEach((e) => {
+    const em = String(e.Email).toLowerCase();
+    (enrollByEmail[em] || (enrollByEmail[em] = [])).push(String(e.Class).trim());
+  });
+  const rows = [];
+  excludeSampleIfDisabled_(data.students).forEach((s) => {
+    const em = String(s.Email).toLowerCase();
+    const classes = (enrollByEmail[em] && enrollByEmail[em].length) ? enrollByEmail[em] : [''];
+    classes.forEach((cls) => {
+      rows.push({
+        ID: String(s.ID || ''),
+        First: String(s.First || ''),
+        Last: String(s.Last || ''),
+        Email: em,
+        Class: cls,
+        Teacher: '',
+        TeacherEmail: classTeacherOf[cls] || '',
+        hasWork: workEmails[em] === true,
+      });
+    });
+  });
+  return { ok: true, rows };
 }
 
 /**
@@ -93,10 +108,11 @@ function listAllStudentSheetEmails_() {
 // ============================================================
 
 /**
- * Add a new roster row. Validates required fields, email uniqueness
- * (case-insensitive), and ID uniqueness (if provided).
+ * Add a student + enroll them in a class (Classes v2). Creates the class if it
+ * doesn't exist yet (stamping the given teacher). Validates required fields,
+ * email uniqueness (as a student), and ID uniqueness.
  *
- * `row` shape (input): {ID?, First, Last, Email, Class, Teacher?, TeacherEmail?}
+ * `row` shape (input): {ID?, First, Last, Email, Class, Teacher?, TeacherEmail}
  * Returns { ok, row } with the canonicalized stored values.
  */
 function adminAddRosterRow(row) {
@@ -105,125 +121,88 @@ function adminAddRosterRow(row) {
   if (!row) throw new Error('row required');
   const out = canonicalizeRosterRow_(row, /*requireEmail=*/true);
   validateRosterRowOrThrow_(out);
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const tab = getTab_(ss, TABS.ROSTER);
-  const all = readAllAsObjects_(tab, HEADERS.ROSTER);
-  if (all.some((r) => String(r.Email || '').toLowerCase() === out.Email)) {
-    throw new Error('Email already in roster: ' + out.Email);
-  }
-  if (out.ID && all.some((r) => String(r.ID || '').trim() === out.ID)) {
+  ensureClassSchema_();
+  if (getStudentIdentity_(out.Email)) throw new Error('Email already in roster: ' + out.Email);
+  if (out.ID && rosterData_().students.some((s) => String(s.ID || '').trim() === out.ID)) {
     throw new Error('ID already in roster: ' + out.ID);
   }
-  appendRow_(tab, HEADERS.ROSTER, out);
+  upsertStudent_({ ID: out.ID, First: out.First, Last: out.Last, Email: out.Email });
+  if (!getClassRecord_(out.Class)) createClass_(out.Class, out.TeacherEmail, '');
+  enroll_(out.Email, out.Class);
   return { ok: true, row: out };
 }
 
 /**
- * Update an existing roster row, identified by Email. Accepts any subset
- * of {First, Last, Class, Teacher, TeacherEmail}. Email and ID are
- * deliberately NOT accepted here — they go through dedicated endpoints.
+ * Update a student's identity (First/Last). Class/teacher membership is managed
+ * through the Classes endpoints (a student can be in several classes now), so
+ * Class/Teacher edits are not accepted here. Email/ID go through dedicated
+ * endpoints. Identified by Email.
  */
 function adminUpdateRosterRow(email, fields) {
   const actorEmail = getActorEmail_();
   assertAdmin_(actorEmail);
   if (!email) throw new Error('email required');
   if (!fields) throw new Error('fields required');
-  const target = String(email).toLowerCase();
-  const allowed = ['First', 'Last', 'Class', 'Teacher', 'TeacherEmail'];
-  const updates = {};
-  Object.keys(fields).forEach((k) => {
-    if (allowed.indexOf(k) >= 0) updates[k] = String(fields[k] || '');
-  });
-  if (Object.keys(updates).length === 0) throw new Error('No editable fields supplied');
-  if ('TeacherEmail' in updates) updates.TeacherEmail = updates.TeacherEmail.toLowerCase();
-
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const tab = getTab_(ss, TABS.ROSTER);
-  const rowIdx = findRowByKeyCi_(tab, HEADERS.ROSTER, 'Email', target);
-  if (rowIdx < 0) throw new Error('Roster row not found: ' + target);
-  HEADERS.ROSTER.forEach((header, i) => {
-    if (header in updates) tab.getRange(rowIdx, i + 1).setValue(updates[header]);
-  });
-  const updatedObjects = readAllAsObjects_(tab, HEADERS.ROSTER);
-  const updated = updatedObjects.find((r) => String(r.Email || '').toLowerCase() === target);
-  return { ok: true, row: updated };
+  const id = getStudentIdentity_(email);
+  if (!id) throw new Error('Student not found: ' + email);
+  const next = { ID: id.ID, First: id.First, Last: id.Last, Email: id.Email };
+  let touched = false;
+  if ('First' in fields) { next.First = String(fields.First || '').trim(); touched = true; }
+  if ('Last' in fields)  { next.Last  = String(fields.Last  || '').trim(); touched = true; }
+  if (!touched) throw new Error('No editable fields supplied (use the Classes screen to change enrollment)');
+  upsertStudent_(next);
+  return { ok: true, row: Object.assign({}, next, { classes: getStudentClasses_(email) }) };
 }
 
-/**
- * Set the ID on a roster row that doesn't have one yet. Throws if already set.
- */
+/** Set the ID on a student that doesn't have one yet. Throws if already set. */
 function adminSetStudentId(email, id) {
   const actorEmail = getActorEmail_();
   assertAdmin_(actorEmail);
   if (!email) throw new Error('email required');
   if (!id)    throw new Error('id required');
-  const target = String(email).toLowerCase();
   const trimmedId = String(id).trim();
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const tab = getTab_(ss, TABS.ROSTER);
-  const all = readAllAsObjects_(tab, HEADERS.ROSTER);
-  const target_row = all.find((r) => String(r.Email || '').toLowerCase() === target);
-  if (!target_row) throw new Error('Roster row not found: ' + target);
-  if (String(target_row.ID || '').trim()) throw new Error('ID already set for ' + target);
-  if (all.some((r) => String(r.ID || '').trim() === trimmedId)) {
+  const student = getStudentIdentity_(email);
+  if (!student) throw new Error('Student not found: ' + email);
+  if (String(student.ID || '').trim()) throw new Error('ID already set for ' + email);
+  if (rosterData_().students.some((s) => String(s.ID || '').trim() === trimmedId)) {
     throw new Error('ID already in roster: ' + trimmedId);
   }
-  const rowIdx = findRowByKeyCi_(tab, HEADERS.ROSTER, 'Email', target);
-  const idCol = HEADERS.ROSTER.indexOf('ID') + 1;
-  tab.getRange(rowIdx, idCol).setValue(trimmedId);
-  return { ok: true, row: Object.assign({}, target_row, { ID: trimmedId }) };
+  upsertStudent_(Object.assign({}, student, { ID: trimmedId }));
+  return { ok: true, row: Object.assign({}, student, { ID: trimmedId }) };
 }
 
-/**
- * Change an already-set ID. Typed-confirm gated client-side. Server
- * validates uniqueness.
- */
+/** Change an already-set ID. Typed-confirm gated client-side. Validates uniqueness. */
 function adminChangeStudentId(email, newId) {
   const actorEmail = getActorEmail_();
   assertAdmin_(actorEmail);
   if (!email) throw new Error('email required');
   if (!newId) throw new Error('newId required');
-  const target = String(email).toLowerCase();
   const trimmedId = String(newId).trim();
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const tab = getTab_(ss, TABS.ROSTER);
-  const all = readAllAsObjects_(tab, HEADERS.ROSTER);
-  const target_row = all.find((r) => String(r.Email || '').toLowerCase() === target);
-  if (!target_row) throw new Error('Roster row not found: ' + target);
-  if (!String(target_row.ID || '').trim()) {
-    throw new Error('No ID set — use adminSetStudentId to add one');
-  }
-  if (all.some((r) =>
-        String(r.Email || '').toLowerCase() !== target &&
-        String(r.ID || '').trim() === trimmedId)) {
+  const student = getStudentIdentity_(email);
+  if (!student) throw new Error('Student not found: ' + email);
+  if (!String(student.ID || '').trim()) throw new Error('No ID set — use adminSetStudentId to add one');
+  const targetL = String(email).toLowerCase();
+  if (rosterData_().students.some((s) =>
+        String(s.Email || '').toLowerCase() !== targetL && String(s.ID || '').trim() === trimmedId)) {
     throw new Error('ID already in roster: ' + trimmedId);
   }
-  const rowIdx = findRowByKeyCi_(tab, HEADERS.ROSTER, 'Email', target);
-  const idCol = HEADERS.ROSTER.indexOf('ID') + 1;
-  tab.getRange(rowIdx, idCol).setValue(trimmedId);
-  return { ok: true, row: Object.assign({}, target_row, { ID: trimmedId }) };
+  upsertStudent_(Object.assign({}, student, { ID: trimmedId }));
+  return { ok: true, row: Object.assign({}, student, { ID: trimmedId }) };
 }
 
 /**
- * Delete a roster row. Per-student Sheets are PRESERVED — data persists
- * even after roster removal (per build-plan §Lifecycle). Returns the
- * list of project Sheets that survive.
+ * Delete a student entirely (identity + all enrollments). Per-student Sheets are
+ * PRESERVED — data persists even after roster removal (build-plan §Lifecycle).
+ * Returns the list of project Sheets that survive.
  */
 function adminDeleteRosterRow(email) {
   const actorEmail = getActorEmail_();
   assertAdmin_(actorEmail);
   if (!email) throw new Error('email required');
   const target = String(email).toLowerCase();
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const tab = getTab_(ss, TABS.ROSTER);
-  const rowIdx = findRowByKeyCi_(tab, HEADERS.ROSTER, 'Email', target);
-  if (rowIdx < 0) throw new Error('Roster row not found: ' + target);
-
-  // Identify preserved per-student Sheets so the response can surface them.
+  if (!getStudentIdentity_(target)) throw new Error('Student not found: ' + target);
   const preserved = findStudentSheetsForEmail_(target);
-
-  // Delete the row (Sheets API uses 1-based row indices).
-  tab.deleteRow(rowIdx);
+  deleteStudent_(target);
   return { ok: true, email: target, preservedSheets: preserved };
 }
 
@@ -335,20 +314,24 @@ function adminChangeStudentEmail(oldEmail, newEmail) {
     throw new Error('newEmail does not look like an email');
   }
 
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const tab = getTab_(ss, TABS.ROSTER);
-  const rosterRows = readAllAsObjects_(tab, HEADERS.ROSTER);
-  if (!rosterRows.find((r) => String(r.Email || '').toLowerCase() === oldL)) {
-    throw new Error('Roster row not found: ' + oldL);
-  }
-  if (rosterRows.find((r) => String(r.Email || '').toLowerCase() === newL)) {
-    throw new Error('newEmail already in roster: ' + newL);
-  }
+  ensureClassSchema_();
+  if (!getStudentIdentity_(oldL)) throw new Error('Student not found: ' + oldL);
+  if (getStudentIdentity_(newL)) throw new Error('newEmail already in roster: ' + newL);
 
-  // ----- Step 1: Roster row email cell -----
-  const rowIdx = findRowByKeyCi_(tab, HEADERS.ROSTER, 'Email', oldL);
-  const emailCol = HEADERS.ROSTER.indexOf('Email') + 1;
-  tab.getRange(rowIdx, emailCol).setValue(newL);
+  // ----- Step 1: rekey the student across Students + Enrollments -----
+  const rss = rosterWorkbook_();
+  const studentsTab = getTab_(rss, TABS.STUDENTS);
+  const sIdx = findRowByKeyCi_(studentsTab, HEADERS.STUDENTS, 'Email', oldL);
+  if (sIdx > 0) studentsTab.getRange(sIdx, HEADERS.STUDENTS.indexOf('Email') + 1).setValue(newL);
+  const enrollTab = getTab_(rss, TABS.ENROLLMENTS);
+  const enrollEmailCol = HEADERS.ENROLLMENTS.indexOf('Email') + 1;
+  if (enrollTab.getLastRow() >= 2) {
+    const vals = enrollTab.getRange(2, enrollEmailCol, enrollTab.getLastRow() - 1, 1).getValues();
+    for (let i = 0; i < vals.length; i++) {
+      if (String(vals[i][0]).toLowerCase() === oldL) enrollTab.getRange(i + 2, enrollEmailCol).setValue(newL);
+    }
+  }
+  invalidateRosterMemo_();
 
   const errors = [];
   let renamedSheets = 0;
@@ -472,23 +455,9 @@ function adminReplaceRoster(rows) {
   if (analysis.errors.length > 0) {
     throw new Error('Validation errors — run adminPreviewReplaceRoster first');
   }
-
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const tab = getTab_(ss, TABS.ROSTER);
-
-  // Wipe existing rows (preserve header).
-  const lastRow = tab.getLastRow();
-  if (lastRow > 1) {
-    tab.getRange(2, 1, lastRow - 1, HEADERS.ROSTER.length).clearContent();
-    // Delete extra rows so subsequent reads don't see leftover blank rows.
-    if (lastRow > 2) tab.deleteRows(2, lastRow - 2);
-  }
-
-  // Append the new ones in one batched write (faster than per-row appendRow_).
-  const matrix = analysis.canonical.map((r) => HEADERS.ROSTER.map((h) => r[h] || ''));
-  if (matrix.length > 0) {
-    tab.getRange(2, 1, matrix.length, HEADERS.ROSTER.length).setValues(matrix);
-  }
+  // Rebuild the normalized trio (Students/Classes/Enrollments) from the flat
+  // import via the model. Per-student Sheets are never touched.
+  replaceRoster_(analysis.canonical);
   return {
     ok: true,
     added: analysis.added,
@@ -496,6 +465,25 @@ function adminReplaceRoster(rows) {
     changed: analysis.changed,
     unchanged: analysis.unchanged,
   };
+}
+
+/** Current roster flattened to one {ID,First,Last,Email,Class,TeacherEmail} row
+ *  per enrollment — the comparison baseline for an import diff. */
+function currentFlatRoster_() {
+  ensureClassSchema_();
+  const data = rosterData_();
+  const studentByEmail = {};
+  data.students.forEach((s) => { studentByEmail[String(s.Email).toLowerCase()] = s; });
+  const classTeacherOf = {};
+  listClasses_().forEach((c) => { classTeacherOf[c.Class] = c.TeacherEmail; });
+  return data.enrollments.map((e) => {
+    const em = String(e.Email).toLowerCase();
+    const s = studentByEmail[em] || { ID: '', First: '', Last: '' };
+    const cls = String(e.Class).trim();
+    return canonicalizeRosterRow_({
+      ID: s.ID, First: s.First, Last: s.Last, Email: em, Class: cls, TeacherEmail: classTeacherOf[cls] || '',
+    }, /*requireEmail=*/false);
+  });
 }
 
 /**
@@ -531,26 +519,26 @@ function analyzeRosterReplace_(rows) {
     canonical.push(c);
   });
 
-  // Diff vs. current Roster.
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const current = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER)
-    .map((r) => canonicalizeRosterRow_(r, /*requireEmail=*/false));
-
-  const currentByEmail = {};
-  current.forEach((r) => { if (r.Email) currentByEmail[r.Email] = r; });
-  const newByEmail = {};
-  canonical.forEach((r) => { if (r.Email) newByEmail[r.Email] = r; });
+  // Diff vs. the current roster at ENROLLMENT granularity (email|class), since a
+  // student can now appear in several classes. added/removed/changed are over
+  // (student,class) rows; an identity edit on an existing enrollment is "changed".
+  const current = currentFlatRoster_();
+  const keyOf = (r) => r.Email + '|' + r.Class;
+  const currentByKey = {};
+  current.forEach((r) => { if (r.Email) currentByKey[keyOf(r)] = r; });
+  const newByKey = {};
+  canonical.forEach((r) => { if (r.Email) newByKey[keyOf(r)] = r; });
 
   let added = 0, removed = 0, changed = 0, unchanged = 0;
-  Object.keys(newByEmail).forEach((e) => {
-    if (!currentByEmail[e]) { added++; return; }
-    const before = currentByEmail[e];
-    const after = newByEmail[e];
-    const fieldsDiffer = HEADERS.ROSTER.some((h) => String(before[h] || '') !== String(after[h] || ''));
-    if (fieldsDiffer) changed++; else unchanged++;
+  Object.keys(newByKey).forEach((k) => {
+    if (!currentByKey[k]) { added++; return; }
+    const before = currentByKey[k];
+    const after = newByKey[k];
+    const differ = ['ID', 'First', 'Last', 'TeacherEmail'].some((h) => String(before[h] || '') !== String(after[h] || ''));
+    if (differ) changed++; else unchanged++;
   });
-  Object.keys(currentByEmail).forEach((e) => {
-    if (!newByEmail[e]) removed++;
+  Object.keys(currentByKey).forEach((k) => {
+    if (!newByKey[k]) removed++;
   });
 
   return { added, removed, changed, unchanged, errors, canonical };
@@ -714,23 +702,125 @@ function adminPreviewArchiveYear(schoolYear) {
     (p) => p.schoolYear === schoolYear && p.status === PROJECT_STATUS.ACTIVE
   );
 
-  // Roster-side student counts (no per-Sheet opens).
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const rosterRows = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER);
-
+  // Roster-side student counts (no per-Sheet opens) — distinct enrolled students.
   const out = projects.map((p) => {
     const classes = projectClassList_(p);
-    const count = rosterRows.filter(
-      (r) => r.Class && classes.indexOf(String(r.Class).trim()) >= 0
-    ).length;
     return {
       projectId: p.projectId,
       name: p.name,
       memberClasses: classes,
-      studentCount: count,
+      studentCount: studentsInClasses_(classes).length,
     };
   });
   return { ok: true, schoolYear, projects: out };
+}
+
+// ============================================================
+// Classes management (Classes v2)
+// ============================================================
+
+/**
+ * All classes with teacher (email + display name from Staff), school year,
+ * status, and enrolled-student count. Drives the admin "Classes" screen and the
+ * New Project wizard's class picker.
+ */
+function adminListClasses() {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  ensureClassSchema_();
+  const staffByEmail = {};
+  readAllAsObjects_(getTab_(rosterWorkbook_(), TABS.STAFF), HEADERS.STAFF)
+    .forEach((s) => { staffByEmail[String(s.Email).toLowerCase()] = String(s.Name || ''); });
+  const countByClass = {};
+  rosterData_().enrollments.forEach((e) => {
+    const c = String(e.Class).trim();
+    countByClass[c] = (countByClass[c] || 0) + 1;
+  });
+  return {
+    ok: true,
+    classes: listClasses_().map((c) => ({
+      Class: c.Class,
+      TeacherEmail: c.TeacherEmail,
+      teacherName: staffByEmail[c.TeacherEmail] || '',
+      SchoolYear: c.SchoolYear,
+      Status: c.Status,
+      studentCount: countByClass[c.Class] || 0,
+    })),
+  };
+}
+
+/** Create a class with a teacher chosen from Staff. */
+function adminCreateClass(args) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!args || !String(args.name || '').trim()) throw new Error('Class name required');
+  const teacherEmail = String(args.teacherEmail || '').trim().toLowerCase();
+  if (teacherEmail && !getStaffEntry_(teacherEmail)) throw new Error('Teacher is not on Staff: ' + teacherEmail);
+  return { ok: true, class: createClass_(args.name, teacherEmail, args.schoolYear || '') };
+}
+
+/** Update a class's teacher / school year / status. */
+function adminUpdateClass(name, fields) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!name) throw new Error('class name required');
+  if (!fields) throw new Error('fields required');
+  if ('TeacherEmail' in fields) {
+    const te = String(fields.TeacherEmail || '').trim().toLowerCase();
+    if (te && !getStaffEntry_(te)) throw new Error('Teacher is not on Staff: ' + te);
+  }
+  return { ok: true, class: updateClass_(name, fields) };
+}
+
+/** Delete a class + its enrollments. Per-student Sheets are preserved. */
+function adminDeleteClass(name) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!name) throw new Error('class name required');
+  return deleteClass_(name);
+}
+
+/** Enrolled students (identity) for one class. */
+function adminGetClassRoster(name) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!name) throw new Error('class name required');
+  ensureClassSchema_();
+  const students = excludeSampleIfDisabled_(studentsInClasses_([name]));
+  return {
+    ok: true,
+    class: name,
+    students: students.map((s) => ({ ID: s.ID, First: s.First, Last: s.Last, Email: s.Email })),
+  };
+}
+
+/** Enroll an existing student in a class. */
+function adminEnrollStudent(email, className) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!email || !className) throw new Error('email and class required');
+  if (!getStudentIdentity_(email)) throw new Error('Student not found: ' + email);
+  if (!getClassRecord_(className)) throw new Error('No such class: ' + className);
+  return enroll_(email, className);
+}
+
+/** Remove a student from a class (their per-project Sheets are preserved). */
+function adminUnenrollStudent(email, className) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!email || !className) throw new Error('email and class required');
+  return unenroll_(email, className);
+}
+
+/** Set a student's full set of classes (diff add/remove). */
+function adminSetStudentClasses(email, classNames) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!email) throw new Error('email required');
+  if (!getStudentIdentity_(email)) throw new Error('Student not found: ' + email);
+  const names = Array.isArray(classNames) ? classNames : [];
+  names.forEach((c) => { if (!getClassRecord_(c)) throw new Error('No such class: ' + c); });
+  return setStudentClasses_(email, names);
 }
 
 /**

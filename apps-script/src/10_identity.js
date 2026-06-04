@@ -17,14 +17,10 @@ function getActorEmail_() {
   return email.toLowerCase();
 }
 
-/** Return {Name, Email, Class, Teacher} or null. */
-function getStudentRosterEntry_(email) {
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const tab = getTab_(ss, TABS.ROSTER);
-  const rows = readAllAsObjects_(tab, HEADERS.ROSTER);
-  const target = String(email).toLowerCase();
-  return rows.find((r) => String(r.Email).toLowerCase() === target) || null;
-}
+// getStudentRosterEntry_ now lives in 40_roster_model.js (Classes v2): it is
+// backed by the Students/Enrollments tabs and returns a `.classes` array plus
+// single-value compat fields. Defined there, not here, to avoid same-name
+// shadowing (CLAUDE.md §5).
 
 /** Return {Name, Email, Role} or null. */
 function getStaffEntry_(email) {
@@ -57,34 +53,59 @@ function assertAdmin_(actorEmail) {
 }
 
 /**
- * Validate the roster: every email present, unique, lowercase-comparable; every
- * student row has First/Last/Class/TeacherEmail. ID optional but must be unique
- * when present. Returns {ok, errors}.
- * Run from the editor or from setup() after wholesale roster replacement.
+ * Validate the v2 roster model (Students / Classes / Enrollments / Staff):
+ * - Students: Email present + unique; First/Last present; ID unique when set.
+ * - Classes: Class name unique; TeacherEmail present.
+ * - Enrollments: Email references a Student; Class references a Class.
+ * - Staff: Email present + unique; Role in {teacher, admin}.
+ * Returns {ok, errors, ...counts}. Run from the editor or after a replace.
  */
 function validateRoster() {
   const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const roster = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER);
+  ensureClassSchema_();
+  const students = readAllAsObjects_(getTab_(ss, TABS.STUDENTS), HEADERS.STUDENTS);
+  const classes = readAllAsObjects_(getTab_(ss, TABS.CLASSES), HEADERS.CLASSES);
+  const enrollments = readAllAsObjects_(getTab_(ss, TABS.ENROLLMENTS), HEADERS.ENROLLMENTS);
   const staff = readAllAsObjects_(getTab_(ss, TABS.STAFF), HEADERS.STAFF);
   const errors = [];
+
   const emailSeen = new Set();
   const idSeen = new Set();
-  roster.forEach((r, i) => {
+  students.forEach((r, i) => {
     const rowNum = i + 2;
-    if (!r.Email) errors.push(`Roster row ${rowNum}: blank Email`);
-    if (!r.First) errors.push(`Roster row ${rowNum}: blank First`);
-    if (!r.Last)  errors.push(`Roster row ${rowNum}: blank Last`);
-    if (!r.Class) errors.push(`Roster row ${rowNum}: blank Class`);
-    if (!r.TeacherEmail) errors.push(`Roster row ${rowNum}: blank TeacherEmail`);
+    if (!r.Email) errors.push(`Students row ${rowNum}: blank Email`);
+    if (!r.First) errors.push(`Students row ${rowNum}: blank First`);
+    if (!r.Last)  errors.push(`Students row ${rowNum}: blank Last`);
     const e = String(r.Email || '').toLowerCase();
-    if (e && emailSeen.has(e)) errors.push(`Roster row ${rowNum}: duplicate Email ${e}`);
+    if (e && emailSeen.has(e)) errors.push(`Students row ${rowNum}: duplicate Email ${e}`);
     emailSeen.add(e);
     const id = String(r.ID || '').trim();
     if (id) {
-      if (idSeen.has(id)) errors.push(`Roster row ${rowNum}: duplicate ID ${id}`);
+      if (idSeen.has(id)) errors.push(`Students row ${rowNum}: duplicate ID ${id}`);
       idSeen.add(id);
     }
   });
+
+  const classSeen = new Set();
+  classes.forEach((r, i) => {
+    const rowNum = i + 2;
+    const c = String(r.Class || '').trim();
+    if (!c) errors.push(`Classes row ${rowNum}: blank Class`);
+    if (!r.TeacherEmail) errors.push(`Classes row ${rowNum}: blank TeacherEmail`);
+    if (c && classSeen.has(c.toLowerCase())) errors.push(`Classes row ${rowNum}: duplicate Class ${c}`);
+    classSeen.add(c.toLowerCase());
+  });
+
+  enrollments.forEach((r, i) => {
+    const rowNum = i + 2;
+    const e = String(r.Email || '').toLowerCase();
+    const c = String(r.Class || '').trim();
+    if (!e) errors.push(`Enrollments row ${rowNum}: blank Email`);
+    else if (!emailSeen.has(e)) errors.push(`Enrollments row ${rowNum}: Email ${e} not in Students`);
+    if (!c) errors.push(`Enrollments row ${rowNum}: blank Class`);
+    else if (!classSeen.has(c.toLowerCase())) errors.push(`Enrollments row ${rowNum}: Class ${c} not in Classes`);
+  });
+
   const staffSeen = new Set();
   staff.forEach((r, i) => {
     const rowNum = i + 2;
@@ -97,7 +118,12 @@ function validateRoster() {
     if (e && staffSeen.has(e)) errors.push(`Staff row ${rowNum}: duplicate Email ${e}`);
     staffSeen.add(e);
   });
-  const result = { ok: errors.length === 0, errors, rosterCount: roster.length, staffCount: staff.length };
+
+  const result = {
+    ok: errors.length === 0, errors,
+    studentCount: students.length, classCount: classes.length,
+    enrollmentCount: enrollments.length, staffCount: staff.length,
+  };
   console.log(JSON.stringify(result, null, 2));
   return result;
 }

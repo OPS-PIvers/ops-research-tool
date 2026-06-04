@@ -77,27 +77,75 @@ function findOrCreateStudentSheet_(actorEmail, project) {
 }
 
 /**
+ * The class folder a student's (project) Sheet should live in: the first
+ * (sorted, stable) class the student shares with the project. Multi-class aware
+ * — a student in classes [A,B] writing to a project covering [B,C] is filed
+ * under B, not their arbitrary "first" class. Falls back to the student's first
+ * class if there's no overlap (defensive — an eligible student always overlaps),
+ * and to '' if the student has no enrollments at all.
+ */
+function resolveProjectClassForStudent_(actorEmail, project) {
+  const studentClasses = getStudentClasses_(actorEmail);
+  if (studentClasses.length === 0) return '';
+  const projectClasses = projectClassList_(project);
+  const shared = studentClasses.filter((c) => projectClasses.indexOf(c) >= 0).sort();
+  return shared.length ? shared[0] : studentClasses.slice().sort()[0];
+}
+
+/**
+ * Find a student's solo Sheet ANYWHERE in the project — manifest first (one
+ * openById), else a walk of every non-archived class folder for the email.
+ * Class-agnostic: a multi-class student has exactly ONE Sheet per project no
+ * matter which class folder it physically sits in, so a second class can never
+ * orphan or duplicate it. Returns a Spreadsheet or null. SOLO only (skips the
+ * group sheets, which carry no @-token name and never match by email).
+ */
+function findSoloSheetInProject_(actorEmail, project) {
+  // Fast path: the dashboard manifest already maps (project,email) → sheet id.
+  // Verify it's a live, non-trashed file before trusting it (a merge trashes the
+  // solo Sheet; forgetSoloSheetId_ usually drops the entry, but be defensive).
+  const entry = loadProjectManifest_(project.projectId)[String(actorEmail).toLowerCase()];
+  if (entry && entry.id) {
+    try {
+      const f = DriveApp.getFileById(entry.id);
+      if (f && !f.isTrashed()) return SpreadsheetApp.openById(entry.id);
+    } catch (e) { /* stale manifest id — fall through to the Drive walk */ }
+  }
+  const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+  const folders = projectFolder.getFolders();
+  while (folders.hasNext()) {
+    const cf = folders.next();
+    const nm = cf.getName();
+    if (nm === NAMES.ARCHIVED_FOLDER || nm === NAMES.ARCHIVED_STUDENTS_FOLDER) continue;
+    const file = findSoloSheetFile_(cf, actorEmail);
+    if (file) return SpreadsheetApp.openById(file.getId());
+  }
+  return null;
+}
+
+/**
  * The per-(student, project) Sheet, fully initialized. Idempotent. SOLO
  * ONLY — bypasses group routing, so un-merge can rebuild a member's personal
  * Sheet even while the registry still lists them as grouped.
  */
 function findOrCreateSoloSheet_(actorEmail, project) {
-  const rosterEntry = getStudentRosterEntry_(actorEmail);
-  if (!rosterEntry) {
+  const identity = getStudentIdentity_(actorEmail);
+  if (!identity) {
     throw new Error(`Email ${actorEmail} is not on the roster — refusing to provision.`);
   }
-  const projectFolder = DriveApp.getFolderById(project.rootFolderId);
-  const classFolder = findOrCreateClassFolder_(projectFolder, rosterEntry.Class);
   const sheetName = soloSheetName_(project.name, actorEmail);
-  // Look up by email (format-agnostic), then self-migrate any legacy bare-email
-  // name to the friendly "<project> — Research — <email>" form on first touch.
-  // The getName guard makes this a no-op on every subsequent write.
-  let file = findSoloSheetFile_(classFolder, actorEmail);
-  if (file) {
+  // Find an existing Sheet anywhere in the project (class-agnostic), then
+  // self-migrate any legacy bare-email name to the friendly form on first touch.
+  const existing = findSoloSheetInProject_(actorEmail, project);
+  if (existing) {
+    const file = DriveApp.getFileById(existing.getId());
     if (file.getName() !== sheetName) file.setName(sheetName);
-    return SpreadsheetApp.openById(file.getId());
+    return existing;
   }
-  // Create + move + init
+  // Create under the project class the student shares (deterministic placement).
+  const className = resolveProjectClassForStudent_(actorEmail, project);
+  const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+  const classFolder = findOrCreateClassFolder_(projectFolder, className || 'Unassigned');
   const ss = SpreadsheetApp.create(sheetName);
   const newFile = DriveApp.getFileById(ss.getId());
   classFolder.addFile(newFile);
@@ -110,13 +158,14 @@ function findOrCreateSoloSheet_(actorEmail, project) {
   ensureHeaders_(getTab_(ss, TABS.META), HEADERS.META);
   ensureHeaders_(getTab_(ss, TABS.SOURCES), HEADERS.SOURCES);
   ensureHeaders_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
-  // Populate Meta (single row) — names composed from First/Last; teacher
-  // is the display string (TeacherEmail is the join key, kept in roster).
+  // Populate Meta (single row). `class` is the placement class (informational
+  // only now — the Sheet is resolved by (project,email), never by class); the
+  // teacher is that class's teacher.
   appendRow_(getTab_(ss, TABS.META), HEADERS.META, {
-    studentName: (String(rosterEntry.Last || '') + ', ' + String(rosterEntry.First || '')).replace(/^, |, $/g, ''),
+    studentName: (String(identity.Last || '') + ', ' + String(identity.First || '')).replace(/^, |, $/g, ''),
     studentEmail: actorEmail,
-    class: rosterEntry.Class,
-    teacher: rosterEntry.Teacher || rosterEntry.TeacherEmail || '',
+    class: className,
+    teacher: classTeacher_(className),
     projectId: project.projectId,
     groupId: '',
   });

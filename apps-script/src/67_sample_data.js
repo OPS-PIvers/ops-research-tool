@@ -173,23 +173,21 @@ function seedSampleData_() {
   for (let i = 1; i <= 5; i++) if (bundle['label' + i]) labels.push(bundle['label' + i]);
   const teacherEmail = getActorEmail_();
 
-  const rosterSs = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const rosterTab = getTab_(rosterSs, TABS.ROSTER);
+  ensureClassSchema_();
+  // Ensure the sample class exists, owned by the demoing teacher so it shows
+  // under their classes on the dashboard.
+  if (!getClassRecord_(SAMPLE_CLASS)) createClass_(SAMPLE_CLASS, teacherEmail, '');
 
-  // Already seeded? (first sample email present) → no-op, so disabling then
+  // Already seeded? (first sample student present) → no-op, so disabling then
   // re-enabling is instant instead of re-provisioning every Sheet.
-  if (findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', sampleEmail_(SAMPLE_STUDENTS[0])) >= 0) return;
+  if (getStudentIdentity_(sampleEmail_(SAMPLE_STUDENTS[0]))) return;
 
   SAMPLE_STUDENTS.forEach((p, idx) => {
     const email = sampleEmail_(p);
-    if (findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', email) < 0) {
-      appendRow_(rosterTab, HEADERS.ROSTER, {
-        ID: '', First: p.first, Last: p.last, Email: email,
-        Class: SAMPLE_CLASS, Teacher: 'Dev Owner', TeacherEmail: teacherEmail,
-      });
-    }
+    upsertStudent_({ ID: '', First: p.first, Last: p.last, Email: email });
+    enroll_(email, SAMPLE_CLASS);
     if (!p.sources.length) return;        // "not started" — no Sheet, shows as 0%
-    SpreadsheetApp.flush();               // roster row visible before provisioning reads it
+    SpreadsheetApp.flush();               // enrollment visible before provisioning reads it
     const ss = findOrCreateSoloSheet_(email, project);
     buildSampleStudentData_(ss, project.projectId, email, idx, p, labels);
   });
@@ -265,8 +263,7 @@ function consoleClearSampleData() {
 
 function clearSampleData_() {
   const project = listProjects_().find((p) => p.name === SAMPLE_PROJECT_NAME);
-  const rosterSs = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const rosterTab = getTab_(rosterSs, TABS.ROSTER);
+  ensureClassSchema_();
   let trashed = 0, removed = 0;
   SAMPLE_STUDENTS.forEach((p) => {
     const email = sampleEmail_(p);
@@ -278,8 +275,7 @@ function clearSampleData_() {
         trashed++;
       }
     }
-    const rowIdx = findRowByKey_(rosterTab, HEADERS.ROSTER, 'Email', email);
-    if (rowIdx >= 0) { rosterTab.deleteRow(rowIdx); removed++; }
+    if (getStudentIdentity_(email)) { deleteStudent_(email); removed++; }
   });
   PropertiesService.getScriptProperties().setProperty(SAMPLE_FLAG_KEY, '0');
   return { ok: true, trashedSheets: trashed, removedRosterRows: removed };

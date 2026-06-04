@@ -14,15 +14,11 @@ function listActiveProjects_() {
   return listProjects_().filter((p) => p.status === PROJECT_STATUS.ACTIVE);
 }
 
-/** Active projects whose memberClasses intersect this student's class. */
+/** Active projects whose memberClasses intersect ANY of the student's classes. */
 function listActiveProjectsForStudent_(actorEmail) {
-  const roster = getStudentRosterEntry_(actorEmail);
-  if (!roster) return [];
-  const studentClass = roster.Class;
-  return listActiveProjects_().filter((p) => {
-    const classes = String(p.memberClasses || '').split(',').map((s) => s.trim()).filter(Boolean);
-    return classes.indexOf(studentClass) >= 0;
-  });
+  const classes = getStudentClasses_(actorEmail);
+  if (classes.length === 0) return [];
+  return studentEligibleProjects_(classes, listActiveProjects_());
 }
 
 /**

@@ -39,22 +39,9 @@ function consoleGetContext() {
   };
 }
 
-/**
- * Classes whose TeacherEmail column equals this email in the Roster.
- * Distinct, trimmed, non-empty. Returns [] if the actor teaches nothing.
- */
-function listClassesTaughtBy_(actorEmail) {
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const rows = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER);
-  const set = {};
-  rows.forEach((r) => {
-    if (r.TeacherEmail && String(r.TeacherEmail).trim().toLowerCase() === actorEmail.toLowerCase()) {
-      const cls = String(r.Class || '').trim();
-      if (cls) set[cls] = true;
-    }
-  });
-  return Object.keys(set).sort();
-}
+// listClassesTaughtBy_ now lives in 40_roster_model.js (Classes v2): it reads the
+// Classes tab's TeacherEmail (one teacher per class) instead of scanning every
+// student row. Defined there, not here, to avoid same-name shadowing.
 
 /**
  * Throws 'Not authorized' if the caller isn't on the Staff sheet. Returns
@@ -93,11 +80,6 @@ function consoleGetMyProjects(filter) {
 
   const teacherClasses = isAdmin_(staff) ? null : listClassesTaughtBy_(actorEmail);
 
-  const rosterRows = readAllAsObjects_(
-    getTab_(SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID), TABS.ROSTER),
-    HEADERS.ROSTER
-  );
-
   const visible = all.filter((p) => {
     if (p.status !== wantStatus) return false;
     if (isAdmin_(staff)) return true;
@@ -110,9 +92,8 @@ function consoleGetMyProjects(filter) {
     const scopedClasses = isAdmin_(staff)
       ? projectClasses
       : projectClasses.filter((c) => teacherClasses.indexOf(c) >= 0);
-    const studentCount = excludeSampleIfDisabled_(rosterRows).filter(
-      (r) => r.Class && scopedClasses.indexOf(String(r.Class).trim()) >= 0
-    ).length;
+    // Distinct students enrolled in any scoped class (multi-class aware, deduped).
+    const studentCount = excludeSampleIfDisabled_(studentsInClasses_(scopedClasses)).length;
     const bundle = bundleById[p.bundleId] || null;
     return {
       projectId: p.projectId,
@@ -322,16 +303,20 @@ function consoleGetProjectDashboard(projectId, className, bypassCache) {
   return resp;
 }
 
-/** Enrolled roster rows for a set of classes. Sample students drop out when
- *  the demo toggle is off (single chokepoint for the dashboard student list). */
+/**
+ * Distinct students enrolled in any of `scopedClasses`, shaped like the old flat
+ * roster row ({ID,First,Last,Email,Class}) so the dashboard aggregator is
+ * unchanged. Multi-class aware: a student in two scoped classes appears ONCE
+ * (deduped by email); `Class` shows the first in-scope class (stable sort) for
+ * display. Sample students drop out when the demo toggle is off — single
+ * chokepoint for the dashboard student list.
+ */
 function dashboardEnrolled_(scopedClasses) {
-  const rosterRows = excludeSampleIfDisabled_(readAllAsObjects_(
-    getTab_(SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID), TABS.ROSTER),
-    HEADERS.ROSTER
-  ));
-  return rosterRows.filter(
-    (r) => r.Class && scopedClasses.indexOf(String(r.Class).trim()) >= 0
-  );
+  const inScope = excludeSampleIfDisabled_(studentsInClasses_(scopedClasses));
+  return inScope.map((s) => ({
+    ID: s.ID, First: s.First, Last: s.Last, Email: s.Email,
+    Class: (s.classes && s.classes.length) ? s.classes.slice().sort()[0] : '',
+  }));
 }
 
 /**
@@ -614,14 +599,8 @@ function consoleUpdateProjectClasses(projectId, memberClasses) {
  */
 function consoleListAllClasses() {
   assertStaff_(getActorEmail_());
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const rows = readAllAsObjects_(getTab_(ss, TABS.ROSTER), HEADERS.ROSTER);
-  const set = {};
-  rows.forEach((r) => {
-    const cls = String(r.Class || '').trim();
-    if (cls) set[cls] = true;
-  });
-  return { ok: true, classes: Object.keys(set).sort() };
+  ensureClassSchema_();
+  return { ok: true, classes: listClasses_().map((c) => c.Class).filter(Boolean).sort() };
 }
 
 /**
@@ -641,18 +620,20 @@ function consoleGetStudentDetail(projectId, studentEmail) {
   if (!project) throw new Error('Unknown project ' + projectId);
   const bundle = getBundle_(project.bundleId);
 
-  // Class-scope check.
-  const rosterEntry = getStudentRosterEntry_(studentEmail);
-  if (!rosterEntry) throw new Error('Student not on roster: ' + studentEmail);
-  const studentClass = String(rosterEntry.Class || '').trim();
+  // Class-scope check (multi-class aware): the student must be enrolled in at
+  // least one of the project's classes, and a non-admin teacher must teach at
+  // least one of those shared classes.
+  if (!getStudentIdentity_(studentEmail)) throw new Error('Student not on roster: ' + studentEmail);
+  const projectClasses = projectClassList_(project);
+  const sharedClasses = getStudentClasses_(studentEmail).filter((c) => projectClasses.indexOf(c) >= 0);
+  if (sharedClasses.length === 0) {
+    throw new Error('Student not enrolled in any class of this project');
+  }
   if (!isAdmin_(staff)) {
     const teacherClasses = listClassesTaughtBy_(actorEmail);
-    if (teacherClasses.indexOf(studentClass) < 0) {
+    if (!sharedClasses.some((c) => teacherClasses.indexOf(c) >= 0)) {
       throw new Error('Not authorized for student ' + studentEmail);
     }
-  }
-  if (projectClassList_(project).indexOf(studentClass) < 0) {
-    throw new Error('Student class not enrolled in this project');
   }
 
   const sources = readSourcesForActor_(studentEmail, projectId);
