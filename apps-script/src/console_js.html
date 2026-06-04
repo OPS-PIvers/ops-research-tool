@@ -111,12 +111,43 @@ function parseHash_(hash) {
       projectId: decodeURIComponent(parts[1]),
       groupId: decodeURIComponent(parts[3]),
     };
+  // Class-scoped drill-downs preserve the period for back-navigation:
+  //   /projects/<id>/class/<class>/students/<email>
+  //   /projects/<id>/class/<class>/groups/<groupId>
+  if (parts.length === 6 && parts[2] === 'class' && parts[4] === 'students')
+    return {
+      view: 'STUDENT',
+      projectId: decodeURIComponent(parts[1]),
+      className: decodeURIComponent(parts[3]),
+      studentEmail: decodeURIComponent(parts[5]),
+    };
+  if (parts.length === 6 && parts[2] === 'class' && parts[4] === 'groups')
+    return {
+      view: 'GROUP',
+      projectId: decodeURIComponent(parts[1]),
+      className: decodeURIComponent(parts[3]),
+      groupId: decodeURIComponent(parts[5]),
+    };
   return { view: 'MY_PROJECTS' };
 }
 
 function navigate_(path) {
   // path is a hash without the leading '#' (e.g., '/projects/<id>')
   window.location.hash = path;
+}
+
+/**
+ * Build a dashboard-or-drill-down path that PRESERVES the active class period,
+ * so a student/group "back" returns to the same scope and a refresh stays put.
+ *   projectPath_()                 → /projects/<id>[/class/<class>]
+ *   projectPath_('students', email)→ /projects/<id>[/class/<class>]/students/<email>
+ *   projectPath_('groups', gid)    → /projects/<id>[/class/<class>]/groups/<gid>
+ */
+function projectPath_(kind, id) {
+  let p = '/projects/' + encodeURIComponent(state.projectId);
+  if (state.className) p += '/class/' + encodeURIComponent(state.className);
+  if (kind) p += '/' + kind + '/' + encodeURIComponent(id);
+  return p;
 }
 
 function renderBoot_() {
@@ -1506,7 +1537,7 @@ function buildGroupHeaderRow_(group, members) {
   tr.addEventListener('click', (e) => {
     // Click on the chevron is handled by chev's listener (stopPropagation above).
     if (state.manageGroups) return;
-    navigate_('/projects/' + encodeURIComponent(state.projectId) + '/groups/' + encodeURIComponent(group.groupId));
+    navigate_(projectPath_('groups', group.groupId));
   });
 
   return tr;
@@ -1532,7 +1563,7 @@ function buildStudentRow_(s, parentGroup) {
     tr.appendChild(tdChk);
   } else {
     tr.addEventListener('click', () => {
-      navigate_('/projects/' + encodeURIComponent(state.projectId) + '/students/' + encodeURIComponent(s.email));
+      navigate_(projectPath_('students', s.email));
     });
   }
 
@@ -1757,7 +1788,7 @@ function renderStudentDetail_(main) {
   const back = document.createElement('button');
   back.className = 'db-back';
   back.textContent = '← ' + (dashboard.data && dashboard.data.project ? dashboard.data.project.name : 'Dashboard');
-  back.addEventListener('click', () => navigate_('/projects/' + encodeURIComponent(state.projectId)));
+  back.addEventListener('click', () => navigate_(projectPath_()));
   toolbar.appendChild(back);
 
   const title = document.createElement('div');
@@ -1810,7 +1841,7 @@ function renderGroupDetail_(main) {
   const back = document.createElement('button');
   back.className = 'db-back';
   back.textContent = '← Dashboard';
-  back.addEventListener('click', () => navigate_('/projects/' + encodeURIComponent(state.projectId)));
+  back.addEventListener('click', () => navigate_(projectPath_()));
   toolbar.appendChild(back);
   const title = document.createElement('div');
   title.className = 'db-title';
