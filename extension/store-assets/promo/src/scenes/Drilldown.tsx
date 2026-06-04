@@ -24,7 +24,7 @@ export const Drilldown: React.FC = () => {
 
   return (
     <Brand>
-      <Caption step="For teachers" title="Drill into any student" />
+      <Caption step="For teachers" title="A detailed breakdown for every student" />
 
       <div style={{position: 'absolute', left: 290, top: 268, opacity: winO, transform: `translateY(${winY}px)`}}>
         <BrowserFrame width={1340} url="script.google.com/.../OPS Research Console">

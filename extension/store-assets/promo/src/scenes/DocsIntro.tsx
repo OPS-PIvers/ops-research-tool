@@ -27,7 +27,7 @@ export const DocsIntro: React.FC = () => {
   // cursor → Open Editor, click ~frame 84
   const press = interpolate(f, [76, 84, 96], [0, 1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   const cx = interpolate(f, [16, 64], [1720, 1460], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.cubic)});
-  const cy = interpolate(f, [16, 64], [980, 770], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.cubic)});
+  const cy = interpolate(f, [16, 64], [980, 822], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.cubic)});
   const cO = interpolate(f, [10, 22, 120, 132], [0, 1, 1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
 
   return (
