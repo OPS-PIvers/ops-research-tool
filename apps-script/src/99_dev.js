@@ -456,6 +456,35 @@ function devTestAggregateStudent() {
   console.log(pass + '/' + (pass + fail) + ' passed');
 }
 
+function devTestProjectRequirementsParse() {
+  let pass = 0, fail = 0;
+  const check = (l, c) => { if (c) { pass++; console.log('PASS ' + l); } else { fail++; console.log('FAIL ' + l); } };
+
+  const a = parseProjectRequirements_({});
+  check('empty → minSources null',            a.minSources === null);
+  check('empty → minHighlights null',         a.minHighlightsPerSource === null);
+  check('empty → minDistinct null',           a.minDistinctCategories === null);
+  check('empty → requireAnnotation true',     a.requireAnnotation === true);
+
+  const b = parseProjectRequirements_({ requirements: JSON.stringify({
+    minSources: 5, minHighlightsPerSource: 3, minDistinctCategories: 2, requireAnnotation: false }) });
+  check('parsed minSources 5',                b.minSources === 5);
+  check('parsed minHighlights 3',             b.minHighlightsPerSource === 3);
+  check('parsed minDistinct 2',               b.minDistinctCategories === 2);
+  check('parsed requireAnnotation false',     b.requireAnnotation === false);
+
+  const c = parseProjectRequirements_({ requirements: JSON.stringify({
+    minDistinctCategories: 9, minSources: 0, minHighlightsPerSource: -2 }) });
+  check('minDistinct capped at 5',            c.minDistinctCategories === 5);
+  check('minSources 0 → null',                c.minSources === null);
+  check('negative minHighlights → null',      c.minHighlightsPerSource === null);
+
+  const d = parseProjectRequirements_({ requirements: 'not json' });
+  check('malformed → defaults',               d.minSources === null && d.requireAnnotation === true);
+
+  console.log(pass + '/' + (pass + fail) + ' passed');
+}
+
 /**
  * Tests consoleGetContext + assertStaff_ behavior.
  * Note: this test uses the caller's real identity. The dev-seed harness

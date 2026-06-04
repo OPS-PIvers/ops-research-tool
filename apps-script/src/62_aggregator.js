@@ -9,6 +9,27 @@
  */
 
 /**
+ * Parse + normalize a project's `requirements` JSON. Every key is present in
+ * the output: null = "no requirement". `requireAnnotation` defaults TRUE —
+ * existing projects (empty cell) must keep requiring annotation, today's behavior.
+ * Pure. Single definition (grep before adding a same-named helper — §5 shadow trap).
+ */
+function parseProjectRequirements_(project) {
+  const raw = project ? parseJsonColumn_(project.requirements) : {};
+  const posInt = (v) => {
+    const n = Math.floor(Number(v));
+    return (isFinite(n) && n >= 1) ? n : null;
+  };
+  const cats = posInt(raw.minDistinctCategories);
+  return {
+    minSources:             posInt(raw.minSources),
+    minHighlightsPerSource: posInt(raw.minHighlightsPerSource),
+    minDistinctCategories:  cats === null ? null : Math.min(cats, 5),
+    requireAnnotation:      raw.requireAnnotation === false ? false : true,
+  };
+}
+
+/**
  * One dashboard-row's worth of aggregates for a single student.
  *
  *   aggregateStudent_(sources, highlights, bundle)
