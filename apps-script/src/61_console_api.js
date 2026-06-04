@@ -292,6 +292,13 @@ function consoleGetProjectDashboard(projectId, className, bypassCache) {
       name: project.name,
       schoolYear: project.schoolYear,
       bundleName: bundle ? bundle.name : '',
+      bundle: bundle ? {
+        bundleId: bundle.bundleId,
+        name: bundle.name,
+        custom: !!(bundle.custom === true || String(bundle.custom).toLowerCase() === 'true' || (bundle.name && bundle.name.toLowerCase().indexOf('custom') >= 0)),
+        label1: bundle.label1, label2: bundle.label2, label3: bundle.label3, label4: bundle.label4, label5: bundle.label5,
+        color1: bundle.color1, color2: bundle.color2, color3: bundle.color3, color4: bundle.color4, color5: bundle.color5,
+      } : null,
       memberClasses: projectClasses,
       scopedClasses,
       availableClasses,                                   // all the caller's classes for this project
