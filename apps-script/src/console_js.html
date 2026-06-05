@@ -1977,46 +1977,55 @@ function buildRequirementsCell_(gaps, row, requirements) {
   const wrap = document.createElement('div');
   wrap.className = 'db-reqcell';
   const reqs = requirements || {};
+  gaps = gaps || {};
+  const total = (row && row.sourceCount) || 0;
 
-  // Teacher-set targets first (sources, then evidence depth).
+  // Fixed order — Sources · Depth · Cite · Tag · Note. Every chip that applies
+  // to the project ALWAYS renders (color encodes status: green met / amber
+  // partial / red behind / gray nothing-yet), so the chips line up in the same
+  // slots when scanning down the column. Completed ones stay in place, green.
+
+  // Sources target (only when the project sets one).
   if (reqs.minSources && row && row.sourcesProgress) {
-    const have = row.sourceCount || 0;
     wrap.appendChild(reqChip_(
-      'Sources ' + have + '/' + reqs.minSources,
+      'Sources ' + total + '/' + reqs.minSources,
       row.sourcesProgress.meets ? 'good' : 'bad',
-      have + ' of ' + reqs.minSources + ' sources'));
+      total + ' of ' + reqs.minSources + ' sources'));
   }
+
+  // Evidence-depth target (only when the project sets one).
   if (row && row.evidenceDepth && row.evidenceDepth.targetSet) {
     const d = row.evidenceDepth;
-    const status = (d.total > 0 && d.sourcesMeeting === d.total) ? 'good'
-                 : (d.sourcesMeeting > 0 ? 'warn' : 'bad');
+    const status = d.total === 0 ? 'neutral'
+                 : (d.sourcesMeeting === d.total ? 'good'
+                 : (d.sourcesMeeting > 0 ? 'warn' : 'bad'));
     wrap.appendChild(reqChip_(
       'Depth ' + d.sourcesMeeting + '/' + d.total,
       status,
       d.sourcesMeeting + ' of ' + d.total + ' sources meet the evidence target'));
   }
 
-  // Then completion gaps, non-zero only.
-  const labels = { citation: 'Cite', classification: 'Tag', annotation: 'Note' };
-  const fulls  = { citation: 'citation', classification: 'classification', annotation: 'annotation' };
+  // Per-source completion dimensions — always shown as done/total. Note drops
+  // out only when the project marks annotations optional.
+  const dims = [
+    { key: 'citation',       label: 'Cite', verb: 'cited' },
+    { key: 'classification', label: 'Tag',  verb: 'tagged' },
+    { key: 'annotation',     label: 'Note', verb: 'annotated' },
+  ];
   const annotationRequired = reqs.requireAnnotation !== false;
-  ['citation', 'classification', 'annotation'].forEach((kind) => {
-    if (kind === 'annotation' && !annotationRequired) return;   // annotations optional → no Note gap
-    const n = (gaps && gaps[kind]) || 0;
-    if (n === 0) return;                                          // hide cleared gaps for a tidy cell
+  dims.forEach((dim) => {
+    if (dim.key === 'annotation' && !annotationRequired) return;
+    const missing = gaps[dim.key] || 0;
+    const done = Math.max(0, total - missing);
+    const status = total === 0 ? 'neutral'
+                 : (missing === 0 ? 'good'
+                 : (missing <= 3 ? 'warn' : 'bad'));
     wrap.appendChild(reqChip_(
-      labels[kind] + ' ' + n,
-      n <= 3 ? 'warn' : 'bad',
-      n + ' source' + (n === 1 ? '' : 's') + ' missing ' + fulls[kind]));
+      dim.label + ' ' + done + '/' + total,
+      status,
+      done + ' of ' + total + ' sources ' + dim.verb));
   });
 
-  // All-clear / not-started fallback (only when no chips rendered above).
-  if (!wrap.childNodes.length) {
-    const have = row ? (row.sourceCount || 0) : 0;
-    wrap.appendChild(have > 0
-      ? reqChip_('✓ complete', 'good', 'All requirements met')
-      : reqChip_('—', 'neutral', 'No sources yet'));
-  }
   return wrap;
 }
 
