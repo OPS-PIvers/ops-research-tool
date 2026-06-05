@@ -67,7 +67,8 @@ function unarchiveProject_(projectId) {
  *
  * NOTE: deliberately NO trailing underscore — GAS hides `_`-suffixed functions
  * from the editor's Run ▸ function dropdown, so an editor-run entry point must
- * be named without one (same reason devTest*/devSeed* aren't underscored).
+ * be named without one (same reason the devTest and devSeed entry points have
+ * no underscore).
  */
 function migrateAddRequirements() {
   const ss = SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID);
