@@ -1978,12 +1978,10 @@ function buildRequirementsCell_(gaps, row, requirements) {
   wrap.className = 'db-reqcell';
   const reqs = requirements || {};
 
-  // Top row — teacher-set targets.
-  const targets = document.createElement('div');
-  targets.className = 'db-reqrow';
+  // Teacher-set targets first (sources, then evidence depth).
   if (reqs.minSources && row && row.sourcesProgress) {
     const have = row.sourceCount || 0;
-    targets.appendChild(reqChip_(
+    wrap.appendChild(reqChip_(
       'Sources ' + have + '/' + reqs.minSources,
       row.sourcesProgress.meets ? 'good' : 'bad',
       have + ' of ' + reqs.minSources + ' sources'));
@@ -1992,16 +1990,13 @@ function buildRequirementsCell_(gaps, row, requirements) {
     const d = row.evidenceDepth;
     const status = (d.total > 0 && d.sourcesMeeting === d.total) ? 'good'
                  : (d.sourcesMeeting > 0 ? 'warn' : 'bad');
-    targets.appendChild(reqChip_(
+    wrap.appendChild(reqChip_(
       'Depth ' + d.sourcesMeeting + '/' + d.total,
       status,
       d.sourcesMeeting + ' of ' + d.total + ' sources meet the evidence target'));
   }
-  if (targets.childNodes.length) wrap.appendChild(targets);
 
-  // Bottom row — completion gaps, non-zero only.
-  const gapRow = document.createElement('div');
-  gapRow.className = 'db-reqrow';
+  // Then completion gaps, non-zero only.
   const labels = { citation: 'Cite', classification: 'Tag', annotation: 'Note' };
   const fulls  = { citation: 'citation', classification: 'classification', annotation: 'annotation' };
   const annotationRequired = reqs.requireAnnotation !== false;
@@ -2009,12 +2004,11 @@ function buildRequirementsCell_(gaps, row, requirements) {
     if (kind === 'annotation' && !annotationRequired) return;   // annotations optional → no Note gap
     const n = (gaps && gaps[kind]) || 0;
     if (n === 0) return;                                          // hide cleared gaps for a tidy cell
-    gapRow.appendChild(reqChip_(
+    wrap.appendChild(reqChip_(
       labels[kind] + ' ' + n,
       n <= 3 ? 'warn' : 'bad',
       n + ' source' + (n === 1 ? '' : 's') + ' missing ' + fulls[kind]));
   });
-  if (gapRow.childNodes.length) wrap.appendChild(gapRow);
 
   // All-clear / not-started fallback (only when no chips rendered above).
   if (!wrap.childNodes.length) {
