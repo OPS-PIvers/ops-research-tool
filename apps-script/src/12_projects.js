@@ -64,8 +64,12 @@ function unarchiveProject_(projectId) {
  * trailing `requirements` column. ensureHeaders_ appends a missing trailing
  * label and is a no-op once present. Existing rows need no backfill — an empty
  * cell parses to defaults. Run once from the editor after deploy.
+ *
+ * NOTE: deliberately NO trailing underscore — GAS hides `_`-suffixed functions
+ * from the editor's Run ▸ function dropdown, so an editor-run entry point must
+ * be named without one (same reason devTest*/devSeed* aren't underscored).
  */
-function migrateAddRequirements_() {
+function migrateAddRequirements() {
   const ss = SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID);
   ensureHeaders_(getTab_(ss, TABS.PROJECTS), HEADERS.PROJECTS);
   return { ok: true, headers: HEADERS.PROJECTS };

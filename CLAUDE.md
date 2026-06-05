@@ -500,7 +500,7 @@ These supersede or refine the spec — apply them before defaulting to plan text
   on every project payload (`consoleGetMyProjects`, dashboard `resp.project`, the
   extension `projects` GET, `sidebarGetContext.activeRequirements` +
   `sidebarGetProjectData`), and folded into the dashboard cache key via
-  `shortHash_`. **Run `migrateAddRequirements_` once after deploy** to heal the
+  `shortHash_`. **Run `migrateAddRequirements` once after deploy** to heal the
   registry header (idempotent; `ensureHeaders_` trailing-append). Tests:
   **`devTestRequirementsAll`** (parse, validation, annotation-toggle, evidence
   depth, sources progress, a back-compat lock that no-requirements aggregates
@@ -511,7 +511,7 @@ These supersede or refine the spec — apply them before defaulting to plan text
   **Merged to `main` + deployed** (built via subagent-driven execution; backend
   pure logic was node-verified since the editor `devTest*` can't run headless).
   All UI is DOM-side — real-surface QA only. **Still TODO from the editor:** run
-  `migrateAddRequirements_` + `devTestRequirementsAll` (auth wall blocks `clasp run`).
+  `migrateAddRequirements` + `devTestRequirementsAll` (auth wall blocks `clasp run`).
 
 ## 5. GAS V8 quirks discovered
 
@@ -521,6 +521,12 @@ These supersede or refine the spec — apply them before defaulting to plan text
 - Side effect: always ship behavior-asserting unit tests as editor-callable
   `devTest*` functions. Functions that "don't throw" can still be silently
   returning wrong values.
+- **A trailing `_` makes a function "private" — GAS hides it from the editor's
+  Run ▸ function dropdown** (and from `google.script.run`). So anything meant to
+  be **run by hand from the editor** (migrations, one-shot fixers, test runners)
+  must be named WITHOUT a trailing underscore — that's why every `devTest*` /
+  `devSeed*` / `migrateAddRequirements` lacks one. Bit us once: `migrateAddRequirements`
+  was invisible in the Run menu until renamed to `migrateAddRequirements`.
 - **`google.script.run` silently delivers `null` to the success handler when
   the return payload contains a `Date` object** — its serializer can't carry
   Dates even though `JSON.stringify` can. So a server function that returns
@@ -693,7 +699,7 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   no-requirements project's aggregates equal today's), and
   `devTestConsoleUpdateRequirements` (create/update registry round-trip — needs
   the Dev Project). The dashboard/sidebar pills + nudges are DOM-side — real-surface
-  QA only. After deploy, run **`migrateAddRequirements_`** once to heal the
+  QA only. After deploy, run **`migrateAddRequirements`** once to heal the
   Projects header.
 
 ## 9. How to start a session here
