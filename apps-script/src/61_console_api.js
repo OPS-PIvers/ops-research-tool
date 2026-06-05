@@ -697,12 +697,16 @@ function consoleGetStudentDetail(projectId, studentEmail) {
   // Class-scope check (multi-class aware): the student must be enrolled in at
   // least one of the project's classes, and a non-admin teacher must teach at
   // least one of those shared classes.
-  if (!getStudentIdentity_(studentEmail)) throw new Error('Student not on roster: ' + studentEmail);
+  const rosterEntry = getStudentRosterEntry_(studentEmail);
+  if (!rosterEntry) throw new Error('Student not on roster: ' + studentEmail);
   const projectClasses = projectClassList_(project);
   const sharedClasses = getStudentClasses_(studentEmail).filter((c) => projectClasses.indexOf(c) >= 0);
   if (sharedClasses.length === 0) {
     throw new Error('Student not enrolled in any class of this project');
   }
+  // The class shown in the drill-down header = the one this student shares with
+  // the project (multi-class aware), not their first class globally.
+  const studentClass = sharedClasses[0] || '';
   if (!isAdmin_(staff)) {
     const teacherClasses = listClassesTaughtBy_(actorEmail);
     if (!sharedClasses.some((c) => teacherClasses.indexOf(c) >= 0)) {
