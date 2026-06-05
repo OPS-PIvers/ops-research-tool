@@ -210,10 +210,14 @@ These supersede or refine the spec — apply them before defaulting to plan text
   (class-agnostic one-Sheet-per-project invariant); migration verified on the
   live 20-row roster. Design/plan:
   [`docs/2026-06-04-classes-redesign-plan.md`](docs/2026-06-04-classes-redesign-plan.md).
-  On `feat/classes-redesign` (not yet merged); pushed to GAS HEAD. **TODO:** run
-  the `devTest*` from the editor (clasp run is blocked by the standard-GCP-project
-  auth wall), then merge → CI redeploy → the lazy migration runs on first console
-  load.
+  **Merged to `main` + deployed**; the lazy migration runs on first console load
+  (verified live). Re-run the `devTest*` from the editor if you touch this (clasp
+  run is blocked by the standard-GCP-project auth wall). **Refactor fallout (now
+  fixed):** the solo-student drill-down `consoleGetStudentDetail` kept referencing
+  `rosterEntry`/`studentClass` locals this redesign dropped, throwing
+  `ReferenceError: rosterEntry is not defined` on every open — re-derived from
+  `getStudentRosterEntry_` + the project-shared class. If you hit another dangling
+  reference, it's likely the same cause (a local the Classes v2 cutover removed).
 
 - **PoC → Shared Drive migration gate is DISSOLVED.** Paul authorized clasp
   with his **district account** from day one. All Drive artifacts live under
@@ -481,8 +485,14 @@ These supersede or refine the spec — apply them before defaulting to plan text
   NOT touched** — annotation toggle is dashboard/sidebar-only); (2) a **separate
   evidence-depth** per-source pass (`computeEvidenceDepth_`) + a **sources-progress**
   count (`computeSourcesProgress_`), surfaced as their own indicators. Reflected
-  in the dashboard row (sources `N / target`, depth badge, note-pill gating —
-  inside the Gaps cell, since there is no Sources column), the drill-down
+  in the dashboard's **Requirements column** (renamed from "Gaps"): a single
+  wrapping row of uniform `reqChip_` chips in a FIXED order — Sources · Depth ·
+  Cite · Tag · Note — every applicable chip ALWAYS rendered as `done/total` and
+  color-coded (green met / amber partial / red behind / gray nothing-yet) so the
+  slots line up when scanning down the table; built by `buildRequirementsCell_`
+  ([`console_js.html`](apps-script/src/console_js.html), `.db-req` styles). Sources/
+  Depth chips appear only when the project sets that target; Note drops out when
+  `requireAnnotation` is off. Also the drill-down
   (per-source `h/min highlights · c/min categories` evidence line + note-chip
   gating), the **in-page sidebar** (per-source evidence hint + annotation
   required/optional label, from local `state.pageHighlights`), and the **Docs
@@ -498,7 +508,10 @@ These supersede or refine the spec — apply them before defaulting to plan text
   gates, no save-path or bibliography change. Design/plan in
   [`docs/superpowers/specs/2026-06-04-project-requirements-design.md`](docs/superpowers/specs/2026-06-04-project-requirements-design.md)
   / [`docs/superpowers/plans/2026-06-04-project-requirements.md`](docs/superpowers/plans/2026-06-04-project-requirements.md).
-  On `feat/project-requirements`.
+  **Merged to `main` + deployed** (built via subagent-driven execution; backend
+  pure logic was node-verified since the editor `devTest*` can't run headless).
+  All UI is DOM-side — real-surface QA only. **Still TODO from the editor:** run
+  `migrateAddRequirements_` + `devTestRequirementsAll` (auth wall blocks `clasp run`).
 
 ## 5. GAS V8 quirks discovered
 
