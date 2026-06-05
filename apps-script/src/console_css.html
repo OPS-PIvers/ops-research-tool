@@ -533,38 +533,21 @@ select, input, textarea { font: inherit; }
 .db-completion-fill--bad   { background: var(--c-brand-secondary); }
 .db-completion-pct { font-size: 11px; color: var(--c-muted); width: 32px; text-align: right; }
 
-/* Gap chips */
-.db-gaps {
-  display: inline-flex; gap: 4px;
-  width: 200px;
-}
-.db-gap {
-  font-size: 10px; padding: 2px 6px; border-radius: 999px;
+/* Requirements cell — one uniform chip system, grouped into rows.
+   Top row = teacher-set targets (sources, depth); bottom row = completion gaps
+   (cite/tag/note). Every indicator is a .db-req chip so they read consistently;
+   green = met, amber = partial / few gaps, red = unmet / many gaps. */
+.db-reqcell { display: flex; flex-direction: column; gap: 4px; width: 200px; }
+.db-reqrow  { display: flex; flex-wrap: wrap; gap: 4px; }
+.db-req {
+  font-size: 10px; padding: 2px 7px; border-radius: 999px;
   font-family: var(--font-display); font-weight: 500;
-  background: var(--stop-good-bg); color: var(--stop-good);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
 }
-.db-gap--warn { background: var(--stop-warn-bg); color: var(--stop-warn); }
-.db-gap--bad  { background: var(--stop-bad-bg); color: var(--stop-bad); }
-/* Allow the depth badge/pill to wrap under the cite/tag/note chips rather than
-   overflow the 200px gaps cell. With only the 3 chips it still fits one line. */
-.db-gaps { flex-wrap: wrap; row-gap: 4px; }
-
-/* ---- Requirement-driven dashboard signals ---- */
-/* Sources-count progress (shown only when a minSources requirement is set). */
-.db-srcprog {
-  display: block; margin-bottom: 4px;
-  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--c-text);
-}
-.db-srcprog--unmet { color: var(--c-brand-secondary); font-weight: 600; }
-.db-srcprog--met   { color: var(--stop-good);          font-weight: 600; }
-/* Evidence-depth badge + met/unmet pill. */
-.db-depth-badge {
-  display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px;
-  font-variant-numeric: tabular-nums; background: var(--c-brand-primary-tint); color: var(--c-brand-primary);
-}
-.db-evpill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; margin-left: 4px; }
-.db-evpill--bad  { background: var(--stop-bad-bg);  color: var(--stop-bad); }
-.db-evpill--good { background: var(--stop-good-bg); color: var(--stop-good); }
+.db-req--good    { background: var(--stop-good-bg); color: var(--stop-good); }
+.db-req--warn    { background: var(--stop-warn-bg); color: var(--stop-warn); }
+.db-req--bad     { background: var(--stop-bad-bg);  color: var(--stop-bad); }
+.db-req--neutral { background: #eef1f8; color: #5f6368; }
 
 /* Activity — relative timestamp */
 .db-activity {
