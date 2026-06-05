@@ -2351,17 +2351,26 @@ function devTestConsoleUpdateRequirements() {
   const proj = listActiveProjects_().find((p) => /dev/i.test(p.name));
   if (!proj) { console.log('FAIL no Dev Project — run devSeedDevProject first'); return; }
 
-  consoleUpdateProjectRequirements(proj.projectId, { minSources: 4, minHighlightsPerSource: 2, minDistinctCategories: 3, requireAnnotation: false });
-  const after = parseProjectRequirements_(getProject_(proj.projectId));
-  check('minSources persisted 4',        after.minSources === 4);
-  check('minHighlights persisted 2',     after.minHighlightsPerSource === 2);
-  check('minDistinct persisted 3',       after.minDistinctCategories === 3);
-  check('requireAnnotation persisted false', after.requireAnnotation === false);
+  // Capture the project's real requirements so the test can RESTORE them — it
+  // must not clobber whatever the teacher configured on the Dev Project. The
+  // normalized parse (nulls for unset) round-trips through validateRequirementsInput_,
+  // which treats null as "unset", so the restore is faithful.
+  const original = parseProjectRequirements_(getProject_(proj.projectId));
+  try {
+    consoleUpdateProjectRequirements(proj.projectId, { minSources: 4, minHighlightsPerSource: 2, minDistinctCategories: 3, requireAnnotation: false });
+    const after = parseProjectRequirements_(getProject_(proj.projectId));
+    check('minSources persisted 4',        after.minSources === 4);
+    check('minHighlights persisted 2',     after.minHighlightsPerSource === 2);
+    check('minDistinct persisted 3',       after.minDistinctCategories === 3);
+    check('requireAnnotation persisted false', after.requireAnnotation === false);
 
-  consoleUpdateProjectRequirements(proj.projectId, { requireAnnotation: true });
-  const reset = parseProjectRequirements_(getProject_(proj.projectId));
-  check('reset → minSources null',       reset.minSources === null);
-  check('reset → requireAnnotation true', reset.requireAnnotation === true);
+    consoleUpdateProjectRequirements(proj.projectId, { requireAnnotation: true });
+    const reset = parseProjectRequirements_(getProject_(proj.projectId));
+    check('reset → minSources null',       reset.minSources === null);
+    check('reset → requireAnnotation true', reset.requireAnnotation === true);
+  } finally {
+    consoleUpdateProjectRequirements(proj.projectId, original);   // non-destructive
+  }
   console.log(pass + '/' + (pass + fail) + ' passed');
 }
 
