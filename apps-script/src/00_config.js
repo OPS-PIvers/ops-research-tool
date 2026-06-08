@@ -18,6 +18,11 @@ const CONFIG = {
   // Bundles config Sheet (immutable rows; one row per category bundle).
   BUNDLES_SHEET_ID: '1Ht6ggmLyqD-VhepLr10bE8lO28zLX9-1NcfXirxHIYk',
 
+  // Public Chrome Web Store listing for the companion extension. Internal/private
+  // item — only resolves for signed-in orono.k12.mn.us users. Surfaced by the
+  // Docs add-on's "Get Chrome extension" menu item.
+  CHROME_WEBSTORE_URL: 'https://chromewebstore.google.com/detail/ops-research-tool/goglhlpppkhiddkhgcknbiohcppgdggi',
+
   // The Google account that owns the script + data during PoC. Used as a sanity
   // check inside setup() so a different account doesn't accidentally re-bootstrap.
   // Once migrated to a Shared Drive, this can be the service account or left blank.
