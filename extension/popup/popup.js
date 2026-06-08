@@ -36,10 +36,11 @@ bootstrapFromCache_().then(() => bootstrapFromNetwork_());
 
 // Master on/off switch. Single global flag in chrome.storage.local; the
 // content scripts (content/enabled.js) read it and gate the toolbar + sidebar.
-// Undefined = never set = ON by default.
+// Undefined = never set = OFF by default (a fresh/force install is dormant
+// until the student flips it on here).
 async function initEnabledToggle_() {
   const { extensionEnabled } = await chrome.storage.local.get('extensionEnabled');
-  reflectEnabled_(extensionEnabled !== false);
+  reflectEnabled_(extensionEnabled === true);
   els.enabledToggle.addEventListener('change', async () => {
     const on = els.enabledToggle.checked;
     await chrome.storage.local.set({ extensionEnabled: on });

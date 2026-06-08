@@ -1,12 +1,13 @@
 /**
  * Global on/off gate for the on-page surfaces (selection toolbar + sidebar
- * launcher). The extension is ON by default; the student flips it from the
- * popup when the perpetual toolbar/launcher gets in the way. State is a single
+ * launcher). The extension is OFF by default so a force-installed (district-wide)
+ * copy is dormant on install — no toolbar, no launcher — until the student
+ * flips it ON from the popup to start a research unit. State is a single
  * global boolean in chrome.storage.local ('extensionEnabled'), so the toggle
  * applies across every tab and survives restarts.
  *
  * Content scripts evaluate synchronously but storage reads are async, so this
- * exposes an optimistic cached value (defaults true), a ready promise, and a
+ * exposes an optimistic cached value (defaults false), a ready promise, and a
  * change subscription. Consumers gate lazily — at selection / page-load time —
  * not at script-eval time, so the read has settled by the time it matters and
  * live toggles take effect without a page reload.
@@ -18,16 +19,16 @@
  */
 (function () {
   const STORAGE_KEY = 'extensionEnabled';
-  let enabled = true; // optimistic until storage resolves
+  let enabled = false; // optimistic OFF until storage resolves (off by default)
   const listeners = [];
 
   const ready = chrome.storage.local.get(STORAGE_KEY)
-    .then((r) => { enabled = r[STORAGE_KEY] !== false; return enabled; })
+    .then((r) => { enabled = r[STORAGE_KEY] === true; return enabled; })
     .catch(() => enabled);
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes[STORAGE_KEY]) return;
-    enabled = changes[STORAGE_KEY].newValue !== false;
+    enabled = changes[STORAGE_KEY].newValue === true;
     listeners.forEach((fn) => { try { fn(enabled); } catch (e) {} });
   });
 
