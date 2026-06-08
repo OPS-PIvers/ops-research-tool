@@ -11,9 +11,15 @@
   that doesn't raise the version.
 
   Output: extension\dist\ops-research-tool-v<version>.zip (gitignored). The zip
-  has manifest.json at the ROOT, excludes dist\ and vendor\README.md, and uses
-  forward-slash entry paths (Web Store-safe). Re-zip with the SAME version any
-  time to refresh the artifact; bump only when you're about to publish.
+  has manifest.json at the ROOT, excludes dist\, store-assets\, and
+  vendor\README.md, and uses forward-slash entry paths (Web Store-safe). Re-zip
+  with the SAME version any time to refresh the artifact; bump only when you're
+  about to publish.
+
+  NOTE: store-assets\ (Web Store listing graphics + the Remotion promo video +
+  its source) is listing material, NOT shipped extension code — it must stay out
+  of the uploaded zip. It lives under extension\ for convenience; this script
+  excludes it so a ~10 MB video never ships to students' browsers.
 #>
 param([switch]$Bump)
 
@@ -46,10 +52,14 @@ New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 $zipPath = Join-Path $distDir ("ops-research-tool-v" + $ver + ".zip")
 if ([System.IO.File]::Exists($zipPath)) { [System.IO.File]::Delete($zipPath) }
 
-$skip = 'dist/'
+# Folder prefixes to exclude wholesale (build output + Web Store listing assets).
+$skipPrefixes = @('dist/', 'store-assets/')
+$skipFiles    = @('vendor/README.md')
 $files = Get-ChildItem -Path $src -Recurse -File | Where-Object {
   $rel = $_.FullName.Substring($src.Length + 1).Replace('\','/')
-  ($rel -notlike ($skip + '*')) -and ($rel -ne 'vendor/README.md')
+  $underSkipped = $false
+  foreach ($p in $skipPrefixes) { if ($rel -like ($p + '*')) { $underSkipped = $true; break } }
+  (-not $underSkipped) -and ($skipFiles -notcontains $rel)
 }
 $zip = [System.IO.Compression.ZipFile]::Open($zipPath, 'Create')
 try {
