@@ -29,7 +29,8 @@ Education agreement — no Firebase, no non-core services.
 | Bundles config | `1Ht6ggmLyqD-VhepLr10bE8lO28zLX9-1NcfXirxHIYk` |
 | GAS owner | `paul.ivers@orono.k12.mn.us` (district account, not personal) |
 | GitHub user | `OPS-PIvers` |
-| Chrome extension ID (fixed) | `nmelakoijagkfanhilcnagkochhfmacn` — pinned by the `key` in [`extension/manifest.json`](extension/manifest.json) |
+| Chrome extension ID — **dev (unpacked)** | `nmelakoijagkfanhilcnagkochhfmacn` — pinned by the `key` in [`extension/manifest.json`](extension/manifest.json) |
+| Chrome extension ID — **published (Web Store)** | `goglhlpppkhiddkhgcknbiohcppgdggi` — store-assigned, **differs** from the dev id (the "match ids" step was NOT done). This is the id to **force-install** and to set as the **OAuth client Application ID**. Listing: https://chromewebstore.google.com/detail/ops-research-tool/goglhlpppkhiddkhgcknbiohcppgdggi |
 | Extension signing key (private) | `C:\Users\paul.ivers\Desktop\ops-research-tool-extension-key.pem` — **outside the repo, never commit.** Back it up (password manager / Drive). |
 
 All IDs are also hardcoded into [`apps-script/src/00_config.js`](apps-script/src/00_config.js).
@@ -590,9 +591,14 @@ These supersede or refine the spec — apply them before defaulting to plan text
 2. **Distribute the Chrome extension** (see §13 for the full recipe). Short
    version: do NOT "Pack extension" (self-hosted `.crx` is a dead path);
    publish privately to the Chrome Web Store and force-install via the Google
-   Admin console. The extension ID is now pinned to
-   `nmelakoijagkfanhilcnagkochhfmacn` via the manifest `key`, so the existing
-   OAuth client must have its Application ID set to that ID.
+   Admin console. **Published privately as v0.1.2** with store-assigned id
+   **`goglhlpppkhiddkhgcknbiohcppgdggi`** (≠ the dev `nmela…` id). **Force-install
+   that published id**, and set the **OAuth client's Application ID to the same
+   published id** — otherwise the force-installed extension installs but
+   `chrome.identity.getAuthToken` fails (a single client can't serve both ids;
+   the published rollout is what matters). **Verify sign-in on the *published*
+   extension before scoping the force-install to students** — the dev/unpacked
+   copy authenticating does NOT prove the published one does.
 3. **Verify CI secrets** are set so the deploy workflow runs — `CLASPRC_JSON`
    secret + `GAS_DEPLOYMENT_ID` variable (see §11). Confirm a push to `main`
    touching `apps-script/**` actually redeploys.
@@ -794,12 +800,20 @@ allowed in manifest") and assigns the published item its own id. So
 `key` from the uploaded zip** (source keeps it for dev). Consequence: the
 **published id is store-assigned and differs from the unpacked-dev id** until you
 make them match (below). *(Earlier this file claimed the `key` made the two ids
-identical — that was wrong; it bit the first upload.)*
+identical — that was wrong; it bit the first upload.)* **Actual published id (as
+of 2026-06-08, v0.1.2): `goglhlpppkhiddkhgcknbiohcppgdggi`** — the match step was
+NOT done, so dev (`nmela…`) and published (`goglh…`) remain different ids.
 
-### Make dev + published ids match (once, right after the first publish)
+### Make dev + published ids match (NOT done — the two ids differ)
+
+This was never performed, so the published item keeps its own store-assigned id
+(`goglh…`) distinct from the unpacked-dev id (`nmela…`). For the district rollout
+that's fine — just force-install + OAuth-target the **published** id (below). Do
+this only if you later want one OAuth client to serve both the unpacked-dev and
+published copies:
 
 1. Upload the (key-stripped) zip → the store creates the item and assigns id `X`
-   (on the dashboard / item URL).
+   (on the dashboard / item URL). *(Here `X` = `goglhlpppkhiddkhgcknbiohcppgdggi`.)*
 2. Copy that item's **public key** into the SOURCE `manifest.json` `key` field
    (Dashboard → item → package info, or extract from the published `.crx`). Now
    unpacked-dev id == published id == `X`, and a single OAuth client serves both.
@@ -808,24 +822,31 @@ identical — that was wrong; it bit the first upload.)*
 ### Point the OAuth client at the *running* id
 
 The Chrome-Extension-type OAuth client in the GCP project (APIs & Services →
-Credentials; its id is in `manifest.json`'s `oauth2` block) must have its
-**Application ID = the extension id that's actually running**:
+Credentials; client id `251187181508-37t9…`, in `manifest.json`'s `oauth2` block)
+must have its **Application ID = the extension id that's actually running**:
 - pilot / unpacked: `nmelakoijagkfanhilcnagkochhfmacn`;
-- published: the **store-assigned id `X`** (or, once you've done the match step
-  above, `X` == `nmela…` so one value covers both).
-Until the Application ID matches the running id, `chrome.identity.getAuthToken`
-fails with a redirect/clientid mismatch. Also set the **OAuth consent screen to
-"Internal"** (Workspace-only) so domain users skip the unverified-app warning —
-the only scopes are `userinfo.email` + `openid`.
+- **published (the district rollout): `goglhlpppkhiddkhgcknbiohcppgdggi`** — this
+  is what students force-install, so this is the value the OAuth client needs.
+The Application ID is a **single value**, so one client can't serve both ids at
+once (the match step above would unify them, but it wasn't done). Until the
+Application ID matches the running id, `chrome.identity.getAuthToken` fails with a
+redirect/clientid mismatch — the extension installs fine but sign-in silently
+breaks, so **verify sign-in on the published extension before force-installing to
+students**. Also set the **OAuth consent screen to "Internal"** (Workspace-only)
+so domain users skip the unverified-app warning — the only scopes are
+`userinfo.email` + `openid`.
 
 ### Publish to the Chrome Web Store (private)
 
 1. **Build the zip** — don't hand-zip. Run:
    `powershell -ExecutionPolicy Bypass -File scripts\build-extension-zip.ps1`
    It emits `extension/dist/ops-research-tool-v<version>.zip` with
-   `manifest.json` at the **root**, `dist/` + `vendor/README.md` excluded, and
-   forward-slash entry paths (Web Store-safe). This script is the single source
-   of truth for the zip — never copy-paste a zip command.
+   `manifest.json` at the **root**, `dist/`, `store-assets/`, and
+   `vendor/README.md` excluded, and forward-slash entry paths (Web Store-safe).
+   (`store-assets/` is ~10 MB of listing graphics + the Remotion promo video —
+   listing material, never shipped code; the script excludes it via a prefix
+   list.) This script is the single source of truth for the zip — never
+   copy-paste a zip command.
 2. [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole)
    → upload the zip ($5 one-time dev-account fee if not already paid). Use the
    district account.
@@ -867,14 +888,20 @@ release time fits the rare extension-update cadence.)
 ### Force-install via Google Admin console
 
 **Admin console → Devices → Chrome → Apps & extensions → Users & browsers.**
-Scope to the student OU, add the extension by ID
-(`nmelakoijagkfanhilcnagkochhfmacn`), set **Force install** (auto-installs,
-students can't disable). Optionally pin it to the toolbar there too.
+Scope to the student OU, add the extension by its **published** id
+(`goglhlpppkhiddkhgcknbiohcppgdggi` — the store id, NOT the dev `nmela…` id), set
+**Force install** (auto-installs, students can't disable). Optionally pin it to
+the toolbar there too. (The OAuth client's Application ID must equal this same
+published id — see the OAuth subsection above.)
 
 ### Pilot shortcut (no Web Store needed yet)
 
 For one section before the real rollout, **Load unpacked** from
 `extension/` on the pilot machines. With the `key` now in the manifest, the
-unpacked ID is already `nmelakoijagkfanhilcnagkochhfmacn`, so once the OAuth
-client's Application ID is updated (above), auth works locally with no further
-setup.
+unpacked ID is already `nmelakoijagkfanhilcnagkochhfmacn`, so auth works locally
+**only if the OAuth client's Application ID is set to that dev id**. ⚠️ Now that
+the published rollout is live, the OAuth client should point at the **published**
+id (`goglh…`) instead — which means the unpacked-dev copy will NOT authenticate
+at the same time (single-value Application ID). Pick one: either keep the client
+on the published id (recommended; unpacked dev auth stops working) or do the
+"match ids" step so one id covers both.
