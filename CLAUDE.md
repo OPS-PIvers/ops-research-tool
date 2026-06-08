@@ -67,7 +67,15 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     (in-session only, vanishes on reload per spec). Optional note. Click
     on mark messages a sidebar to focus (no-op if absent).
   - Popup: identity surface, project picker (sticky), sync status pill,
-    bundle preview, "Sync now" button.
+    bundle preview, "Sync now" button, and a **master on/off toggle**.
+  - **Master on/off gate ([`content/enabled.js`](extension/content/enabled.js) +
+    popup) DEFAULTS OFF as of v0.1.2.** A fresh/force-installed copy is dormant
+    on install — no selection toolbar, no sidebar launcher — until the student
+    flips it on from the popup (global flag `extensionEnabled` in
+    `chrome.storage.local`; undefined = off). Chosen so a district-wide
+    force-install isn't intrusive on every page before the unit starts. The PDF
+    panel deliberately ignores the gate (highlighting a PDF always works).
+    A user who explicitly toggled on keeps that across the update.
   - PDF Tier 2: [`extension/pdf/panel.html`](extension/pdf/panel.html) — own
     panel page. Background fetches PDF bytes (base64-shipped to panel),
     PDF.js v4.7.76 self-hosted in [`extension/vendor/`](extension/vendor/),
@@ -130,11 +138,20 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     the sidebar shows a confirm warning listing the omissions before inserting
     (see §4). `insertInlineCitation` for in-text parentheticals. **No "insert as
     quote" button** — intentional.
-  - **Still TODO in Phase 3:** install the editor add-on (dev: Deploy → Test
-    deployments → Editor Add-on; prod: Marketplace SDK, domain-restricted to
-    `orono.k12.mn.us`); real-Doc QA of bibliography formatting + cursor
-    insertion; wire the extension's `focusHighlight` message (see §9) to the
-    sidebar.
+  - **"Get Chrome extension" menu item** ([`50_docs_addon.js`](apps-script/src/50_docs_addon.js)
+    `showChromeExtensionInfo`): Extensions ▸ OPS Research Tool ▸ Get Chrome
+    extension → brand-styled modal with a click-to-open button to the published
+    Web Store listing (`CONFIG.CHROME_WEBSTORE_URL`). Mainly for staff + personal
+    devices; managed student devices get the extension force-installed.
+  - **Add-on publishing IN PROGRESS (2026-06-08):** pushed as **Apps Script
+    version 108**; the Workspace Marketplace SDK listing is being configured
+    (Editor Add-on → Docs → version 108, Visibility Private, Admin install). Any
+    future add-on code change needs a NEW `clasp version` + the SDK re-pointed at
+    it — the listing does NOT track the live script.
+  - **Still TODO in Phase 3:** finish + publish the Marketplace SDK listing
+    (point it at version 108) then admin-install domain-wide; real-Doc QA of
+    bibliography formatting + cursor insertion; wire the extension's
+    `focusHighlight` message (see §9) to the sidebar.
 - **Phase 4 — Teacher Console — sub-projects A/B/C/D COMPLETE.**
   - A+B: Console shell, My Projects, Project Dashboard, student drill-down.
   - C: Admin Area (Roster CRUD, Staff CRUD, Archive School Year) + audit log
@@ -585,9 +602,14 @@ These supersede or refine the spec — apply them before defaulting to plan text
   client keyed on the unpacked extension's ID.
 
 **Still open:**
-1. **Install the Docs editor add-on** (Phase 3). Dev: Editor → **Deploy →
-   Test deployments → install as Editor Add-on**. Prod: publish via the GCP
-   project's Marketplace SDK, domain-restricted to `orono.k12.mn.us`.
+1. **Finish publishing the Docs editor add-on** (Phase 3). Pushed as **Apps
+   Script version 108**; the Workspace Marketplace SDK listing is mid-setup
+   (Editor Add-on → Docs → **version 108**, Visibility **Private**, Admin
+   install, Store Listing + ToS/privacy URLs). Internal/private = no Google
+   verification despite the restricted `drive` scope. Then **admin-install
+   domain-wide** (Admin console → Apps → Google Workspace Marketplace apps) and
+   confirm the `drive` OAuth client is **Trusted**. Dev/QA path stays: Editor →
+   **Deploy → Test deployments → install as Editor Add-on**.
 2. **Distribute the Chrome extension** (see §13 for the full recipe). Short
    version: do NOT "Pack extension" (self-hosted `.crx` is a dead path);
    publish privately to the Chrome Web Store and force-install via the Google
