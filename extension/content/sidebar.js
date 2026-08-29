@@ -488,6 +488,9 @@ const OpsSidebar = (function () {
     // context in the BACKGROUND and re-render when it lands.
     await buildHost_();
     if (self.OpsEnabled) {
+      // The storage read behind get() is async — wait for it to settle so a
+      // student who left the extension ON isn't treated as OFF on page load.
+      await self.OpsEnabled.ready();
       applyEnabled_(self.OpsEnabled.get());
       // Live toggle: hide/show the whole host. Re-enabling re-runs
       // loadForCurrentPage so a page enabled mid-session still fetches its
@@ -521,8 +524,13 @@ const OpsSidebar = (function () {
     await ensureInit_();
     // Dormant when the student has switched the extension off. ensureInit_
     // already hid the host; skip the launcher + network fetch entirely. The
-    // onChange handler re-invokes this when they switch it back on.
-    if (self.OpsEnabled && !self.OpsEnabled.get()) return;
+    // onChange handler re-invokes this when they switch it back on. Await the
+    // settled value — sampling get() before the storage read resolves would
+    // read the optimistic OFF and bail even when the extension is ON.
+    if (self.OpsEnabled) {
+      await self.OpsEnabled.ready();
+      if (!self.OpsEnabled.get()) return;
+    }
     state.launcherEl.style.display = 'flex';
     state.launcherEl.title = 'OPS Research Tool — click to open the research panel';
     // Enter the loading state so the list shows skeleton rows (not a false
@@ -998,6 +1006,8 @@ const OpsSidebar = (function () {
     f.issue         = pick('issue', extra.issue);
     f.pages         = pick('pages', extra.pages);
     f.url           = pick('url', src.rawUrl);
+    f.archive       = pick('archive', extra.archive);
+    f.accessDate    = pick('accessDate', src.accessDate);
     return f;
   }
 

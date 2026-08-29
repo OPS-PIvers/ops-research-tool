@@ -2429,3 +2429,47 @@ function devTestConsoleCreateBundle() {
   console.log(JSON.stringify({ ok: pass, checks }, null, 2));
   return { ok: pass };
 }
+
+/**
+ * Locks the cross-request group-membership cache (66_groups.js):
+ *   - the generation token is stable across reads,
+ *   - resetGroupSheetCache_ (called by every group mutation) mints a NEW
+ *     token, so any cached membership map is orphaned instantly,
+ *   - a membership map round-trips through CacheService under the gen key,
+ *     including the {} "no groups" sentinel.
+ * Run alongside devTestGroupsAll, which exercises the real
+ * findGroupSheetForStudent_ routing across mutations with resets between
+ * steps (its fixtures call resetGroupSheetCache_, so a stale-cache bug
+ * there would show up as a routing failure).
+ */
+function devTestGroupMembershipCache() {
+  const checks = [];
+  const check = (label, ok, detail) => { checks.push({ label, ok, detail: detail || '' }); };
+
+  const gen1 = groupCacheGen_();
+  const gen1b = groupCacheGen_();
+  check('gen stable across reads', gen1 === gen1b, gen1 + ' vs ' + gen1b);
+
+  resetGroupSheetCache_();
+  const gen2 = groupCacheGen_();
+  check('reset mints a new gen', gen1 !== gen2, gen1 + ' vs ' + gen2);
+
+  const cache = CacheService.getScriptCache();
+  const key = 'grp:v1:' + gen2 + ':devtest-project';
+  cache.put(key, JSON.stringify({ 'kid@x.org': 'sheet123' }), 60);
+  const back = JSON.parse(cache.get(key));
+  check('map round-trips', back['kid@x.org'] === 'sheet123');
+
+  const emptyKey = 'grp:v1:' + gen2 + ':devtest-empty';
+  cache.put(emptyKey, JSON.stringify({}), 60);
+  const emptyBack = cache.get(emptyKey);
+  check('no-groups sentinel {} is a cache HIT (not a miss)', emptyBack !== null && JSON.stringify(JSON.parse(emptyBack)) === '{}');
+
+  resetGroupSheetCache_();
+  check('old-gen key orphaned after reset', groupCacheGen_() !== gen2);
+
+  cache.remove(key); cache.remove(emptyKey);
+  const pass = checks.every((c) => c.ok);
+  console.log(JSON.stringify({ ok: pass, checks }, null, 2));
+  return { ok: pass };
+}

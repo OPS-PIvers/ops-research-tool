@@ -29,10 +29,41 @@ let _groupSheetCache = null;
 // groups) Sheet opens; trivial to blow past the 6-minute execution cap).
 let _groupMemberMap = null;  // emailLower → sheetId (per project per request)
 
-/** Clear the request-scoped caches. Call from entry points if needed. */
+// Cross-request membership cache (CacheService). Every doPost / sidebar write
+// used to pay the full listGroupsForProject_ Drive walk (O(files in project))
+// just to route to a group Sheet — even in projects with zero groups. The
+// email→sheetId map is tiny and changes only on teacher-driven group
+// mutations, so it's cached for GROUP_CACHE_TTL_SECS under a generation
+// token: resetGroupSheetCache_ (already called by every group mutation AND
+// every dev-test fixture step) mints a new token, instantly invalidating all
+// projects' cached maps. The TTL is a hard bound on staleness if a bust ever
+// fails (CacheService hiccup).
+var GROUP_CACHE_TTL_SECS = 300;
+
+function groupCacheGen_() {
+  const cache = CacheService.getScriptCache();
+  let gen = cache.get('grp:gen');
+  if (!gen) {
+    gen = String(Date.now()) + ':' + Math.floor(Math.random() * 1e9);
+    cache.put('grp:gen', gen, 21600); // 6h; re-minted lazily on expiry
+  }
+  return gen;
+}
+
+/**
+ * Clear the request-scoped caches AND invalidate the cross-request
+ * membership cache for every project (generation bump). Call from entry
+ * points if needed; every group mutation must call this.
+ */
 function resetGroupSheetCache_() {
   _groupSheetCache = {};
   _groupMemberMap = null;
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.put('grp:gen', String(Date.now()) + ':' + Math.floor(Math.random() * 1e9), 21600);
+  } catch (e) {
+    // Cache unavailable: stale maps die on their own TTL (bounded staleness).
+  }
 }
 
 /**
@@ -58,15 +89,28 @@ function findGroupSheetForStudent_(actorEmail, project) {
     return _groupSheetCache[cacheKey] || null;
   }
 
-  // Preheat the project's email→sheetId map once per request.
+  // Preheat the project's email→sheetId map once per request — from the
+  // cross-request cache when fresh (the common case for student writes),
+  // falling back to the full Drive walk on a miss and repopulating.
   if (_groupMemberMap === null) {
-    _groupMemberMap = {};
-    const groups = listGroupsForProject_(project);
-    groups.forEach((g) => {
-      (g.memberEmails || []).forEach((e) => {
-        _groupMemberMap[String(e).toLowerCase()] = g.sheetId;
+    const mapKey = 'grp:v1:' + groupCacheGen_() + ':' + project.projectId;
+    let cached = null;
+    try { cached = CacheService.getScriptCache().get(mapKey); } catch (e) {}
+    if (cached !== null) {
+      try { _groupMemberMap = JSON.parse(cached); } catch (e) { _groupMemberMap = null; }
+    }
+    if (_groupMemberMap === null) {
+      _groupMemberMap = {};
+      const groups = listGroupsForProject_(project);
+      groups.forEach((g) => {
+        (g.memberEmails || []).forEach((e) => {
+          _groupMemberMap[String(e).toLowerCase()] = g.sheetId;
+        });
       });
-    });
+      try {
+        CacheService.getScriptCache().put(mapKey, JSON.stringify(_groupMemberMap), GROUP_CACHE_TTL_SECS);
+      } catch (e) {}
+    }
   }
 
   const target = String(actorEmail).toLowerCase();

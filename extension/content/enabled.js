@@ -23,7 +23,14 @@
   const listeners = [];
 
   const ready = chrome.storage.local.get(STORAGE_KEY)
-    .then((r) => { enabled = r[STORAGE_KEY] === true; return enabled; })
+    .then((r) => {
+      enabled = r[STORAGE_KEY] === true;
+      // Notify subscribers that registered before the async read settled —
+      // without this, a consumer that sampled get() early sees the optimistic
+      // OFF forever and the extension stays dormant even when switched ON.
+      if (enabled) listeners.forEach((fn) => { try { fn(enabled); } catch (e) {} });
+      return enabled;
+    })
     .catch(() => enabled);
 
   chrome.storage.onChanged.addListener((changes, area) => {

@@ -257,21 +257,32 @@ function esc_(s) {
 function renderCitationForm() {
   const source = editor.source;
   const extra = source.scrapedExtraParsed || {};
-  const fields = Object.assign({}, source.citationFieldsParsed || {});
-  // Student-entered citationFields win; then the rich scrape (scrapedExtra +
-  // the four discrete scraped* columns); 'website' is the final fallback type.
-  fields.sourceType    = fields.sourceType    || source.sourceType || extra.sourceType || 'website';
-  fields.title         = fields.title         || source.scrapedTitle || '';
-  fields.siteName      = fields.siteName      || source.scrapedSite || '';
-  fields.publishedDate = fields.publishedDate || source.scrapedDate || '';
-  fields.author        = fields.author        || source.scrapedAuthor || '';
-  fields.publication   = fields.publication   || extra.publication || '';
-  fields.publisher     = fields.publisher     || extra.publisher || '';
-  fields.volume        = fields.volume        || extra.volume || '';
-  fields.issue         = fields.issue         || extra.issue || '';
-  fields.pages         = fields.pages         || extra.pages || '';
-  fields.url           = fields.url           || source.rawUrl || '';
-  fields.accessDate    = source.accessDate    || fields.accessDate || '';
+  const cf = source.citationFieldsParsed || {};
+  // Student-entered citationFields win — INCLUDING deliberate empties. A key
+  // present in citationFields, even as '', is taken as-is so a wrong scraped
+  // value the student cleared never reappears (mirrors the extension sidebar's
+  // effectiveFields_ in extension/content/sidebar.js — keep the two in sync).
+  // Then the rich scrape (scrapedExtra + the four discrete scraped* columns);
+  // 'website' is the final fallback type.
+  // `fields` is a resolved VIEW for rendering/preview only. Writes go through
+  // `cf` — the explicit store — so citationFields keeps recording ONLY what
+  // the student actually set (a scraped fallback shown in an untouched input
+  // is never persisted as if the student typed it).
+  const pick = (key, fallback) => (key in cf ? cf[key] : (fallback || ''));
+  const fields = Object.assign({}, cf);
+  fields.sourceType    = ('sourceType' in cf && cf.sourceType) ? cf.sourceType : (source.sourceType || extra.sourceType || 'website');
+  fields.title         = pick('title', source.scrapedTitle);
+  fields.siteName      = pick('siteName', source.scrapedSite);
+  fields.publishedDate = pick('publishedDate', source.scrapedDate);
+  fields.author        = pick('author', source.scrapedAuthor);
+  fields.publication   = pick('publication', extra.publication);
+  fields.publisher     = pick('publisher', extra.publisher);
+  fields.volume        = pick('volume', extra.volume);
+  fields.issue         = pick('issue', extra.issue);
+  fields.pages         = pick('pages', extra.pages);
+  fields.url           = pick('url', source.rawUrl);
+  fields.archive       = pick('archive', extra.archive);
+  fields.accessDate    = pick('accessDate', source.accessDate);
 
   const form = document.createElement('div');
   form.className = 'sb-source__form';
@@ -279,9 +290,10 @@ function renderCitationForm() {
   // Source type
   form.appendChild(formField_('Source type', selectInput_(SRC_TYPES, fields.sourceType, (v) => {
     fields.sourceType = v;
-    saveSourcePatch_({ sourceType: v, citationFields: fields });
+    cf.sourceType = v;
+    saveSourcePatch_({ sourceType: v, citationFields: cf });
     source.sourceType = v;
-    source.citationFieldsParsed = fields;
+    source.citationFieldsParsed = cf;
     render();   // re-render to swap the field set
   })));
 
@@ -289,8 +301,9 @@ function renderCitationForm() {
   sourceFieldsFor_(fields.sourceType).forEach((def) => {
     const onChange = (v) => {
       fields[def.key] = v;
-      saveSourcePatch_({ citationFields: fields });
-      source.citationFieldsParsed = fields;
+      cf[def.key] = v;
+      saveSourcePatch_({ citationFields: cf });
+      source.citationFieldsParsed = cf;
       updatePreview_(form, fields);
     };
     form.appendChild(formField_(def.label, textInput_(fields[def.key] || '', onChange, def.kind)));

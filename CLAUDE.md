@@ -531,6 +531,35 @@ These supersede or refine the spec — apply them before defaulting to plan text
   All UI is DOM-side — real-surface QA only. **Still TODO from the editor:** run
   `migrateAddRequirements` + `devTestRequirementsAll` (auth wall blocks `clasp run`).
 
+- **2026-08-28 audit fixes (three do-first bugs from the full-codebase audit):**
+  1. **On/off gate race fixed.** `enabled.js` sampled its optimistic OFF before
+     the async storage read resolved, so a force-installed-and-toggled-ON copy
+     was dormant on every page load. `enabled.js` now notifies listeners when
+     the initial read lands, and `sidebar.js` awaits `OpsEnabled.ready()` in
+     `ensureInit_`/`loadForCurrentPage`. Toolbar keeps its synchronous sample by
+     design (settled long before any human selection).
+  2. **Citation precedence unified across surfaces.** The Docs modal
+     ([`source_editor_js.html`](apps-script/src/source_editor_js.html)) now uses
+     the extension's `key in cf` semantics (a deliberately-cleared field stays
+     cleared, never re-filled from the scrape) AND saves only explicitly-set
+     keys into `citationFields` (`cf` is the write store; `fields` is a
+     render-only resolved view) — the old whole-object save baked scraped
+     fallbacks in as if student-entered, violating the §4 invariant. The
+     extension's `effectiveFields_` gained the missing `archive` + `accessDate`
+     keys (a saved archive value no longer blanks on re-render).
+  3. **Group-membership routing is CacheService-cached** — every doPost /
+     sidebar write used to pay the full `listGroupsForProject_` Drive walk
+     (O(files in project)) even in group-less projects. `findGroupSheetForStudent_`
+     now caches the email→sheetId map (incl. the `{}` no-groups sentinel) for
+     5 min under a generation token; `resetGroupSheetCache_` (already called by
+     every group mutation + dev fixture) mints a new token, so mutations
+     invalidate instantly and the TTL bounds staleness if a bust ever fails.
+     Locked by `devTestGroupMembershipCache`; run it + `devTestGroupsAll` from
+     the editor after the next `clasp push` (auth wall blocks headless runs).
+  The remaining audit findings (backend batching, extension felt-latency,
+  console a11y/brand, sidebar UX) are documented in the 2026-08-28 session
+  transcript — not yet implemented.
+
 ## 5. GAS V8 quirks discovered
 
 - `new URL(...)` **throws** in GAS V8. The global is advertised but unusable.
