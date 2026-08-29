@@ -38,10 +38,10 @@ const SIDEBAR_CSS = `
   box-shadow: -1px 1px 5px rgba(29,42,93,0.22);
   display: flex; flex-direction: column; align-items: center; gap: 7px;
   opacity: 0.6;
-  transition: opacity 0.18s ease, padding-right 0.18s ease, box-shadow 0.18s ease;
+  transition: opacity 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
 .launcher:hover {
-  opacity: 1; padding-right: 10px;
+  opacity: 1; transform: translateY(-50%) translateX(-3px);
   box-shadow: -2px 2px 12px rgba(29,42,93,0.34);
 }
 .launcher:focus-visible {
