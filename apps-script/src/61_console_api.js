@@ -35,8 +35,31 @@ function consoleGetContext() {
   const teacherClasses = role === 'admin' ? null : listClassesTaughtBy_(actorEmail);
   return {
     ok: true, actor: actorEmail, staff, role, teacherClasses,
+    classLabels: buildClassLabelMap_(),
     sampleDataEnabled: consoleSampleDataEnabled_(),   // drives the header demo toggle
   };
+}
+
+/**
+ * Class KEY → clean display parts, loaded once with the session so the client
+ * can render "Name · Period" instead of the composed key ("Name Period — Last")
+ * everywhere, appending the teacher only where two visible labels collide.
+ * Legacy rows (blank Name) label as their key — no visual change for them.
+ */
+function buildClassLabelMap_() {
+  const staffLast = {};
+  readAllAsObjects_(getTab_(rosterWorkbook_(), TABS.STAFF), HEADERS.STAFF).forEach((s) => {
+    const parts = String(s.Name || '').trim().split(/\s+/).filter(Boolean);
+    staffLast[String(s.Email || '').toLowerCase()] = parts.length ? parts[parts.length - 1] : '';
+  });
+  const map = {};
+  listClasses_().forEach((c) => {
+    map[c.Class] = {
+      label: classDisplayLabel_(c),
+      teacherName: staffLast[c.TeacherEmail] || '',
+    };
+  });
+  return map;
 }
 
 // listClassesTaughtBy_ now lives in 40_roster_model.js (Classes v2): it reads the

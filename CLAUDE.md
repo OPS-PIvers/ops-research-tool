@@ -531,6 +531,42 @@ These supersede or refine the spec — apply them before defaulting to plan text
   All UI is DOM-side — real-surface QA only. **Still TODO from the editor:** run
   `migrateAddRequirements` + `devTestRequirementsAll` (auth wall blocks `clasp run`).
 
+- **Class names are de-coupled from teachers (Name/Period display fields +
+  system-composed key) and admin gets bulk staff / bulk sections creation
+  (2026-08-30).** The Classes tab gains trailing **`Name`** + **`Period`**
+  columns (`ensureHeaders_` auto-heals; blank Name on legacy rows → display
+  falls back to the `Class` string). The **`Class` column stays the immutable
+  string KEY** at all 12 join sites (Enrollments, memberClasses, Drive folders,
+  groups, dashboard scoping) — for NEW classes it is **system-composed** by
+  `composeClassKeyParts_(name, period, teacherLastName)` →
+  `"US History P3 — Ivers"` (unique by construction; a same-last-name collision
+  appends the email local part). Uniqueness rule is **(Name, Period,
+  TeacherEmail)**, enforced in `createClassV2_`
+  ([`40_roster_model.js`](apps-script/src/40_roster_model.js)); the legacy
+  positional `createClass_(name, teacher, year)` survives for dev/sample/flat-
+  import callers (key = name verbatim). `updateClass_` now accepts **Name /
+  Period edits (display-only renames — the key never changes)**, wired to
+  inline-edit cells in the admin Classes table. Period is short free text
+  normalized by `normalizePeriodToken_` ('period 3'→'P3'; Hour/Block pass
+  through). **Display:** `consoleGetContext` now returns **`classLabels`**
+  (key → {label:'Name · Period', teacherName:last}); the console renders clean
+  labels via `classLabel_`/`classLabelsFor_`/`classLabelJoin_`
+  ([`console_js.html`](apps-script/src/console_js.html)) at project-card metas,
+  the dashboard title + class tabs, and both class-picker modals — the teacher
+  last name is appended **only** when two visible labels collide or the viewer
+  is admin. **Bulk creation:** `adminBulkAddStaff(rows)` (paste Email/First/
+  Last; all created as teacher; existing emails skipped) behind a Staff-screen
+  "Bulk add…" modal with live preview, and `adminBulkCreateClasses(combos)`
+  behind a Classes-screen "Bulk create sections…" modal — one course name ×
+  N periods × M teachers cross-product with an uncheckable preview
+  ([`63_admin_api.js`](apps-script/src/63_admin_api.js) /
+  [`admin_js.html`](apps-script/src/admin_js.html)). **Migration:** run
+  **`migrateClassNamePeriod`** once from the editor after deploy — idempotent,
+  backfills Name/Period on legacy rows by peeling a trailing period token
+  (`parseClassNamePeriod_`); unparseable names keep the whole string as Name.
+  Old classes keep their existing keys/folder names (cosmetically inconsistent
+  with new composed keys — accepted). Pure logic locked by
+  **`devTestClassNaming`** (node-verified 11/11; also editor-callable).
 - **2026-08-28 audit fixes (three do-first bugs from the full-codebase audit):**
   1. **On/off gate race fixed.** `enabled.js` sampled its optimistic OFF before
      the async storage read resolved, so a force-installed-and-toggled-ON copy

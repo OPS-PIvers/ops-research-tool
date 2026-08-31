@@ -33,7 +33,13 @@ const HEADERS = {
   // Projects.memberClasses + Drive class folders — the Classes tab only adds
   // metadata. Enrollments is the student↔class many-to-many join.
   STUDENTS: ['ID', 'First', 'Last', 'Email'],
-  CLASSES: ['Class', 'TeacherEmail', 'SchoolYear', 'Status'],
+  // `Name` + `Period` are appended (positional mapping preserved; ensureHeaders_
+  // trailing-append heals existing tabs). `Class` remains the immutable string
+  // KEY — for new classes it is system-composed from Name/Period/teacher last
+  // name so two teachers can teach a same-named class. Blank Name on legacy
+  // rows → display falls back to the Class string (see listClasses_ /
+  // migrateClassNamePeriod).
+  CLASSES: ['Class', 'TeacherEmail', 'SchoolYear', 'Status', 'Name', 'Period'],
   ENROLLMENTS: ['Email', 'Class'],
 
   STAFF: ['Name', 'Email', 'Role'],

@@ -829,12 +829,21 @@ function renderPreview_(host, preview) {
 }
 
 function renderAdminStaff_(main) {
+  const btns = document.createElement('div');
+  btns.style.display = 'flex';
+  btns.style.gap = '8px';
+  const bulkBtn = document.createElement('button');
+  bulkBtn.className = 'admin-btn-secondary';
+  bulkBtn.textContent = 'Bulk add…';
+  bulkBtn.addEventListener('click', openBulkAddStaffModal_);
+  btns.appendChild(bulkBtn);
   const addBtn = document.createElement('button');
   addBtn.className = 'admin-btn-primary';
   addBtn.textContent = '+ Add staff';
   addBtn.addEventListener('click', openAddStaffModal_);
+  btns.appendChild(addBtn);
 
-  main.appendChild(buildAdminBreadcrumb_('Staff', addBtn));
+  main.appendChild(buildAdminBreadcrumb_('Staff', btns));
 
   const tableHost = document.createElement('div');
   tableHost.className = 'admin-table-host';
@@ -1062,6 +1071,103 @@ function openAddStaffModal_() {
   });
 }
 
+/**
+ * Bulk-add staff: paste Email, First, Last (tab- or comma-separated, any token
+ * order — the email is found by its '@'). Live preview marks rows already on
+ * Staff as "skip". Everyone imports as role=teacher.
+ */
+function openBulkAddStaffModal_() {
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'admin-modal admin-modal--wide';
+  modal.innerHTML = `
+    <div class="admin-modal__header">Bulk add staff</div>
+    <div class="admin-modal__form">
+      <label>Paste staff
+        <span class="admin-bulk-hint">One per line: <code>email, First, Last</code> (tab- or comma-separated; paste straight from a spreadsheet). Everyone is added as a <strong>teacher</strong> — promote admins from the Staff table afterward. Emails already on Staff are skipped.</span>
+        <textarea id="staff-bulk-ta" rows="7" class="admin-bulk-ta" placeholder="jane.doe@orono.k12.mn.us&#9;Jane&#9;Doe&#10;sam.hill@orono.k12.mn.us, Sam, Hill"></textarea>
+      </label>
+      <div id="staff-bulk-preview"></div>
+    </div>
+    <div class="admin-modal__actions">
+      <button class="admin-modal__cancel">Cancel</button>
+      <button class="admin-modal__primary" disabled>Add staff</button>
+    </div>`;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  const close = () => overlay.parentNode && overlay.parentNode.removeChild(overlay);
+  modal.querySelector('.admin-modal__cancel').addEventListener('click', close);
+
+  const ta = modal.querySelector('#staff-bulk-ta');
+  const previewHost = modal.querySelector('#staff-bulk-preview');
+  const primary = modal.querySelector('.admin-modal__primary');
+  const existing = {};
+  (adminStaff.rows || []).forEach((r) => { existing[String(r.Email).toLowerCase()] = true; });
+
+  let parsed = [];
+  function repaint() {
+    parsed = parsePastedStaff_(ta.value);
+    previewHost.innerHTML = '';
+    if (!parsed.length) { primary.disabled = true; return; }
+    let addable = 0;
+    const list = document.createElement('div');
+    list.className = 'admin-class-enrolled';
+    parsed.forEach((row) => {
+      const chip = document.createElement('div');
+      chip.className = 'admin-enroll-chip';
+      let tag;
+      if (!row.Email) tag = '⚠ no email';
+      else if (existing[row.Email]) tag = 'already on Staff — skipped';
+      else if (!row.First && !row.Last) tag = '⚠ name required';
+      else { tag = 'will add'; addable++; }
+      chip.innerHTML = '<span>' + esc_([row.First, row.Last].filter(Boolean).join(' ') || '(no name)') +
+        ' · ' + esc_(row.Email || '(no email)') + ' — ' + esc_(tag) + '</span>';
+      list.appendChild(chip);
+    });
+    previewHost.appendChild(list);
+    primary.disabled = addable === 0;
+    primary.textContent = addable ? ('Add ' + addable + ' staff') : 'Add staff';
+  }
+  ta.addEventListener('input', repaint);
+
+  primary.addEventListener('click', () => {
+    primary.disabled = true; primary.textContent = '…';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        close();
+        adminStaff.rows = null;
+        applyHash_();
+        const parts = [resp.added + ' added'];
+        if (resp.skipped) parts.push(resp.skipped + ' already on Staff');
+        if (resp.errors && resp.errors.length) parts.push(resp.errors.length + ' skipped (bad rows)');
+        setStatus('Staff import: ' + parts.join(', '), resp.added ? 'good' : 'bad', 6000);
+      })
+      .withFailureHandler((e) => {
+        primary.disabled = false; repaint();
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      })
+      .adminBulkAddStaff(parsed);
+  });
+}
+
+/** Tolerant staff-row parser: email is the '@' token; remaining tokens in order are First, Last. */
+function parsePastedStaff_(text) {
+  return String(text || '').split(/\r?\n/)
+    .map((line) => line.trim()).filter(Boolean)
+    .map((line) => {
+      const tokens = line.split(/[\t,]/).map((t) => t.trim()).filter(Boolean);
+      let email = '';
+      const rest = [];
+      tokens.forEach((t) => {
+        if (!email && t.indexOf('@') > 0) email = t.toLowerCase();
+        else rest.push(t);
+      });
+      return { Email: email, First: rest[0] || '', Last: rest.slice(1).join(' ') || '' };
+    })
+    .filter((r) => r.Email || r.First || r.Last);
+}
+
 function openChangeStaffEmailModal_(r) {
   typedConfirmModal_({
     title: 'Change staff email?',
@@ -1111,11 +1217,20 @@ function openDeleteStaffModal_(r, host) {
 // ============================================================
 
 function renderAdminClasses_(main) {
+  const btns = document.createElement('div');
+  btns.style.display = 'flex';
+  btns.style.gap = '8px';
+  const bulkBtn = document.createElement('button');
+  bulkBtn.className = 'admin-btn-secondary';
+  bulkBtn.textContent = 'Bulk create sections…';
+  bulkBtn.addEventListener('click', openBulkCreateSectionsModal_);
+  btns.appendChild(bulkBtn);
   const createBtn = document.createElement('button');
   createBtn.className = 'admin-btn-primary';
   createBtn.textContent = '+ Create class';
   createBtn.addEventListener('click', openCreateClassModal_);
-  main.appendChild(buildAdminBreadcrumb_('Classes', createBtn));
+  btns.appendChild(createBtn);
+  main.appendChild(buildAdminBreadcrumb_('Classes', btns));
 
   const host = document.createElement('div');
   host.className = 'admin-table-host';
@@ -1132,7 +1247,7 @@ function renderAdminClasses_(main) {
   }
 
   host.innerHTML = '';
-  host.appendChild(buildAdminTableSkeleton_(['Class', 'Teacher', 'Students', ''], 6, ['', 'db-skel-bar--wide', 'db-skel-bar--narrow']));
+  host.appendChild(buildAdminTableSkeleton_(['Class', 'Period', 'Teacher', 'Students', ''], 6, ['', 'db-skel-bar--narrow', 'db-skel-bar--wide', 'db-skel-bar--narrow']));
 
   let pending = 0;
   const done = () => { if (--pending === 0) renderClassesTable_(host); };
@@ -1164,22 +1279,73 @@ function renderClassesTable_(host) {
   }
   const table = document.createElement('table');
   table.className = 'admin-table';
-  table.innerHTML = '<thead><tr><th>Class</th><th>Teacher</th><th>Students</th><th></th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>Class</th><th>Period</th><th>Teacher</th><th>Students</th><th></th></tr></thead>';
   const tbody = document.createElement('tbody');
   adminClasses.classes
     .slice()
-    .sort((a, b) => String(a.Class).localeCompare(String(b.Class)))
+    .sort((a, b) => String(a.Name || a.Class).localeCompare(String(b.Name || b.Class)) ||
+                    String(a.Period || '').localeCompare(String(b.Period || ''), undefined, { numeric: true }))
     .forEach((c) => tbody.appendChild(buildClassRow_(c, host)));
   table.appendChild(tbody);
   host.appendChild(table);
 }
 
+/** Inline-edit cell for a class's display Name or Period (key never changes). */
+function inlineEditClassCell_(field, c, opts) {
+  const span = document.createElement('span');
+  span.className = 'admin-edit';
+  span.textContent = c[field] || (opts && opts.emptyText) || '';
+  span.title = 'Click to edit — the underlying class key (' + c.Class + ') never changes';
+  span.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'admin-edit__input';
+    input.value = c[field] || '';
+    span.replaceWith(input);
+    input.focus(); input.select();
+    let done = false;
+    const commit = () => {
+      if (done) return;
+      done = true;
+      const newVal = input.value.trim();
+      if (newVal === (c[field] || '')) { input.replaceWith(span); return; }
+      const fields = {}; fields[field] = newVal;
+      google.script.run
+        .withSuccessHandler((resp) => {
+          c[field] = resp.class[field];
+          span.textContent = c[field] || (opts && opts.emptyText) || '';
+          input.replaceWith(span);
+          setStatus('Saved.', 'good', 1500);
+        })
+        .withFailureHandler((e) => {
+          setStatus(String(e && e.message || e), 'bad', 4000);
+          input.replaceWith(span);
+        })
+        .adminUpdateClass(c.Class, fields);
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter')  { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { done = true; input.replaceWith(span); }
+    });
+  });
+  return span;
+}
+
 function buildClassRow_(c, host) {
   const tr = document.createElement('tr');
 
+  // Name — inline edit (display only; the composed key is stable).
   const nameTd = document.createElement('td');
-  nameTd.innerHTML = '<strong>' + esc_(c.Class) + '</strong>';
+  const strong = document.createElement('strong');
+  strong.appendChild(inlineEditClassCell_('Name', c));
+  nameTd.appendChild(strong);
   tr.appendChild(nameTd);
+
+  // Period — inline edit.
+  const periodTd = document.createElement('td');
+  periodTd.appendChild(inlineEditClassCell_('Period', c, { emptyText: '—' }));
+  tr.appendChild(periodTd);
 
   // Teacher — select from Staff (assigned once per class).
   const teacherTd = document.createElement('td');
@@ -1255,7 +1421,10 @@ function openCreateClassModal_() {
   modal.innerHTML = `
     <div class="admin-modal__header">Create class</div>
     <div class="admin-modal__form">
-      <label>Class name<input data-field="name" type="text" required placeholder="e.g. NHD Period 3"></label>
+      <label>Class name
+        <span class="admin-bulk-hint">Just the course — no teacher, no period. Two teachers can share a name; the system keeps them distinct.</span>
+        <input data-field="name" type="text" required placeholder="e.g. US History"></label>
+      <label>Period (optional)<input data-field="period" type="text" placeholder="e.g. P3, Hour 2, Block A"></label>
       <label>Teacher
         <select data-field="teacherEmail"><option value="">(choose from staff)</option>${teacherOpts}</select>
       </label>
@@ -1275,6 +1444,7 @@ function openCreateClassModal_() {
   primary.addEventListener('click', () => {
     const args = {
       name: nameInput.value.trim(),
+      period: modal.querySelector('input[data-field="period"]').value.trim(),
       teacherEmail: modal.querySelector('select[data-field="teacherEmail"]').value,
       schoolYear: modal.querySelector('input[data-field="schoolYear"]').value.trim(),
     };
@@ -1293,10 +1463,127 @@ function openCreateClassModal_() {
   });
 }
 
+/**
+ * Bulk-create sections: teachers × periods cross-product. Pick 1+ teachers and
+ * list periods; every combo shows in a check-list preview (uncheck combos that
+ * don't exist) before committing via adminBulkCreateClasses.
+ */
+function openBulkCreateSectionsModal_() {
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'admin-modal admin-modal--wide';
+  const teacherRows = (adminClasses.staff || [])
+    .map((s) => `<label class="admin-enroll-chip" style="cursor:pointer">
+        <input type="checkbox" data-teacher="${esc_(s.Email)}" data-teacher-name="${esc_(s.Name || s.Email)}">
+        <span>${esc_((s.Name ? s.Name + ' · ' : '') + s.Email)}</span>
+      </label>`)
+    .join('');
+  modal.innerHTML = `
+    <div class="admin-modal__header">Bulk create sections</div>
+    <div class="admin-modal__form">
+      <label>Class name
+        <span class="admin-bulk-hint">One course name — a class is created for every checked teacher × period combination.</span>
+        <input id="bulk-sec-name" type="text" placeholder="e.g. US History"></label>
+      <label>Periods
+        <span class="admin-bulk-hint">Space- or comma-separated, e.g. <code>P1 P2 P4 P6</code> (also fine: Hour 2, Block A).</span>
+        <input id="bulk-sec-periods" type="text" placeholder="P1 P2 P4 P6"></label>
+      <label>Teachers</label>
+      <div class="admin-class-enrolled" id="bulk-sec-teachers">${teacherRows || '<div class="console-empty">No staff yet — add staff first.</div>'}</div>
+      <label>School year (optional)<input id="bulk-sec-year" type="text" placeholder="2025-26"></label>
+      <label id="bulk-sec-preview-label" style="display:none">Will create</label>
+      <div class="admin-class-enrolled" id="bulk-sec-preview"></div>
+    </div>
+    <div class="admin-modal__actions">
+      <button class="admin-modal__cancel">Cancel</button>
+      <button class="admin-modal__primary" disabled>Create sections</button>
+    </div>`;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  const close = () => overlay.parentNode && overlay.parentNode.removeChild(overlay);
+  modal.querySelector('.admin-modal__cancel').addEventListener('click', close);
+
+  const nameIn = modal.querySelector('#bulk-sec-name');
+  const periodsIn = modal.querySelector('#bulk-sec-periods');
+  const yearIn = modal.querySelector('#bulk-sec-year');
+  const previewHost = modal.querySelector('#bulk-sec-preview');
+  const previewLabel = modal.querySelector('#bulk-sec-preview-label');
+  const primary = modal.querySelector('.admin-modal__primary');
+  const unchecked = {};   // "email|period" → true when the admin excludes a combo
+
+  function combos() {
+    const name = nameIn.value.trim();
+    const periods = periodsIn.value.split(/[,\s]+/).map((p) => p.trim()).filter(Boolean);
+    const teachers = [];
+    modal.querySelectorAll('input[data-teacher]:checked').forEach((cb) => {
+      teachers.push({ email: cb.dataset.teacher, name: cb.dataset.teacherName });
+    });
+    const out = [];
+    teachers.forEach((t) => periods.forEach((p) => {
+      out.push({ name, period: p, teacherEmail: t.email, teacherName: t.name, key: t.email + '|' + p });
+    }));
+    return name ? out : [];
+  }
+
+  function repaint() {
+    const all = combos();
+    previewHost.innerHTML = '';
+    previewLabel.style.display = all.length ? '' : 'none';
+    let selected = 0;
+    all.forEach((c) => {
+      const lbl = document.createElement('label');
+      lbl.className = 'admin-enroll-chip';
+      lbl.style.cursor = 'pointer';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !unchecked[c.key];
+      if (cb.checked) selected++;
+      cb.addEventListener('change', () => {
+        if (cb.checked) delete unchecked[c.key]; else unchecked[c.key] = true;
+        repaint();
+      });
+      const span = document.createElement('span');
+      span.textContent = c.name + ' · ' + c.period + ' — ' + c.teacherName;
+      lbl.appendChild(cb); lbl.appendChild(span);
+      previewHost.appendChild(lbl);
+    });
+    primary.disabled = selected === 0;
+    primary.textContent = selected ? ('Create ' + selected + ' section' + (selected === 1 ? '' : 's')) : 'Create sections';
+  }
+  nameIn.addEventListener('input', repaint);
+  periodsIn.addEventListener('input', repaint);
+  modal.querySelectorAll('input[data-teacher]').forEach((cb) => cb.addEventListener('change', repaint));
+
+  primary.addEventListener('click', () => {
+    const year = yearIn.value.trim();
+    const chosen = combos().filter((c) => !unchecked[c.key])
+      .map((c) => ({ name: c.name, period: c.period, teacherEmail: c.teacherEmail, schoolYear: year }));
+    if (!chosen.length) return;
+    primary.disabled = true; primary.textContent = '…';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        close();
+        adminClasses.classes = null;
+        applyHash_();
+        const parts = [(resp.created || []).length + ' created'];
+        if (resp.skipped && resp.skipped.length) {
+          parts.push(resp.skipped.length + ' skipped (' +
+            resp.skipped.map((s) => s.label).join(', ') + ')');
+        }
+        setStatus('Sections: ' + parts.join(', '), (resp.created || []).length ? 'good' : 'bad', 8000);
+      })
+      .withFailureHandler((e) => {
+        primary.disabled = false; repaint();
+        setStatus(String(e && e.message || e), 'bad', 4000);
+      })
+      .adminBulkCreateClasses(chosen);
+  });
+}
+
 function openDeleteClassModal_(c, host) {
   typedConfirmModal_({
     title: 'Delete class?',
-    bodyHtml: `<p>Delete <strong>${esc_(c.Class)}</strong> and remove its ${c.studentCount} enrollment(s)?</p>
+    bodyHtml: `<p>Delete <strong>${esc_(c.label || c.Class)}</strong>${c.teacherName ? ' (' + esc_(c.teacherName) + ')' : ''} and remove its ${c.studentCount} enrollment(s)?</p>
                <p>Per-student work Sheets are preserved. Projects that list this class by name keep it until you edit them.</p>`,
     phrase: 'DELETE',
     dangerLabel: 'Delete class',
@@ -1315,7 +1602,7 @@ function openManageClassStudentsModal_(c, host) {
   const modal = document.createElement('div');
   modal.className = 'admin-modal admin-modal--wide';
   modal.innerHTML = `
-    <div class="admin-modal__header">Students in ${esc_(c.Class)}</div>
+    <div class="admin-modal__header">Students in ${esc_(c.label || c.Class)}${c.teacherName ? ' — ' + esc_(c.teacherName) : ''}</div>
     <div class="admin-modal__form">
       <div class="admin-class-enrolled" id="class-enrolled"><div class="skel-lines" style="width:100%"><div class="db-skel-bar db-skel-bar--wide"></div><div class="db-skel-bar"></div><div class="db-skel-bar db-skel-bar--narrow"></div></div></div>
       <label>Add a student

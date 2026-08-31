@@ -325,7 +325,7 @@ function buildProjectCard_(p) {
   const parts = [
     p.schoolYear,
     p.bundleName,
-    p.memberClasses.join(', '),
+    classLabelJoin_(p.memberClasses),
     p.studentCount + ' student' + (p.studentCount === 1 ? '' : 's'),
   ].filter(Boolean);
   meta.textContent = parts.join(' · ');
@@ -424,6 +424,40 @@ function openCreateProjectModal_() {
     })
     .withFailureHandler(onFail_('loading bundles'))
     .listBundlesForConsole();
+}
+
+/**
+ * Class display helpers. Class KEYS are composed strings ("US History P3 —
+ * Ivers") kept stable as the join value; ctx.classLabels maps each key to its
+ * clean "Name · Period" label + teacher last name. classLabelsFor_ appends the
+ * teacher only when two keys in the SAME visible list share a label (or when
+ * forceTeacher, for admin/cross-teacher views). Unknown keys label as
+ * themselves, so legacy classes render unchanged.
+ */
+function classLabel_(key) {
+  const m = state.ctx && state.ctx.classLabels;
+  const e = m && m[key];
+  return (e && e.label) || key;
+}
+
+function classLabelsFor_(keys, forceTeacher) {
+  const m = (state.ctx && state.ctx.classLabels) || {};
+  const counts = {};
+  (keys || []).forEach((k) => { const l = classLabel_(k); counts[l] = (counts[l] || 0) + 1; });
+  const out = {};
+  (keys || []).forEach((k) => {
+    let l = classLabel_(k);
+    const e = m[k];
+    if ((forceTeacher || counts[l] > 1) && e && e.teacherName) l += ' — ' + e.teacherName;
+    out[k] = l;
+  });
+  return out;
+}
+
+/** Joined, disambiguated label list for card metas / dashboard titles. */
+function classLabelJoin_(keys) {
+  const labels = classLabelsFor_(keys);
+  return (keys || []).map((k) => labels[k]).join(', ');
 }
 
 /** Derive distinct classes from currently-loaded project memberClasses lists.
@@ -547,9 +581,12 @@ function renderCreateModal_(fields, bundles, classOptions, palette) {
     if (classOptions.length > 0) {
       const box = document.createElement('div');
       box.className = 'modal__classes';
+      // Admins see cross-teacher lists → always show the teacher; a teacher's
+      // own list only disambiguates if two of their labels collide.
+      const rowLabels = classLabelsFor_(classOptions, isAdmin);
       classOptions.forEach((c) => {
         box.appendChild(makeClassCheckboxRow_({
-          label: c, value: c, checked: fields.memberClasses.indexOf(c) >= 0,
+          label: rowLabels[c], value: c, checked: fields.memberClasses.indexOf(c) >= 0,
           onToggle: (on) => {
             fields.memberClasses = fields.memberClasses.filter((x) => x !== c);
             if (on) fields.memberClasses.push(c);
@@ -1009,10 +1046,11 @@ function openEditClassesModal_(p) {
       updateSaveBtn();
       return;
     }
+    const rowLabels = classLabelsFor_(sorted, isAdmin);
     sorted.forEach((cls) => {
       const lockedForTeacher = !isAdmin && teacherClasses.indexOf(cls) < 0;
       box.appendChild(makeClassCheckboxRow_({
-        label: cls, value: cls, checked: !!selected[cls], locked: lockedForTeacher,
+        label: rowLabels[cls], value: cls, checked: !!selected[cls], locked: lockedForTeacher,
         onToggle: (on) => { if (on) selected[cls] = true; else delete selected[cls]; updateSaveBtn(); },
       }));
     });
@@ -1310,7 +1348,7 @@ function paintDashboard_() {
   const proj = dashboard.data.project;
   const title = document.getElementById('db-title');
   if (title) {
-    const classes = proj.scopedClasses.join(', ') || '(no classes)';
+    const classes = classLabelJoin_(proj.scopedClasses) || '(no classes)';
     const totalStudents = dashboard.data.students.length;
     const groupCount = (dashboard.data.groups || []).length;
     let label = proj.name + ' · ' + classes + ' · ' + totalStudents + ' student' + (totalStudents === 1 ? '' : 's');
@@ -1337,7 +1375,8 @@ function paintDashboard_() {
         return b;
       };
       tabsHost.appendChild(mkTab('All classes', null));
-      avail.forEach((c) => tabsHost.appendChild(mkTab(c, c)));
+      const tabLabels = classLabelsFor_(avail);
+      avail.forEach((c) => tabsHost.appendChild(mkTab(tabLabels[c], c)));
     }
   }
 

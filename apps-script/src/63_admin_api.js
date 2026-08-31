@@ -740,6 +740,9 @@ function adminListClasses() {
     ok: true,
     classes: listClasses_().map((c) => ({
       Class: c.Class,
+      Name: c.Name,
+      Period: c.Period,
+      label: classDisplayLabel_(c),
       TeacherEmail: c.TeacherEmail,
       teacherName: staffByEmail[c.TeacherEmail] || '',
       SchoolYear: c.SchoolYear,
@@ -749,17 +752,27 @@ function adminListClasses() {
   };
 }
 
-/** Create a class with a teacher chosen from Staff. */
+/**
+ * Create a class from display fields {name, period?, teacherEmail?, schoolYear?}.
+ * The stored Class key is system-composed (name + period + teacher last name) —
+ * the admin never types a teacher into the class name.
+ */
 function adminCreateClass(args) {
   const actorEmail = getActorEmail_();
   assertAdmin_(actorEmail);
   if (!args || !String(args.name || '').trim()) throw new Error('Class name required');
   const teacherEmail = String(args.teacherEmail || '').trim().toLowerCase();
   if (teacherEmail && !getStaffEntry_(teacherEmail)) throw new Error('Teacher is not on Staff: ' + teacherEmail);
-  return { ok: true, class: createClass_(args.name, teacherEmail, args.schoolYear || '') };
+  return {
+    ok: true,
+    class: createClassV2_({
+      name: args.name, period: args.period || '',
+      teacherEmail, schoolYear: args.schoolYear || '',
+    }),
+  };
 }
 
-/** Update a class's teacher / school year / status. */
+/** Update a class's teacher / school year / status / display Name / Period. */
 function adminUpdateClass(name, fields) {
   const actorEmail = getActorEmail_();
   assertAdmin_(actorEmail);
@@ -770,6 +783,76 @@ function adminUpdateClass(name, fields) {
     if (te && !getStaffEntry_(te)) throw new Error('Teacher is not on Staff: ' + te);
   }
   return { ok: true, class: updateClass_(name, fields) };
+}
+
+/**
+ * Bulk-add staff from a pasted list. rows: [{Email, First, Last}]. All created
+ * as role=teacher (admins are promoted one-at-a-time in the Staff screen).
+ * Existing emails are skipped, not errors. Returns
+ *   { ok, added, skipped, errors:[{rowIndex,error}] }.
+ */
+function adminBulkAddStaff(rows) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!Array.isArray(rows)) throw new Error('rows must be an array');
+  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+  const tab = getTab_(ss, TABS.STAFF);
+  const have = new Set(readAllAsObjects_(tab, HEADERS.STAFF)
+    .map((r) => String(r.Email || '').toLowerCase()).filter(Boolean));
+  const errors = [];
+  const toAdd = [];
+  rows.forEach((r, i) => {
+    const email = String((r && r.Email) || '').trim().toLowerCase();
+    const first = String((r && r.First) || '').trim();
+    const last = String((r && r.Last) || '').trim();
+    if (!email || email.indexOf('@') < 1 || email.indexOf('.') < 0) {
+      errors.push({ rowIndex: i + 1, error: 'missing/invalid email' });
+      return;
+    }
+    if (have.has(email)) return;   // counted as skipped below
+    const name = [first, last].filter(Boolean).join(' ').trim();
+    if (!name) { errors.push({ rowIndex: i + 1, error: 'name required: ' + email }); return; }
+    have.add(email);
+    toAdd.push({ Name: name, Email: email, Role: ROLES.TEACHER });
+  });
+  if (toAdd.length) {
+    const values = toAdd.map((rec) => HEADERS.STAFF.map((h) => rec[h]));
+    tab.getRange(tab.getLastRow() + 1, 1, values.length, HEADERS.STAFF.length).setValues(values);
+  }
+  const skipped = rows.length - toAdd.length - errors.length;
+  return { ok: true, added: toAdd.length, skipped, errors };
+}
+
+/**
+ * Bulk-create classes from the sections form's teachers × periods combos.
+ * combos: [{name, period, teacherEmail, schoolYear}]. Each combo is created
+ * independently; a duplicate (Name, Period, Teacher) is reported, not fatal.
+ * Returns { ok, created:[label…], skipped:[{label, error}] }.
+ */
+function adminBulkCreateClasses(combos) {
+  const actorEmail = getActorEmail_();
+  assertAdmin_(actorEmail);
+  if (!Array.isArray(combos) || combos.length === 0) throw new Error('combos required');
+  const created = [];
+  const skipped = [];
+  combos.forEach((c) => {
+    const label = [String((c && c.name) || '').trim(), String((c && c.period) || '').trim()]
+      .filter(Boolean).join(' · ');
+    try {
+      const teacherEmail = String((c && c.teacherEmail) || '').trim().toLowerCase();
+      if (!teacherEmail || !getStaffEntry_(teacherEmail)) {
+        throw new Error('Teacher is not on Staff: ' + (teacherEmail || '(blank)'));
+      }
+      const rec = createClassV2_({
+        name: c.name, period: c.period || '',
+        teacherEmail, schoolYear: c.schoolYear || '',
+      });
+      created.push(rec.Class);
+    } catch (e) {
+      skipped.push({ label, error: String(e && e.message || e) });
+    }
+  });
+  return { ok: true, created, skipped };
 }
 
 /** Delete a class + its enrollments. Per-student Sheets are preserved. */

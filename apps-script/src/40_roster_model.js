@@ -206,14 +206,21 @@ function getStudentRosterEntry_(email) {
   };
 }
 
-/** All class records (metadata). */
+/** All class records (metadata). Name falls back to the Class key for legacy rows. */
 function listClasses_() {
   return rosterData_().classes.map((c) => ({
     Class: String(c.Class || '').trim(),
     TeacherEmail: String(c.TeacherEmail || '').toLowerCase(),
     SchoolYear: String(c.SchoolYear || ''),
     Status: String(c.Status || CLASS_STATUS.ACTIVE),
+    Name: String(c.Name || '').trim() || String(c.Class || '').trim(),
+    Period: String(c.Period || '').trim(),
   }));
+}
+
+/** Display label for a class record: "Name · Period" (Period omitted when blank). */
+function classDisplayLabel_(rec) {
+  return rec.Period ? rec.Name + ' · ' + rec.Period : rec.Name;
 }
 
 /** One class record by name, or null. */
@@ -280,27 +287,131 @@ function deleteRowsWhere_(tab, headers, predicate) {
   return toDelete.length;
 }
 
+/**
+ * Legacy create: the given name IS the key (Name = name, Period = ''). Kept for
+ * dev fixtures / sample data / the flat-roster import, where the string is
+ * already unique. New admin-facing creates go through createClassV2_.
+ */
 function createClass_(name, teacherEmail, schoolYear) {
   const cls = String(name || '').trim();
   if (!cls) throw new Error('Class name required');
-  ensureClassSchema_();
-  const tab = getTab_(rosterWorkbook_(), TABS.CLASSES);
-  const existing = readAllAsObjects_(tab, HEADERS.CLASSES);
-  if (existing.some((c) => String(c.Class).trim().toLowerCase() === cls.toLowerCase())) {
-    throw new Error('Class already exists: ' + cls);
-  }
-  const rec = {
+  return appendClassRow_({
     Class: cls,
     TeacherEmail: String(teacherEmail || '').trim().toLowerCase(),
     SchoolYear: String(schoolYear || ''),
     Status: CLASS_STATUS.ACTIVE,
-  };
+    Name: cls,
+    Period: '',
+  });
+}
+
+/**
+ * PURE: compose the immutable Class key from display parts.
+ *   composeClassKeyParts_('US History', 'P3', 'Ivers') → 'US History P3 — Ivers'
+ * Period and teacherLastName are each optional.
+ */
+function composeClassKeyParts_(name, period, teacherLastName) {
+  let key = String(name || '').trim();
+  const p = String(period || '').trim();
+  const t = String(teacherLastName || '').trim();
+  if (p) key += ' ' + p;
+  if (t) key += ' — ' + t;
+  return key;
+}
+
+/**
+ * PURE: split a legacy class string into {name, period} by peeling a trailing
+ * period-ish token (P3 / Period 3 / Per 3 / Hour 3 / Block A). Unparseable →
+ * the whole string as name, blank period. Used by migrateClassNamePeriod.
+ */
+function parseClassNamePeriod_(cls) {
+  const s = String(cls || '').trim();
+  const m = s.match(/^(.*?)[\s\-–—·,]*((?:P|Per|Period)\.?\s*\d+|Hour\s*\d+|Block\s*[A-Za-z0-9])\s*$/i);
+  if (m && m[1].trim()) {
+    return { name: m[1].trim().replace(/[\-–—·,]+$/, '').trim(), period: normalizePeriodToken_(m[2]) };
+  }
+  return { name: s, period: '' };
+}
+
+/** PURE: 'Period 3' / 'per3' / 'p 3' → 'P3'; 'Hour 3' / 'Block A' pass through tidied. */
+function normalizePeriodToken_(tok) {
+  const s = String(tok || '').trim().replace(/\s+/g, ' ');
+  const p = s.match(/^(?:P|Per|Period)\.?\s*(\d+)$/i);
+  if (p) return 'P' + p[1];
+  const h = s.match(/^Hour\s*(\d+)$/i);
+  if (h) return 'Hour ' + h[1];
+  const b = s.match(/^Block\s*([A-Za-z0-9])$/i);
+  if (b) return 'Block ' + b[1].toUpperCase();
+  return s;
+}
+
+/** Last whitespace token of the teacher's Staff display name, or '' if unknown. */
+function teacherLastNameFor_(email) {
+  const em = String(email || '').trim().toLowerCase();
+  if (!em) return '';
+  const staff = readAllAsObjects_(getTab_(rosterWorkbook_(), TABS.STAFF), HEADERS.STAFF)
+    .find((s) => String(s.Email || '').toLowerCase() === em);
+  if (!staff) return '';
+  const parts = String(staff.Name || '').trim().split(/\s+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : '';
+}
+
+/**
+ * v2 create: display fields in, system-composed immutable key out.
+ * Uniqueness is (Name, Period, TeacherEmail), case-insensitive. If the composed
+ * key still collides with an existing row (two teachers sharing a last name),
+ * the email local part is appended to keep the key unique.
+ */
+function createClassV2_(args) {
+  const name = String((args && args.name) || '').trim();
+  if (!name) throw new Error('Class name required');
+  const period = normalizePeriodToken_((args && args.period) || '');
+  const teacherEmail = String((args && args.teacherEmail) || '').trim().toLowerCase();
+  ensureClassSchema_();
+
+  const dupe = listClasses_().find((c) =>
+    c.Name.toLowerCase() === name.toLowerCase() &&
+    c.Period.toLowerCase() === period.toLowerCase() &&
+    c.TeacherEmail === teacherEmail);
+  if (dupe) {
+    throw new Error('That class already exists: ' + classDisplayLabel_(dupe) +
+      (teacherEmail ? ' (' + teacherEmail + ')' : ''));
+  }
+
+  let key = composeClassKeyParts_(name, period, teacherLastNameFor_(teacherEmail));
+  if (getClassRecord_(key)) {
+    key = composeClassKeyParts_(name, period, teacherLastNameFor_(teacherEmail)) +
+      ' (' + (teacherEmail.split('@')[0] || 'x') + ')';
+    if (getClassRecord_(key)) throw new Error('Class key collision: ' + key);
+  }
+
+  return appendClassRow_({
+    Class: key,
+    TeacherEmail: teacherEmail,
+    SchoolYear: String((args && args.schoolYear) || ''),
+    Status: CLASS_STATUS.ACTIVE,
+    Name: name,
+    Period: period,
+  });
+}
+
+function appendClassRow_(rec) {
+  ensureClassSchema_();
+  const tab = getTab_(rosterWorkbook_(), TABS.CLASSES);
+  const existing = readAllAsObjects_(tab, HEADERS.CLASSES);
+  if (existing.some((c) => String(c.Class).trim().toLowerCase() === rec.Class.toLowerCase())) {
+    throw new Error('Class already exists: ' + rec.Class);
+  }
   appendRow_(tab, HEADERS.CLASSES, rec);
   invalidateRosterMemo_();
   return rec;
 }
 
-/** Update a class's TeacherEmail / SchoolYear / Status (Class name is the key). */
+/**
+ * Update a class's TeacherEmail / SchoolYear / Status / Name / Period. The
+ * Class KEY never changes (it's the join value everywhere) — Name/Period are
+ * display-only, so renames are safe.
+ */
 function updateClass_(name, fields) {
   ensureClassSchema_();
   const tab = getTab_(rosterWorkbook_(), TABS.CLASSES);
@@ -310,9 +421,39 @@ function updateClass_(name, fields) {
   if ('TeacherEmail' in fields) cur.TeacherEmail = String(fields.TeacherEmail || '').trim().toLowerCase();
   if ('SchoolYear' in fields) cur.SchoolYear = String(fields.SchoolYear || '');
   if ('Status' in fields) cur.Status = String(fields.Status || CLASS_STATUS.ACTIVE);
+  if ('Name' in fields) {
+    const nn = String(fields.Name || '').trim();
+    if (!nn) throw new Error('Class name cannot be blank');
+    cur.Name = nn;
+  }
+  if ('Period' in fields) cur.Period = normalizePeriodToken_(fields.Period || '');
   tab.getRange(idx, 1, 1, HEADERS.CLASSES.length).setValues([HEADERS.CLASSES.map((h) => cur[h])]);
   invalidateRosterMemo_();
   return cur;
+}
+
+/**
+ * One-time, idempotent, editor-callable: backfill Name/Period on legacy class
+ * rows by parsing a trailing period token out of the Class key. Rows that
+ * already have a Name are left alone. Safe to re-run.
+ */
+function migrateClassNamePeriod() {
+  ensureClassSchema_();
+  const tab = getTab_(rosterWorkbook_(), TABS.CLASSES);
+  const nameCol = HEADERS.CLASSES.indexOf('Name') + 1;
+  const periodCol = HEADERS.CLASSES.indexOf('Period') + 1;
+  const rows = readAllAsObjects_(tab, HEADERS.CLASSES);
+  let healed = 0;
+  rows.forEach((r, i) => {
+    if (String(r.Name || '').trim()) return;
+    const parsed = parseClassNamePeriod_(r.Class);
+    tab.getRange(i + 2, nameCol).setValue(parsed.name);
+    if (parsed.period) tab.getRange(i + 2, periodCol).setValue(parsed.period);
+    healed++;
+  });
+  invalidateRosterMemo_();
+  Logger.log('migrateClassNamePeriod: backfilled ' + healed + ' of ' + rows.length + ' rows');
+  return { ok: true, healed, total: rows.length };
 }
 
 /** Remove a class + all its enrollments. (Projects referencing it by name are left intact.) */

@@ -2473,3 +2473,42 @@ function devTestGroupMembershipCache() {
   console.log(JSON.stringify({ ok: pass, checks }, null, 2));
   return { ok: pass };
 }
+
+/**
+ * Pure tests for the class naming/key layer (Classes: Name + Period + composed
+ * key). Locks: composeClassKeyParts_ shapes, normalizePeriodToken_ variants,
+ * and parseClassNamePeriod_'s migration parsing (period peeled from a legacy
+ * key; unparseable names pass through whole). No Sheets access.
+ */
+function devTestClassNaming() {
+  const checks = [];
+  const check = (label, got, want) => {
+    checks.push({ label, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
+  };
+
+  check('compose full', composeClassKeyParts_('US History', 'P3', 'Ivers'), 'US History P3 — Ivers');
+  check('compose no period', composeClassKeyParts_('Advisory', '', 'Ivers'), 'Advisory — Ivers');
+  check('compose no teacher', composeClassKeyParts_('US History', 'P3', ''), 'US History P3');
+  check('compose bare', composeClassKeyParts_('  DEV  ', '', ''), 'DEV');
+
+  check('period P3', normalizePeriodToken_('p3'), 'P3');
+  check('period "Period 3"', normalizePeriodToken_('Period 3'), 'P3');
+  check('period "per. 3"', normalizePeriodToken_('per. 3'), 'P3');
+  check('period Hour', normalizePeriodToken_('hour 2'), 'Hour 2');
+  check('period Block', normalizePeriodToken_('block a'), 'Block A');
+  check('period odd passes through', normalizePeriodToken_('AM Session'), 'AM Session');
+  check('period blank', normalizePeriodToken_(''), '');
+
+  check('parse trailing P3', parseClassNamePeriod_('US History P3'), { name: 'US History', period: 'P3' });
+  check('parse "Period 3"', parseClassNamePeriod_('NHD Period 3'), { name: 'NHD', period: 'P3' });
+  check('parse dash sep', parseClassNamePeriod_('Capstone - Hour 2'), { name: 'Capstone', period: 'Hour 2' });
+  check('parse Block', parseClassNamePeriod_('Science Block B'), { name: 'Science', period: 'Block B' });
+  check('parse no period', parseClassNamePeriod_('DEV'), { name: 'DEV', period: '' });
+  check('parse period-only string stays whole', parseClassNamePeriod_('P3'), { name: 'P3', period: '' });
+
+  const pass = checks.every((c) => c.ok);
+  checks.filter((c) => !c.ok).forEach((c) =>
+    Logger.log('FAIL ' + c.label + ': got ' + JSON.stringify(c.got) + ' want ' + JSON.stringify(c.want)));
+  Logger.log(pass ? 'devTestClassNaming ALL GREEN (' + checks.length + ')' : 'devTestClassNaming NOT GREEN');
+  return { ok: pass, checks };
+}
