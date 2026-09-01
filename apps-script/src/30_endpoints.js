@@ -135,6 +135,32 @@ function handleGet_(e) {
       case 'bundles':
         return { ok: true, bundles: listBundles_() };
 
+      case 'bootstrap': {
+        // One round-trip for everything the extension needs at startup — the
+        // former me + projects + bundles trio cost three cold GAS executions.
+        // Shapes are identical to the individual actions so the extension can
+        // fall back to them against an older deployment.
+        const roster = getStudentRosterEntry_(actorEmail);
+        const staff = getStaffEntry_(actorEmail);
+        return {
+          ok: true,
+          actor: actorEmail,
+          me: { ok: true, actor: actorEmail, roster, staff },
+          projects: listActiveProjectsForStudent_(actorEmail)
+            .map((p) => Object.assign({}, p, { requirements: parseProjectRequirements_(p) })),
+          bundles: listBundles_(),
+          activeProjectId: getActiveProjectForActor_(actorEmail),
+        };
+      }
+
+      case 'myProjectData': {
+        // Sources + highlights in ONE Sheet resolution/open (the in-page sidebar
+        // used to issue mySources + myHighlights as two separate requests).
+        if (!params.projectId) throw new Error('projectId required');
+        const data = readStudentDataForActor_(actorEmail, params.projectId);
+        return { ok: true, projectId: params.projectId, sources: data.sources, highlights: data.highlights, asOf: nowIso_() };
+      }
+
       case 'mySources': {
         if (!params.projectId) throw new Error('projectId required');
         return { ok: true, sources: readSourcesForActor_(actorEmail, params.projectId) };

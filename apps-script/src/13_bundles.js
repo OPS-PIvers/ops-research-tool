@@ -1,8 +1,14 @@
 /** Category bundles. Immutable rows — once created, never edited. */
 
+var BUNDLES_CACHE_TTL_SEC = 600;
+
+// Cached (05_cache.js). Bundles are immutable once created, so the only
+// invalidation is createBundle_ below.
 function listBundles_() {
-  const ss = SpreadsheetApp.openById(CONFIG.BUNDLES_SHEET_ID);
-  return readAllAsObjects_(getTab_(ss, TABS.BUNDLES), HEADERS.BUNDLES);
+  return cachedJson_('bundles', BUNDLES_CACHE_TTL_SEC, () => {
+    const ss = SpreadsheetApp.openById(CONFIG.BUNDLES_SHEET_ID);
+    return readAllAsObjects_(getTab_(ss, TABS.BUNDLES), HEADERS.BUNDLES);
+  });
 }
 
 function getBundle_(bundleId) {
@@ -34,6 +40,7 @@ function createBundle_({ name, style, labels, colors, createdBy }) {
   };
   const ss = SpreadsheetApp.openById(CONFIG.BUNDLES_SHEET_ID);
   appendRow_(getTab_(ss, TABS.BUNDLES), HEADERS.BUNDLES, bundle);
+  invalidateBundlesCache_();
   return bundle;
 }
 

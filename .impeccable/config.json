@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "roboto",
+        "createdAt": "2026-09-01T20:55:26.023Z",
+        "reason": "OPS brand guidelines mandate Lexend titles + Roboto body (CLAUDE.md §4, ops-brand-guidelines skill)"
+      }
+    ]
+  }
+}

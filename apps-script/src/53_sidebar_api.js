@@ -91,8 +91,9 @@ function sidebarGetProjectData(projectId) {
     if (!project) throw new Error('Unknown project ' + projectId);
     // Collapse duplicate source rows for the same page (same URL + author) so the
     // dropdown / evidence list show one source per page (see dedupeSourcesByUrl_).
-    const rawSources = readSourcesForActor_(actorEmail, projectId);
-    const rawHighlights = readHighlightsForActor_(actorEmail, projectId);
+    const studentData = readStudentDataForActor_(actorEmail, projectId);   // one Sheet open
+    const rawSources = studentData.sources;
+    const rawHighlights = studentData.highlights;
     const deduped = dedupeSourcesByUrl_(rawSources, rawHighlights);
     // If duplicates existed, physically remove them so they stop bloating every
     // read. Best-effort + lock-guarded; the data returned below is already

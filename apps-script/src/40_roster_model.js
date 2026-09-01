@@ -139,20 +139,31 @@ function ensureClassSchema_() {
 // =====================================================================
 
 let _rosterMemo = null;
+var ROSTER_CACHE_TTL_SEC = 120;
 
+// Two layers: the per-execution memo (reset by every write in this file) and
+// the cross-request CacheService entry (05_cache.js) so the roster workbook
+// isn't opened on every extension/console request. On a cache hit
+// ensureClassSchema_ is skipped entirely — it only matters on the live read,
+// which still runs at least once per TTL.
 function rosterData_() {
   if (_rosterMemo) return _rosterMemo;
-  ensureClassSchema_();
-  const ss = rosterWorkbook_();
-  _rosterMemo = {
-    students: readAllAsObjects_(getTab_(ss, TABS.STUDENTS), HEADERS.STUDENTS),
-    classes: readAllAsObjects_(getTab_(ss, TABS.CLASSES), HEADERS.CLASSES),
-    enrollments: readAllAsObjects_(getTab_(ss, TABS.ENROLLMENTS), HEADERS.ENROLLMENTS),
-  };
+  _rosterMemo = cachedJson_('roster', ROSTER_CACHE_TTL_SEC, () => {
+    ensureClassSchema_();
+    const ss = rosterWorkbook_();
+    return {
+      students: readAllAsObjects_(getTab_(ss, TABS.STUDENTS), HEADERS.STUDENTS),
+      classes: readAllAsObjects_(getTab_(ss, TABS.CLASSES), HEADERS.CLASSES),
+      enrollments: readAllAsObjects_(getTab_(ss, TABS.ENROLLMENTS), HEADERS.ENROLLMENTS),
+    };
+  });
   return _rosterMemo;
 }
 
-function invalidateRosterMemo_() { _rosterMemo = null; }
+function invalidateRosterMemo_() {
+  _rosterMemo = null;
+  invalidateRosterCache_();
+}
 
 // =====================================================================
 // Query helpers.

@@ -69,6 +69,7 @@ function devSeedDevProject() {
   const staffTab = getTab_(rosterSs, TABS.STAFF);
   if (findRowByKey_(staffTab, HEADERS.STAFF, 'Email', me) < 0) {
     appendRow_(staffTab, HEADERS.STAFF, { Name: 'Dev Owner', Email: me, Role: ROLES.ADMIN });
+    invalidateStaffCache_();
   }
   // Create a dev project if missing.
   const existing = listProjects_().find((p) => p.name === 'Dev Project');
@@ -1309,7 +1310,7 @@ function devTestGroupRoutingProvisioning() {
   const emails = devGroupsSeedRoster_(3);
   const { check, state } = devGroupsChecker_();
   try {
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     const merge = consoleGroupCreate(project.projectId, 'RoutingProbe', emails);
     check('merge ok', merge && merge.ok === true);
     check('groupId present', !!merge.groupId);
@@ -1321,7 +1322,7 @@ function devTestGroupRoutingProvisioning() {
     check('no solo Sheets remain at class root',
       emails.every((e) => findChildFile_(classFolder, e) === null));
 
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     emails.forEach((e) => {
       const ss = findOrCreateStudentSheet_(e, project);
       check('routes ' + e + ' to group Sheet', ss && ss.getId() === merge.groupSheetId);
@@ -1334,7 +1335,7 @@ function devTestGroupRoutingProvisioning() {
   } finally {
     // Cleanup: disband, then trash any leftovers.
     try {
-      resetGroupSheetCache_();
+      resetGroupSheetCache_(); bumpSheetRefVersion_();
       const groups = listGroupsForProject_(project, 'DEV');
       groups.forEach((g) => {
         try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {}
@@ -1355,7 +1356,7 @@ function devTestGroupMergeMigrationFidelity() {
   const emails = devGroupsSeedRoster_(3);
   const { check, state } = devGroupsChecker_();
   try {
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     const bundle = listBundles_().find((b) => b.bundleId === project.bundleId);
 
     // Seed: provision each student's solo Sheet and add 2 sources + 4 highlights.
@@ -1384,7 +1385,7 @@ function devTestGroupMergeMigrationFidelity() {
     });
 
     // Merge.
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     const merge = consoleGroupCreate(project.projectId, 'MigrationProbe', emails);
     check('merge ok', merge && merge.ok === true);
     check('sourcesCopied = 6',    merge.sourcesCopied === 6);
@@ -1404,7 +1405,7 @@ function devTestGroupMergeMigrationFidelity() {
     check('solo Sheets trashed post-merge', emails.every((e) => findChildFile_(classFolder, e) === null));
   } finally {
     try {
-      resetGroupSheetCache_();
+      resetGroupSheetCache_(); bumpSheetRefVersion_();
       const groups = listGroupsForProject_(project, 'DEV');
       groups.forEach((g) => { try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {} });
     } catch (e) {}
@@ -1445,7 +1446,7 @@ function devTestGroupDisbandRoundTrip() {
       });
     });
 
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     const merge = consoleGroupCreate(project.projectId, 'DisbandProbe', emails);
     const disband = consoleGroupDisband(project.projectId, merge.groupId);
     check('disband ok', disband && disband.ok === true);
@@ -1472,7 +1473,7 @@ function devTestGroupDisbandRoundTrip() {
     });
 
     // Routing: a write should now go back to the solo Sheet.
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     const ss = findOrCreateStudentSheet_(emails[0], project);
     check('write routes back to solo', ss.getId() !== merge.groupSheetId);
   } finally {
@@ -1492,7 +1493,7 @@ function devTestGroupMoveSemantics() {
   const emails = devGroupsSeedRoster_(4);   // A=0, B=1, C=2, D=3
   const { check, state } = devGroupsChecker_();
   try {
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     const g1 = consoleGroupCreate(project.projectId, 'MoveG1', [emails[0], emails[1]]);
     const g2 = consoleGroupCreate(project.projectId, 'MoveG2', [emails[2], emails[3]]);
 
@@ -1519,7 +1520,7 @@ function devTestGroupMoveSemantics() {
     check('move ok', move && move.ok === true);
 
     // G1 now has 3 current members incl D; D's highlight followed into G1.
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     const g1Members = currentMembers_(SpreadsheetApp.openById(g1.groupSheetId));
     check('G1 has 3 current', g1Members.length === 3);
     check('D is a current member of G1', g1Members.some((m) => String(m.email).toLowerCase() === emails[3]));
@@ -1536,11 +1537,11 @@ function devTestGroupMoveSemantics() {
       const cHls = readAllAsObjects_(getTab_(SpreadsheetApp.openById(cFile.getId()), TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
       check('C solo has their own highlight', cHls.some((h) => String(h.createdByEmail).toLowerCase() === emails[2]));
     }
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     check('C no longer grouped', findGroupSheetForStudent_(emails[2], project) === null);
   } finally {
     try {
-      resetGroupSheetCache_();
+      resetGroupSheetCache_(); bumpSheetRefVersion_();
       const groups = listGroupsForProject_(project, 'DEV');
       groups.forEach((g) => { try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {} });
     } catch (e) {}
@@ -1576,14 +1577,14 @@ function devTestGroupAddToGroup() {
       primaryCategory: bundle.label1, highlightedText: 'hl C', createdByEmail: emails[2],
     });
 
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     const g = consoleGroupCreate(project.projectId, 'AddProbe', [emails[0], emails[1]]);
     const added = consoleAddToGroup(project.projectId, g.groupId, emails[2]);
     check('add ok', added && added.ok === true);
     check('C source copied in', added.copiedSources === 1);
     check('C highlight copied in', added.copiedHighlights === 1);
 
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     const grpSs = SpreadsheetApp.openById(g.groupSheetId);
     check('group now has 3 members', currentMembers_(grpSs).length === 3);
     const grpHls = readAllAsObjects_(getTab_(grpSs, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
@@ -1599,7 +1600,7 @@ function devTestGroupAddToGroup() {
     check('C solo Sheet trashed', findChildFile_(classFolder, emails[2]) === null);
   } finally {
     try {
-      resetGroupSheetCache_();
+      resetGroupSheetCache_(); bumpSheetRefVersion_();
       const groups = listGroupsForProject_(project, 'DEV');
       groups.forEach((g) => { try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {} });
     } catch (e) {}
@@ -1667,7 +1668,7 @@ function devTestGroupAuthorizationGate() {
     dev2.forEach((e) => { if (getStudentIdentity_(e)) { try { deleteStudent_(e); } catch (err) {} } });
     try { deleteClass_('DEV2'); } catch (e) {}
     try {
-      resetGroupSheetCache_();
+      resetGroupSheetCache_(); bumpSheetRefVersion_();
       const groups = listGroupsForProject_(project, 'DEV');
       groups.forEach((gr) => { try { consoleGroupDisband(project.projectId, gr.groupId); } catch (e) {} });
     } catch (e) {}
@@ -2208,7 +2209,7 @@ function devTestDashboardParityParallelVsSerial() {
   const { check, state } = devGroupsChecker_();
   try {
     const bundle = listBundles_().find((b) => b.bundleId === project.bundleId);
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
 
     // Seed varied data: differing source counts, classifications, annotations,
     // and category mixes so the aggregates are non-trivial.
@@ -2240,16 +2241,16 @@ function devTestDashboardParityParallelVsSerial() {
     });
 
     // Merge two of three; leave one solo.
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     const merge = consoleGroupCreate(project.projectId, 'ParityProbe', [emails[0], emails[1]]);
     check('merge ok', merge && merge.ok === true);
 
     SpreadsheetApp.flush();   // ensure the Sheets REST read sees all the writes
 
     const scoped = ['DEV'];
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     const serial = computeDashboardSerial_(project, scoped, bundle);
-    resetGroupSheetCache_();
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
     const parallel = computeDashboardParallel_(project, scoped, bundle);
 
     const norm = (r) => ({
@@ -2269,7 +2270,7 @@ function devTestDashboardParityParallelVsSerial() {
     check('1 group aggregated', serial.groups.length === 1);
   } finally {
     try {
-      resetGroupSheetCache_();
+      resetGroupSheetCache_(); bumpSheetRefVersion_();
       const groups = listGroupsForProject_(project, 'DEV');
       groups.forEach((g) => { try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {} });
     } catch (e) {}
@@ -2450,7 +2451,7 @@ function devTestGroupMembershipCache() {
   const gen1b = groupCacheGen_();
   check('gen stable across reads', gen1 === gen1b, gen1 + ' vs ' + gen1b);
 
-  resetGroupSheetCache_();
+  resetGroupSheetCache_(); bumpSheetRefVersion_();
   const gen2 = groupCacheGen_();
   check('reset mints a new gen', gen1 !== gen2, gen1 + ' vs ' + gen2);
 
@@ -2465,7 +2466,7 @@ function devTestGroupMembershipCache() {
   const emptyBack = cache.get(emptyKey);
   check('no-groups sentinel {} is a cache HIT (not a miss)', emptyBack !== null && JSON.stringify(JSON.parse(emptyBack)) === '{}');
 
-  resetGroupSheetCache_();
+  resetGroupSheetCache_(); bumpSheetRefVersion_();
   check('old-gen key orphaned after reset', groupCacheGen_() !== gen2);
 
   cache.remove(key); cache.remove(emptyKey);
@@ -2511,4 +2512,126 @@ function devTestClassNaming() {
     Logger.log('FAIL ' + c.label + ': got ' + JSON.stringify(c.got) + ' want ' + JSON.stringify(c.want)));
   Logger.log(pass ? 'devTestClassNaming ALL GREEN (' + checks.length + ')' : 'devTestClassNaming NOT GREEN');
   return { ok: pass, checks };
+}
+
+// ============================================================
+// Read-cache layer (05_cache.js) + combined endpoints
+// ============================================================
+
+/**
+ * Locks the CacheService read-through layer: memo + cross-request hit, drop,
+ * chunking of >90KB values, and the sheet-ref version bump that every group
+ * mutation performs (withGroupLock_). Pure against CacheService — no Sheets.
+ * The same cases run headless in apps-script/test/cache.node.test.js.
+ */
+function devTestOpsCache() {
+  let pass = 0, fail = 0;
+  const check = (label, cond) => { if (cond) { pass++; console.log('PASS ' + label); } else { fail++; console.log('FAIL ' + label); } };
+  const key = 'devtest:' + Utilities.getUuid();
+  let computes = 0;
+  const a = cachedJson_(key, 60, () => { computes++; return { n: 1 }; });
+  const b = cachedJson_(key, 60, () => { computes++; return { n: 2 }; });
+  check('memo hit within execution', a.n === 1 && b.n === 1 && computes === 1);
+  delete _opsExecMemo[OPS_CACHE_NS + key];   // simulate a new execution
+  const c = cachedJson_(key, 60, () => { computes++; return { n: 3 }; });
+  check('CacheService hit across executions', c.n === 1 && computes === 1);
+  cacheDrop_(key);
+  const d = cachedJson_(key, 60, () => { computes++; return { n: 4 }; });
+  check('drop forces recompute', d.n === 4 && computes === 2);
+
+  const bigKey = 'devtest:big:' + Utilities.getUuid();
+  const big = []; for (let i = 0; i < 3000; i++) big.push({ i, t: 'x'.repeat(60) });   // ~230KB
+  cachedJson_(bigKey, 60, () => big);
+  delete _opsExecMemo[OPS_CACHE_NS + bigKey];
+  const back = cachedJson_(bigKey, 60, () => []);
+  check('>100KB value chunked + reassembled', Array.isArray(back) && back.length === 3000 && back[2999].i === 2999);
+  cacheDrop_(bigKey);
+
+  putCachedSheetRef_('devproj', 'Someone@Example.org', { id: 'abc', kind: 'solo' });
+  check('sheet ref case-insensitive hit', (getCachedSheetRef_('devproj', 'someone@example.org') || {}).id === 'abc');
+  bumpSheetRefVersion_();
+  check('bump invalidates sheet ref', getCachedSheetRef_('devproj', 'someone@example.org') === null);
+
+  console.log(fail === 0 ? 'devTestOpsCache: ALL GREEN' : 'devTestOpsCache: NOT GREEN (' + fail + ' fail)');
+  return { pass, fail };
+}
+
+/**
+ * The combined GET actions the extension now uses: `bootstrap` (me + projects
+ * + bundles + activeProjectId in one call) and `myProjectData` (sources +
+ * highlights in one Sheet open). Asserts shape parity with the individual
+ * actions so the extension's legacy fallback stays interchangeable. Needs the
+ * Dev Project (devSeedDevProject) for the data half.
+ */
+function devTestCombinedEndpoints() {
+  let pass = 0, fail = 0;
+  const check = (label, cond) => { if (cond) { pass++; console.log('PASS ' + label); } else { fail++; console.log('FAIL ' + label); } };
+
+  const boot = handleGet_({ parameter: { action: 'bootstrap' } });
+  const me = handleGet_({ parameter: { action: 'me' } });
+  const projects = handleGet_({ parameter: { action: 'projects' } });
+  const bundles = handleGet_({ parameter: { action: 'bundles' } });
+  check('bootstrap ok', boot && boot.ok === true);
+  check('bootstrap.me == me', JSON.stringify(boot.me) === JSON.stringify(me));
+  check('bootstrap.projects == projects', JSON.stringify(boot.projects) === JSON.stringify(projects.projects));
+  check('bootstrap.bundles == bundles', JSON.stringify(boot.bundles) === JSON.stringify(bundles.bundles));
+  check('bootstrap carries activeProjectId key', 'activeProjectId' in boot);
+
+  const dev = listProjects_().find((p) => p.name === 'Dev Project');
+  if (!dev) {
+    console.log('SKIP myProjectData parity — run devSeedDevProject first');
+  } else {
+    const combined = handleGet_({ parameter: { action: 'myProjectData', projectId: dev.projectId } });
+    const s = handleGet_({ parameter: { action: 'mySources', projectId: dev.projectId } });
+    const h = handleGet_({ parameter: { action: 'myHighlights', projectId: dev.projectId } });
+    check('myProjectData ok', combined && combined.ok === true);
+    check('myProjectData.sources == mySources', JSON.stringify(combined.sources) === JSON.stringify(s.sources));
+    check('myProjectData.highlights == myHighlights', JSON.stringify(combined.highlights) === JSON.stringify(h.highlights));
+    const unknown = handleGet_({ parameter: { action: 'myProjectData' } });
+    check('myProjectData without projectId → not ok', unknown && unknown.ok === false);
+  }
+
+  const cb = consoleBootstrap('active');
+  const ctx = consoleGetContext();
+  check('consoleBootstrap ctx == consoleGetContext', JSON.stringify(cb.ctx) === JSON.stringify(ctx));
+  if (ctx && ctx.staff) {
+    const mine = consoleGetMyProjects('active');
+    check('consoleBootstrap projects == consoleGetMyProjects', JSON.stringify(cb.projects) === JSON.stringify(mine.projects));
+  }
+
+  console.log(fail === 0 ? 'devTestCombinedEndpoints: ALL GREEN' : 'devTestCombinedEndpoints: NOT GREEN (' + fail + ' fail)');
+  return { pass, fail };
+}
+
+/**
+ * Locks that the cached (student, project) → Sheet resolution returns the
+ * SAME Sheet as the uncached walk, and that a version bump forces the walk
+ * again. Uses the Dev Project + the script owner's dev roster row.
+ */
+function devTestSheetResolutionCache() {
+  let pass = 0, fail = 0;
+  const check = (label, cond) => { if (cond) { pass++; console.log('PASS ' + label); } else { fail++; console.log('FAIL ' + label); } };
+  const dev = listProjects_().find((p) => p.name === 'Dev Project');
+  if (!dev) { console.log('SKIP — run devSeedDevProject first'); return { pass, fail, skipped: true }; }
+  const me = getActorEmail_();
+  bumpSheetRefVersion_();
+  check('cold: no cached ref', getCachedSheetRef_(dev.projectId, me) === null);
+  const first = findOrCreateStudentSheet_(me, dev);
+  const ref = getCachedSheetRef_(dev.projectId, me);
+  check('resolution recorded in cache', !!ref && ref.id === first.getId());
+  const second = getStudentSheetIfExists_(me, dev);
+  check('read path returns the same Sheet', second && second.getId() === first.getId());
+  bumpSheetRefVersion_();
+  check('bump clears the ref', getCachedSheetRef_(dev.projectId, me) === null);
+  const third = getStudentSheetIfExists_(me, dev);
+  check('re-walk after bump lands on the same Sheet', third && third.getId() === first.getId());
+  console.log(fail === 0 ? 'devTestSheetResolutionCache: ALL GREEN' : 'devTestSheetResolutionCache: NOT GREEN (' + fail + ' fail)');
+  return { pass, fail };
+}
+
+/** Runs the three cache/endpoint tests above in one shot. */
+function devTestPerfLayerAll() {
+  const r = [devTestOpsCache(), devTestCombinedEndpoints(), devTestSheetResolutionCache()];
+  const fail = r.reduce((n, x) => n + (x.fail || 0), 0);
+  console.log(fail === 0 ? 'devTestPerfLayerAll: ALL GREEN' : 'devTestPerfLayerAll: NOT GREEN (' + fail + ' fail)');
 }

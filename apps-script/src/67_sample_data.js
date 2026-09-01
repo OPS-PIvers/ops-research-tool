@@ -277,6 +277,7 @@ function clearSampleData_() {
     }
     if (getStudentIdentity_(email)) { deleteStudent_(email); removed++; }
   });
+  bumpSheetRefVersion_();   // trashed Sheets must not be served from the resolution cache
   PropertiesService.getScriptProperties().setProperty(SAMPLE_FLAG_KEY, '0');
   return { ok: true, trashedSheets: trashed, removedRosterRows: removed };
 }

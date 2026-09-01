@@ -595,6 +595,53 @@ These supersede or refine the spec — apply them before defaulting to plan text
   The remaining audit findings (backend batching, extension felt-latency,
   console a11y/brand, sidebar UX) are documented in the 2026-08-28 session
   transcript — not yet implemented.
+- **Read-cache layer + combined endpoints (2026-09-01 perf/reliability pass).**
+  Every request used to re-open the Projects/Bundles/Roster workbooks and, for a
+  student, re-walk Drive (all class folders + every group Sheet) just to find
+  their Sheet — 4–8 slow service calls before any work. Now
+  [`05_cache.js`](apps-script/src/05_cache.js) wraps those reads in
+  `CacheService` (`cachedJson_(key, ttl, compute)`; per-execution memo + chunked
+  >90KB values; JSON round-trip so Dates come back as ISO strings — safer for
+  `google.script.run`): `listProjects_` (120s), `listBundles_` (600s),
+  `listStaffRows_`/`getStaffEntry_` (120s), `rosterData_` (120s),
+  `loadProjectManifest_` (600s), `latestUnarchiveFor_` (300s),
+  `listGroupsForProject_` (600s), and the **(student, project) → Sheet id
+  resolution** (`openCachedStudentSheet_` / `rememberStudentSheet_` in
+  [`21_reads.js`](apps-script/src/21_reads.js), used by both
+  `getStudentSheetIfExists_` and `findOrCreateStudentSheet_`). **Every write
+  path drops its cache** (`invalidate*Cache_` in `createProject_`,
+  `flipProjectStatus_`, `consoleUpdateProject*`, `createBundle_`, admin staff
+  CRUD, `invalidateRosterMemo_`, manifest record/forget, `appendAuditEvent_`).
+  Sheet resolution + group listings are **versioned**: `withGroupLock_` bumps
+  `sheetRefVersion_` in its `finally` (so no group mutation — merge/move/add/
+  remove/disband — can leave a cached id pointing at a trashed solo Sheet);
+  `adminChangeStudentEmail` and `clearSampleData_` bump too. **If you hand-edit
+  a registry/roster Sheet, run `devFlushOpsCache` from the editor** (or wait
+  ≤2 min). New GET actions in [`30_endpoints.js`](apps-script/src/30_endpoints.js):
+  **`bootstrap`** (me + projects + bundles + activeProjectId — the extension's
+  `refreshContext` uses it, falling back to the 3 legacy calls on "Unknown
+  action") and **`myProjectData`** (sources + highlights in ONE Sheet open via
+  `readStudentDataForActor_`, also used by `sidebarGetProjectData` and
+  `consoleGetStudentDetail`). Console: **`consoleBootstrap`** returns ctx +
+  projects in one round-trip. **Extension side:** the service worker keeps a
+  per-project snapshot in `chrome.storage.local` (`projData:<projectId>`),
+  serves page loads from it instantly **overlaid with the not-yet-drained
+  queue** (`overlayPendingOnData_` → rows flagged `_pending` render "saving…"),
+  refreshes in the background (single-flight, 15s floor) and pushes the fresh
+  view to the tab (`pageHighlightsUpdated` → `OpsSidebar.applyUpdate`, which
+  also reconciles server-side deletions); a drained batch is folded into the
+  snapshot (`applyBatchToProjectCache_`). `loadPageHighlights_` now resolves the
+  project through `getActiveProjectInfo()` (fixes the fresh-profile race that
+  returned an empty list and never retried), the sidebar **retries a failed
+  load** (2.5s/7s/20s), and a **URL watcher** reloads the page view on
+  pushState navigation (SPA news/database sites) — previously the previous
+  article's highlights stayed up. Console client: every screen paints its
+  last-known data from `localStorage` (keyed by actor, 12h) and revalidates
+  behind it ("Updating…"); window-focus refresh is throttled to 30s and uses
+  the server cache. Tests: `node apps-script/test/cache.node.test.js`,
+  `node extension/test/background_cache.node.test.js`, and editor
+  `devTestPerfLayerAll` (see §8). `extension/test/` is excluded from the store
+  zip by the build script.
 
 ## 5. GAS V8 quirks discovered
 
@@ -794,6 +841,17 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   the Dev Project). The dashboard/sidebar pills + nudges are DOM-side — real-surface
   QA only. After deploy, run **`migrateAddRequirements`** once to heal the
   Projects header.
+
+- Read-cache layer + combined endpoints (§4) — **`devTestPerfLayerAll`** runs:
+  `devTestOpsCache` (memo/CacheService hit, drop, >100KB chunking, sheet-ref
+  version bump — pure), `devTestCombinedEndpoints` (`bootstrap` ==
+  me+projects+bundles, `myProjectData` == mySources+myHighlights,
+  `consoleBootstrap` == ctx+projects; needs the Dev Project for the data half)
+  and `devTestSheetResolutionCache` (cached (student, project) resolution
+  returns the same Sheet as the walk; a bump forces the walk again). Headless
+  equivalents: `node apps-script/test/cache.node.test.js` and
+  `node extension/test/background_cache.node.test.js` (queue overlay + page
+  narrowing in `background.js`). `devFlushOpsCache` = manual flush.
 
 ## 9. How to start a session here
 

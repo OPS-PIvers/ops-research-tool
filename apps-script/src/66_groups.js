@@ -137,8 +137,23 @@ function findGroupSheetForStudent_(actorEmail, project) {
  * "Active" = group Sheet lives in the class folder (not under
  * Archived-students/). Disbanded groups are filtered out here.
  */
+var GROUPS_LIST_CACHE_TTL_SEC = 600;
+
 function listGroupsForProject_(project, classFilter) {
+  // The Drive walk + one openById per group Sheet is the single most expensive
+  // step on every STUDENT read/write (findGroupSheetForStudent_ preheats from
+  // it just to learn the student is solo). Cache the unfiltered listing per
+  // project under the sheet-ref version (05_cache.js) — every group mutation
+  // runs inside withGroupLock_, which bumps that version.
+  const all = cachedJson_(groupsListKey_(project.projectId), GROUPS_LIST_CACHE_TTL_SEC,
+    () => listGroupsForProjectLive_(project));
+  if (!classFilter) return all;
+  return all.filter((g) => g.className === classFilter);
+}
+
+function listGroupsForProjectLive_(project) {
   const out = [];
+  const classFilter = null;
   const projectFolder = DriveApp.getFolderById(project.rootFolderId);
   const classFolders = projectFolder.getFolders();
   while (classFolders.hasNext()) {
@@ -469,7 +484,17 @@ function nextGroupPlaceholderName_(project, className) {
 function withGroupLock_(fn) {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
-  try { return fn(); } finally { lock.releaseLock(); }
+  try {
+    return fn();
+  } finally {
+    // Every group mutation re-points at least one student's Sheet (merge /
+    // move / add / remove / disband). Bump the cross-request resolution
+    // version so no cached (student → sheetId) or group listing outlives it —
+    // a stale hit here would route a student's write into a trashed solo
+    // Sheet. Done in finally: a partial mutation must invalidate too.
+    bumpSheetRefVersion_();
+    lock.releaseLock();
+  }
 }
 
 /**

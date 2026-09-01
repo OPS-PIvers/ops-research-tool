@@ -31,6 +31,7 @@ function flipProjectStatus_(projectId, newStatus) {
   if (rowIdx < 0) throw new Error('Unknown projectId ' + projectId);
   const statusCol = HEADERS.PROJECTS.indexOf('status') + 1;
   tab.getRange(rowIdx, statusCol).setValue(newStatus);
+  invalidateProjectsCache_();
 }
 
 /**

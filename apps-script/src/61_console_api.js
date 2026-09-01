@@ -62,6 +62,18 @@ function buildClassLabelMap_() {
   return map;
 }
 
+/**
+ * First-paint bundle for the Console: context + the caller's project list in
+ * ONE google.script.run round-trip (the client used to chain two). Non-staff
+ * get ctx only (projects: null) so the unauthorized panel still renders.
+ */
+function consoleBootstrap(filter) {
+  const ctx = consoleGetContext();
+  if (!ctx || !ctx.staff) return { ok: true, ctx, projects: null };
+  const projects = consoleGetMyProjects(filter || 'active');
+  return { ok: true, ctx, projects: projects.projects || [] };
+}
+
 // listClassesTaughtBy_ now lives in 40_roster_model.js (Classes v2): it reads the
 // Classes tab's TeacherEmail (one teacher per class) instead of scanning every
 // student row. Defined there, not here, to avoid same-name shadowing.
@@ -273,6 +285,7 @@ function consoleUpdateProjectRequirements(projectId, requirements) {
   const col = HEADERS.PROJECTS.indexOf('requirements') + 1;
   const json = JSON.stringify(validated);
   tab.getRange(rowIdx, col).setValue(json);
+  invalidateProjectsCache_();
   return { ok: true, projectId, requirements: parseProjectRequirements_({ requirements: json }) };
 }
 
@@ -684,6 +697,7 @@ function consoleUpdateProjectClasses(projectId, memberClasses) {
   if (rowIdx < 0) throw new Error('Unknown projectId ' + projectId);
   const col = HEADERS.PROJECTS.indexOf('memberClasses') + 1;
   tab.getRange(rowIdx, col).setValue(newClasses.join(','));
+  invalidateProjectsCache_();
 
   return { ok: true, projectId, memberClasses: newClasses };
 }
@@ -737,8 +751,9 @@ function consoleGetStudentDetail(projectId, studentEmail) {
     }
   }
 
-  const sources = readSourcesForActor_(studentEmail, projectId);
-  const highlights = readHighlightsForActor_(studentEmail, projectId);
+  const studentData = readStudentDataForActor_(studentEmail, projectId);   // one Sheet open
+  const sources = studentData.sources;
+  const highlights = studentData.highlights;
 
   // Enrich each source: parsed citationFields, formattedCitation, completion flags,
   // and embedded highlights array filtered to that source.

@@ -1,8 +1,15 @@
 /** Projects registry CRUD. The registry is the source of truth for project existence. */
 
+var PROJECTS_CACHE_TTL_SEC = 120;
+
+// Cached (05_cache.js): the registry is read on every extension + console
+// request but only changes on a teacher action, each of which calls
+// invalidateProjectsCache_. Rows come back JSON round-tripped (Dates → strings).
 function listProjects_() {
-  const ss = SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID);
-  return readAllAsObjects_(getTab_(ss, TABS.PROJECTS), HEADERS.PROJECTS);
+  return cachedJson_('projects', PROJECTS_CACHE_TTL_SEC, () => {
+    const ss = SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID);
+    return readAllAsObjects_(getTab_(ss, TABS.PROJECTS), HEADERS.PROJECTS);
+  });
 }
 
 function getProject_(projectId) {
@@ -48,6 +55,7 @@ function createProject_({ name, schoolYear, bundleId, memberClasses, createdBy, 
   };
   const ss = SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID);
   appendRow_(getTab_(ss, TABS.PROJECTS), HEADERS.PROJECTS, project);
+  invalidateProjectsCache_();
   return project;
 }
 
@@ -73,5 +81,6 @@ function unarchiveProject_(projectId) {
 function migrateAddRequirements() {
   const ss = SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID);
   ensureHeaders_(getTab_(ss, TABS.PROJECTS), HEADERS.PROJECTS);
+  invalidateProjectsCache_();
   return { ok: true, headers: HEADERS.PROJECTS };
 }

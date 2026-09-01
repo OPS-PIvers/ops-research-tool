@@ -53,7 +53,7 @@ $zipPath = Join-Path $distDir ("ops-research-tool-v" + $ver + ".zip")
 if ([System.IO.File]::Exists($zipPath)) { [System.IO.File]::Delete($zipPath) }
 
 # Folder prefixes to exclude wholesale (build output + Web Store listing assets).
-$skipPrefixes = @('dist/', 'store-assets/')
+$skipPrefixes = @('dist/', 'store-assets/', 'test/')
 $skipFiles    = @('vendor/README.md')
 $files = Get-ChildItem -Path $src -Recurse -File | Where-Object {
   $rel = $_.FullName.Substring($src.Length + 1).Replace('\','/')

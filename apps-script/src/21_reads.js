@@ -4,12 +4,64 @@
  */
 
 function getStudentSheetIfExists_(actorEmail, project) {
+  // Cross-request resolution cache first (05_cache.js): one openById instead
+  // of the group walk + manifest read + Drive walk. Every group mutation bumps
+  // the cache version (withGroupLock_), so a hit can never point at a Sheet a
+  // merge has since trashed.
+  const cached = openCachedStudentSheet_(actorEmail, project);
+  if (cached) return cached;
   // Group routing — see findOrCreateStudentSheet_ for the equivalent
   // write-side hook. Reads must route identically or the sidebar will
   // show stale solo-Sheet data after a merge.
   const groupSheet = findGroupSheetForStudent_(actorEmail, project);
-  if (groupSheet) return groupSheet;
-  return getSoloSheetIfExists_(actorEmail, project);
+  if (groupSheet) {
+    rememberStudentSheet_(actorEmail, project, groupSheet, 'group');
+    return groupSheet;
+  }
+  const solo = getSoloSheetIfExists_(actorEmail, project);
+  if (solo) rememberStudentSheet_(actorEmail, project, solo, 'solo');
+  return solo;
+}
+
+/**
+ * Open the Sheet a prior request resolved for (student, project), or null on a
+ * cache miss / an id that no longer opens (the entry is dropped so the caller
+ * re-resolves). Shared by the read path above and findOrCreateStudentSheet_.
+ */
+function openCachedStudentSheet_(actorEmail, project) {
+  if (!actorEmail || !project || !project.projectId) return null;
+  const ref = getCachedSheetRef_(project.projectId, actorEmail);
+  if (!ref || !ref.id) return null;
+  try {
+    return SpreadsheetApp.openById(ref.id);
+  } catch (e) {
+    invalidateSheetRefCache_(project.projectId, actorEmail);
+    return null;
+  }
+}
+
+function rememberStudentSheet_(actorEmail, project, ss, kind) {
+  try {
+    putCachedSheetRef_(project.projectId, actorEmail, { id: ss.getId(), kind: kind || 'solo' });
+  } catch (e) { /* best-effort */ }
+}
+
+/**
+ * Sources + Highlights for the caller in one Sheet open. Preferred over calling
+ * readSourcesForActor_ + readHighlightsForActor_ back to back (which resolves
+ * and opens the Sheet twice). Returns { sources: [], highlights: [] } when the
+ * student has no Sheet yet.
+ */
+function readStudentDataForActor_(actorEmail, projectId) {
+  const empty = { sources: [], highlights: [] };
+  const project = getProject_(projectId);
+  if (!project) return empty;
+  const ss = getStudentSheetIfExists_(actorEmail, project);
+  if (!ss) return empty;
+  return {
+    sources: readAllAsObjects_(getTab_(ss, TABS.SOURCES), HEADERS.SOURCES),
+    highlights: readAllAsObjects_(getTab_(ss, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS),
+  };
 }
 
 /**

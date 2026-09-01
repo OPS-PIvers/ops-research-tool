@@ -71,9 +71,19 @@ function findSoloSheetFile_(classFolder, actorEmail) {
  * doPost, the sidebar, and source-dedup at once.
  */
 function findOrCreateStudentSheet_(actorEmail, project) {
+  // Cross-request resolution cache (05_cache.js / 21_reads.js) — a hit is one
+  // openById. Group mutations bump the cache version inside withGroupLock_, so
+  // a write can never land in a solo Sheet a merge has since trashed.
+  const cached = openCachedStudentSheet_(actorEmail, project);
+  if (cached) return cached;
   const groupSheet = findGroupSheetForStudent_(actorEmail, project);
-  if (groupSheet) return groupSheet;
-  return findOrCreateSoloSheet_(actorEmail, project);
+  if (groupSheet) {
+    rememberStudentSheet_(actorEmail, project, groupSheet, 'group');
+    return groupSheet;
+  }
+  const solo = findOrCreateSoloSheet_(actorEmail, project);
+  rememberStudentSheet_(actorEmail, project, solo, 'solo');
+  return solo;
 }
 
 /**

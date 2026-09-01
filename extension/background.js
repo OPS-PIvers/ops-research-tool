@@ -103,6 +103,9 @@ async function drain() {
           anyOnline = true;
           if (resp.ok) {
             await removeQueueItems(batch.map((b) => b.id));
+            // Fold the synced batch into the local project snapshot so a page
+            // revisit shows it at once (before the next server refresh).
+            await applyBatchToProjectCache_(projectId, sources, highlights, deletes).catch(() => {});
           } else {
             // Backend rejected something — surface per-item errors.
             const erroredIds = new Set((resp.errors || []).map((e) => e.id));
@@ -194,7 +197,7 @@ async function handleMessage(msg, sender) {
     case 'openPdfPanel':
       return openPdfPanel_(msg.url);
     case 'loadPageHighlights':
-      return loadPageHighlights_(msg.rawUrl);
+      return loadPageHighlights_(msg.rawUrl, sender && sender.tab ? sender.tab.id : null);
     case 'previewCitation':
       return previewCitation_(msg.fields, msg.style);
     case 'deleteHighlight':
@@ -241,57 +244,224 @@ function arrayBufferToBase64_(buf) {
  * (On-page colored marks deliberately do NOT come back — re-anchoring is
  * out of scope per build plan §2. The sidebar is a record, not a re-render.)
  */
-async function loadPageHighlights_(rawUrl) {
+async function loadPageHighlights_(rawUrl, tabId) {
   if (!rawUrl) return { ok: false, error: 'rawUrl required' };
-  const projectId = await getActiveProjectId();
+  // Resolve the project through getActiveProjectInfo (not the raw storage key):
+  // on a fresh profile the sticky id is unset until that auto-pick runs, and the
+  // page-load fetch used to race it, read null, and return an empty list that
+  // never retried — one of the "my highlights didn't come back" causes.
+  let projectId = null;
+  try {
+    const info = await getActiveProjectInfo();
+    projectId = info && info.activeProjectId;
+  } catch (e) {
+    projectId = await getActiveProjectId();
+  }
   if (!projectId) {
     console.log('[OPS] loadPageHighlights: no active project');
-    return { ok: true, highlights: [] };
+    return { ok: true, highlights: [], noProject: true };
   }
   const normalized = normalizeUrl(rawUrl);
-  try {
-    const [sourcesResp, highlightsResp] = await Promise.all([
-      apiGet({ action: 'mySources', projectId }),
-      apiGet({ action: 'myHighlights', projectId }),
-    ]);
-    if (!sourcesResp.ok || !highlightsResp.ok) {
-      console.warn('[OPS] loadPageHighlights backend not-ok:', { sourcesResp, highlightsResp });
-      return { ok: false, error: 'backend returned not-ok' };
-    }
-    const allSources = sourcesResp.sources || [];
-    const allHighlights = highlightsResp.highlights || [];
-    const matching = allSources.filter((s) => s.normalizedUrl === normalized);
-    const matchingSourceIds = new Set(matching.map((s) => s.sourceId));
-    const highlights = allHighlights.filter((h) => matchingSourceIds.has(h.sourceId));
+  const pending = await pendingQueueForProject_(projectId);
 
-    // Cross-device / cache-cleared dedup: this device may not have a local
-    // pageSource cache entry for this URL (the cache is per-device). Seed it
-    // from the server match so a NEW highlight captured here merges into the
-    // existing source instead of minting a duplicate source row for the same
-    // URL. Reuses this fetch — no extra round-trip, offline-safe. When dups
-    // already exist, pick the oldest as canonical so everything converges on
-    // one source over time.
-    let canonicalSource = null;
-    if (matching.length) {
-      canonicalSource = matching.slice().sort((a, b) =>
-        String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
-      )[0];
-      if (canonicalSource && canonicalSource.sourceId) {
-        await setCachedSourceId(projectId, normalized, canonicalSource.sourceId);
-      }
+  // Cache-first (stale-while-revalidate). The per-project snapshot answers
+  // instantly, overlaid with anything still in the offline queue so work the
+  // student captured seconds ago (not yet drained) is on the list too. A
+  // background refresh then pushes the server truth to the tab.
+  const cached = await getProjectDataCache_(projectId);
+  if (cached) {
+    const view = selectPageData_(overlayPendingOnData_(cached, pending, true), normalized);
+    await seedPageSourceCache_(projectId, normalized, view.source);
+    const age = Date.now() - (cached.fetchedAt || 0);
+    if (age > PROJ_DATA_REFRESH_MIN_MS) {
+      refreshProjectDataOnce_(projectId).then(async (fresh) => {
+        const pending2 = await pendingQueueForProject_(projectId);
+        const view2 = selectPageData_(overlayPendingOnData_(fresh, pending2, true), normalized);
+        await seedPageSourceCache_(projectId, normalized, view2.source);
+        pushPageUpdate_(tabId, { rawUrl, normalizedUrl: normalized, projectId, ...view2 });
+      }).catch((e) => console.debug('[OPS] background project-data refresh failed:', e.message || e));
     }
-    console.log('[OPS] loadPageHighlights:', {
+    return { ok: true, fromCache: true, ...view };
+  }
+
+  // Cold: nothing cached for this project yet — block on one network call.
+  try {
+    const fresh = await refreshProjectDataOnce_(projectId);
+    const view = selectPageData_(overlayPendingOnData_(fresh, pending, true), normalized);
+    await seedPageSourceCache_(projectId, normalized, view.source);
+    console.log('[OPS] loadPageHighlights (network):', {
       rawUrl, normalized,
-      totalSources: allSources.length,
-      totalHighlights: allHighlights.length,
-      matchingSources: matching.length,
-      matchingHighlights: highlights.length,
+      totalSources: fresh.sources.length,
+      totalHighlights: fresh.highlights.length,
+      matchingHighlights: view.highlights.length,
     });
-    return { ok: true, highlights, sourceCount: matchingSourceIds.size, source: canonicalSource };
+    return { ok: true, ...view };
   } catch (e) {
     console.warn('[OPS] loadPageHighlights threw:', e);
-    return { ok: false, error: e.message || String(e) };
+    // Offline / backend down: still surface the not-yet-synced local work so
+    // the panel isn't blank, and tell the caller to retry.
+    const view = selectPageData_(overlayPendingOnData_({ sources: [], highlights: [] }, pending, true), normalized);
+    return { ok: false, error: e.message || String(e), retryable: true, ...view };
   }
+}
+
+// ---------- per-project local data cache ----------
+
+const PROJ_DATA_PREFIX = 'projData:';
+// Don't re-hit the server for a project snapshot fetched this recently — a
+// student reloading a page a few times in a row gets the cache each time.
+const PROJ_DATA_REFRESH_MIN_MS = 15000;
+const _projRefreshInFlight = new Map();
+
+async function getProjectDataCache_(projectId) {
+  const v = await getCache(PROJ_DATA_PREFIX + projectId);
+  return v && Array.isArray(v.sources) && Array.isArray(v.highlights) ? v : null;
+}
+
+async function setProjectDataCache_(projectId, data) {
+  await setCache(PROJ_DATA_PREFIX + projectId, data);
+}
+
+/** Single-flight per project: concurrent page loads share one server fetch. */
+function refreshProjectDataOnce_(projectId) {
+  if (_projRefreshInFlight.has(projectId)) return _projRefreshInFlight.get(projectId);
+  const p = fetchProjectDataFromServer_(projectId).finally(() => _projRefreshInFlight.delete(projectId));
+  _projRefreshInFlight.set(projectId, p);
+  return p;
+}
+
+async function fetchProjectDataFromServer_(projectId) {
+  let resp = await apiGet({ action: 'myProjectData', projectId });
+  if (!resp || !resp.ok) {
+    if (resp && /Unknown action/i.test(resp.error || '')) {
+      // Older backend without the combined action — fall back to the pair.
+      const [s, h] = await Promise.all([
+        apiGet({ action: 'mySources', projectId }),
+        apiGet({ action: 'myHighlights', projectId }),
+      ]);
+      if (!s.ok || !h.ok) throw new Error('backend returned not-ok');
+      resp = { ok: true, sources: s.sources || [], highlights: h.highlights || [] };
+    } else {
+      throw new Error((resp && resp.error) || 'backend returned not-ok');
+    }
+  }
+  const data = { sources: resp.sources || [], highlights: resp.highlights || [], fetchedAt: Date.now() };
+  await setProjectDataCache_(projectId, data);
+  return data;
+}
+
+/** Every queue item (any kind) targeting this project, oldest first. */
+async function pendingQueueForProject_(projectId) {
+  const all = await chrome.storage.local.get(null);
+  return Object.keys(all)
+    .filter((k) => k.startsWith(QUEUE_PREFIX))
+    .map((k) => all[k])
+    .filter((q) => q && q.payload && q.payload.projectId === projectId)
+    .sort((a, b) => (a.enqueuedAt || 0) - (b.enqueuedAt || 0));
+}
+
+/**
+ * Apply queue items (source/highlight upserts + deletes) on top of a snapshot.
+ * Pure. Returns a new { sources, highlights }. With markPending, upserted rows
+ * carry `_pending: true` so the sidebar can show "saving…" for them. Object
+ * JSON columns (citationFields / scrapedExtra) are stringified to match the
+ * server's row shape, since the queue holds them as objects.
+ */
+function overlayPendingOnData_(data, queueItems, markPending) {
+  const sources = (data.sources || []).map((s) => Object.assign({}, s));
+  const highlights = (data.highlights || []).map((h) => Object.assign({}, h));
+  const srcIdx = () => { const m = new Map(); sources.forEach((s, i) => m.set(s.sourceId, i)); return m; };
+  const hlIdx = () => { const m = new Map(); highlights.forEach((h, i) => m.set(h.highlightId, i)); return m; };
+  const jsonCol = (v) => {
+    if (v === null || v === undefined) return '';
+    return typeof v === 'string' ? v : JSON.stringify(v);
+  };
+  (queueItems || []).forEach((q) => {
+    const p = q.payload || {};
+    if (q.kind === 'source') {
+      const m = srcIdx();
+      const i = m.has(p.sourceId) ? m.get(p.sourceId) : -1;
+      const row = Object.assign({}, i >= 0 ? sources[i] : {}, p);
+      if ('citationFields' in p) row.citationFields = jsonCol(p.citationFields);
+      else if (row.citationFields && typeof row.citationFields !== 'string') row.citationFields = jsonCol(row.citationFields);
+      if ('scrapedExtra' in p) row.scrapedExtra = jsonCol(p.scrapedExtra);
+      else if (row.scrapedExtra && typeof row.scrapedExtra !== 'string') row.scrapedExtra = jsonCol(row.scrapedExtra);
+      if (!row.createdAt) row.createdAt = new Date(q.enqueuedAt || Date.now()).toISOString();
+      if (markPending) row._pending = true;
+      if (i >= 0) sources[i] = row; else sources.push(row);
+    } else if (q.kind === 'highlight') {
+      const m = hlIdx();
+      const i = m.has(p.highlightId) ? m.get(p.highlightId) : -1;
+      const row = Object.assign({}, i >= 0 ? highlights[i] : {}, p);
+      if (markPending) row._pending = true;
+      if (i >= 0) highlights[i] = row; else highlights.push(row);
+    } else if (q.kind === 'deleteHighlight') {
+      const m = hlIdx();
+      if (m.has(p.highlightId)) highlights.splice(m.get(p.highlightId), 1);
+      if (p.cascadeSource && p.sourceId && !highlights.some((h) => h.sourceId === p.sourceId)) {
+        const sm = srcIdx();
+        if (sm.has(p.sourceId)) sources.splice(sm.get(p.sourceId), 1);
+      }
+    } else if (q.kind === 'deleteSource') {
+      const sm = srcIdx();
+      if (sm.has(p.sourceId) && !highlights.some((h) => h.sourceId === p.sourceId)) {
+        sources.splice(sm.get(p.sourceId), 1);
+      }
+    }
+  });
+  return { sources, highlights };
+}
+
+/**
+ * Narrow a project snapshot to one page: sources whose normalizedUrl matches
+ * (oldest = canonical, so duplicates converge) + their highlights. Pure.
+ */
+function selectPageData_(data, normalized) {
+  const matching = (data.sources || []).filter((s) => s.normalizedUrl === normalized);
+  const ids = new Set(matching.map((s) => s.sourceId));
+  const highlights = (data.highlights || []).filter((h) => ids.has(h.sourceId));
+  let source = null;
+  if (matching.length) {
+    source = matching.slice().sort((a, b) =>
+      String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+    )[0];
+  }
+  return { highlights, sourceCount: ids.size, source };
+}
+
+/**
+ * Cross-device / cache-cleared dedup: seed the per-page sourceId cache from
+ * the matched source so a NEW highlight captured here merges into the existing
+ * source instead of minting a duplicate row for the same URL.
+ */
+async function seedPageSourceCache_(projectId, normalized, source) {
+  if (source && source.sourceId) await setCachedSourceId(projectId, normalized, source.sourceId);
+}
+
+/** Push a refreshed page view to the tab's content script (best-effort). */
+function pushPageUpdate_(tabId, payload) {
+  if (tabId === null || tabId === undefined) return;
+  try {
+    chrome.tabs.sendMessage(tabId, Object.assign({ type: 'pageHighlightsUpdated' }, payload)).catch(() => {});
+  } catch (e) { /* tab gone */ }
+}
+
+/**
+ * After a batch syncs, fold it into the local project snapshot so a page
+ * revisit reflects it even before the next server refresh (and so the
+ * 15s refresh floor never hides just-saved work).
+ */
+async function applyBatchToProjectCache_(projectId, sources, highlights, deletes) {
+  const cached = await getProjectDataCache_(projectId);
+  if (!cached) return;
+  const items = []
+    .concat((sources || []).map((p) => ({ kind: 'source', payload: p })))
+    .concat((highlights || []).map((p) => ({ kind: 'highlight', payload: p })))
+    .concat((deletes || []).map((d) => d.kind === 'highlight'
+      ? { kind: 'deleteHighlight', payload: { highlightId: d.id, sourceId: d.sourceId, cascadeSource: d.cascadeSource } }
+      : { kind: 'deleteSource', payload: { sourceId: d.id } }));
+  const merged = overlayPendingOnData_(cached, items, false);
+  await setProjectDataCache_(projectId, { sources: merged.sources, highlights: merged.highlights, fetchedAt: cached.fetchedAt });
 }
 
 /**
@@ -572,6 +742,28 @@ async function getActiveProjectInfo() {
 
 /** Refresh roster + projects + bundles caches from GAS. Called by popup on open. */
 async function refreshContext() {
+  // One combined round-trip (the backend's `bootstrap` action). Each GAS call
+  // can cost 1–3s cold, so collapsing the trio is the single biggest win for a
+  // fresh profile. Falls back to the three legacy actions against an older
+  // deployment that doesn't know `bootstrap`.
+  let boot = null;
+  try {
+    boot = await apiGet({ action: 'bootstrap' });
+  } catch (e) {
+    throw e;   // network / auth — same failure surface as before
+  }
+  if (boot && boot.ok && Array.isArray(boot.projects)) {
+    await setCache('cachedMe', boot.me);
+    await setCache('cachedProjects', boot.projects);
+    await setCache('cachedContextAt', Date.now());
+    if (Array.isArray(boot.bundles)) await setCache('cachedBundles', boot.bundles);
+    return {
+      ok: true,
+      me: boot.me,
+      projects: { ok: true, projects: boot.projects },
+      bundles: { ok: true, bundles: boot.bundles || [] },
+    };
+  }
   const [me, projects, bundles] = await Promise.all([
     apiGet({ action: 'me' }),
     apiGet({ action: 'projects' }),

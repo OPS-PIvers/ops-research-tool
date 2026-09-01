@@ -23,12 +23,19 @@ function getActorEmail_() {
 // shadowing (CLAUDE.md §5).
 
 /** Return {Name, Email, Role} or null. */
+var STAFF_CACHE_TTL_SEC = 120;
+
+/** All Staff rows, cached (05_cache.js). Admin staff writes call invalidateStaffCache_. */
+function listStaffRows_() {
+  return cachedJson_('staff', STAFF_CACHE_TTL_SEC, () => {
+    const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
+    return readAllAsObjects_(getTab_(ss, TABS.STAFF), HEADERS.STAFF);
+  });
+}
+
 function getStaffEntry_(email) {
-  const ss = SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID);
-  const tab = getTab_(ss, TABS.STAFF);
-  const rows = readAllAsObjects_(tab, HEADERS.STAFF);
   const target = String(email).toLowerCase();
-  return rows.find((r) => String(r.Email).toLowerCase() === target) || null;
+  return listStaffRows_().find((r) => String(r.Email).toLowerCase() === target) || null;
 }
 
 function isStaff_(email) {

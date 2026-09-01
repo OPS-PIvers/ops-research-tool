@@ -35,13 +35,105 @@ function closeProjectMenu_() {
 }
 document.addEventListener('click', closeProjectMenu_);
 
+// ------------------------------------------------------------
+// View cache (localStorage, best-effort). Every google.script.run call is a
+// 1–3s round-trip, and each screen used to start from a blank skeleton on
+// every visit/reload. Screens now paint the last-known data for the same key
+// INSTANTLY and refresh in the background ("stale-while-revalidate"); the
+// as-of / "Updating…" affordances show that a refresh is in flight. Keyed by
+// actor so a shared machine never shows another teacher's data. Anything
+// here is display-only — the server remains authoritative.
+// ------------------------------------------------------------
+const VIEW_CACHE_NS = 'opsConsole:v1:';
+const VIEW_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+// Window-focus refreshes used to bypass the server cache on EVERY refocus
+// (each tab switch = a full dashboard recompute). Throttle them; the server's
+// own 45s cache still keeps the data fresh.
+const FOCUS_REFRESH_MIN_MS = 30 * 1000;
+
+function viewCacheRawGet_(key) {
+  try {
+    const raw = localStorage.getItem(VIEW_CACHE_NS + key);
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    if (!v || typeof v.at !== 'number' || Date.now() - v.at > VIEW_CACHE_MAX_AGE_MS) return null;
+    return v.data;
+  } catch (e) { return null; }
+}
+function viewCacheRawPut_(key, data) {
+  try { localStorage.setItem(VIEW_CACHE_NS + key, JSON.stringify({ at: Date.now(), data })); } catch (e) { /* quota / sandbox */ }
+}
+function viewCacheGet_(key) {
+  const actor = state.ctx && state.ctx.actor;
+  return actor ? viewCacheRawGet_(actor + ':' + key) : null;
+}
+function viewCachePut_(key, data) {
+  const actor = state.ctx && state.ctx.actor;
+  if (actor) viewCacheRawPut_(actor + ':' + key, data);
+}
+
 function bootstrap() {
   state.view = 'BOOT';
-  renderBoot_();
+  // Cached session → render the shell + last project list immediately, then
+  // reconcile with the server. Cold → the usual boot spinner.
+  const cached = viewCacheRawGet_('boot');
+  if (cached && cached.ctx && cached.ctx.staff) {
+    state.ctx = cached.ctx;
+    state.bootFromCache = true;
+    if (Array.isArray(cached.projects) && myProjects.filter === 'active') {
+      myProjects.projects = cached.projects;
+      myProjects.everLoaded = true;
+      myProjects.paintedFromCache = true;
+    }
+    startRouting_();
+  } else {
+    renderBoot_();
+  }
+  // ONE round-trip for context + projects (was two chained calls).
   google.script.run
-    .withSuccessHandler(onContext_)
-    .withFailureHandler(onFail_('loading session'))
-    .consoleGetContext();
+    .withSuccessHandler(onBootstrap_)
+    .withFailureHandler((e) => {
+      if (state.bootFromCache) {
+        state.bootFromCache = false;
+        setStatus('Could not refresh the session — showing the last loaded data.', 'bad', 5000);
+        return;
+      }
+      onFail_('loading session')(e);
+    })
+    .consoleBootstrap('active');
+}
+
+function startRouting_() {
+  // Set up hash routing once. parseHash_ → state mutation → render.
+  if (!state.routingStarted) {
+    state.routingStarted = true;
+    window.addEventListener('hashchange', onHashChange_);
+  }
+  applyHash_();   // initial route from whatever the URL is
+}
+
+function onBootstrap_(resp) {
+  const ctx = resp && resp.ctx;
+  const wasCached = !!state.bootFromCache;
+  state.bootFromCache = false;
+  if (!ctx || !ctx.staff) {
+    try { localStorage.removeItem(VIEW_CACHE_NS + 'boot'); } catch (e) { /* ignore */ }
+    onContext_(ctx);
+    return;
+  }
+  viewCacheRawPut_('boot', { ctx, projects: Array.isArray(resp.projects) ? resp.projects : null });
+  const ctxChanged = JSON.stringify(state.ctx) !== JSON.stringify(ctx);
+  state.ctx = ctx;
+  let projectsChanged = false;
+  if (Array.isArray(resp.projects) && myProjects.filter === 'active') {
+    projectsChanged = JSON.stringify(myProjects.projects) !== JSON.stringify(resp.projects);
+    myProjects.projects = resp.projects;
+    myProjects.everLoaded = true;
+    myProjects.paintedFromCache = false;
+  }
+  if (!wasCached) { startRouting_(); return; }
+  // Already on screen from the cache — only repaint if something changed.
+  if (ctxChanged || (projectsChanged && state.view === 'MY_PROJECTS')) renderShell_();
 }
 
 function onContext_(ctx) {
@@ -51,9 +143,7 @@ function onContext_(ctx) {
     renderUnauthed_();
     return;
   }
-  // Set up hash routing. parseHash_ → state mutation → render.
-  window.addEventListener('hashchange', onHashChange_);
-  applyHash_();   // initial route from whatever the URL is
+  startRouting_();
 }
 
 function onHashChange_() {
@@ -261,7 +351,18 @@ function renderMyProjects_(main) {
   main.appendChild(body);
 
   if (myProjects.projects === null) {
-    renderMpSkeletons_(body);
+    // First entry this session: paint the last-known list at once and refresh
+    // behind it. Later resets (filter toggle, create/archive) deliberately
+    // skip the cache so a just-changed list never flashes its old state.
+    const cached = myProjects.everLoaded ? null : viewCacheGet_('projects:' + myProjects.filter);
+    if (cached) {
+      myProjects.projects = cached;
+      myProjects.everLoaded = true;
+      myProjects.paintedFromCache = true;
+      renderMpCards_(body);
+    } else {
+      renderMpSkeletons_(body);
+    }
     fetchMyProjects_();
   } else {
     renderMpCards_(body);
@@ -290,8 +391,14 @@ function fetchMyProjects_() {
         setStatus('Could not load projects.', 'bad', 4000);
         return;
       }
-      myProjects.projects = resp.projects || [];
-      renderShell_();
+      const fresh = resp.projects || [];
+      const unchanged = myProjects.paintedFromCache &&
+        JSON.stringify(myProjects.projects) === JSON.stringify(fresh);
+      myProjects.projects = fresh;
+      myProjects.everLoaded = true;
+      myProjects.paintedFromCache = false;
+      viewCachePut_('projects:' + myProjects.filter, fresh);
+      if (!unchanged) renderShell_();
     })
     .withFailureHandler(onFail_('loading projects'))
     .consoleGetMyProjects(myProjects.filter);
@@ -1255,22 +1362,40 @@ function renderDashboard_(main) {
   if (dashboard.data) {
     paintDashboard_();
   } else {
-    // Skeleton table for instant structure while the (fast, parallel) fetch
-    // runs — better perceived speed than a centered spinner. Sized from the
-    // last-known row count for this project, else a sensible default.
-    body.innerHTML = '';
-    body.appendChild(buildDashboardSkeleton_(dashboard.lastRowCount[state.projectId] || 8));
-    fetchDashboard_(state.projectId, false);
+    const cached = viewCacheGet_('dash:' + dashKey);
+    if (cached) {
+      // Paint the last-known table immediately (its as-of stamp shows its age)
+      // and refresh behind it — the toolbar button reads "Updating…" meanwhile.
+      dashboard.loadedFor = dashKey;
+      dashboard.data = cached;
+      dashboard.fromCache = true;
+      paintDashboard_();
+      fetchDashboard_(state.projectId, true, false);
+    } else {
+      // Skeleton table for instant structure while the (fast, parallel) fetch
+      // runs — better perceived speed than a centered spinner. Sized from the
+      // last-known row count for this project, else a sensible default.
+      body.innerHTML = '';
+      body.appendChild(buildDashboardSkeleton_(dashboard.lastRowCount[state.projectId] || 8));
+      fetchDashboard_(state.projectId, false);
+    }
   }
 
-  // Refresh on tab focus, but only while we are on the dashboard view.
+  // Refresh on tab focus, but only while we are on the dashboard view — and
+  // only if the data is older than FOCUS_REFRESH_MIN_MS, using the server's
+  // short cache (a full recompute on every tab switch was a big part of the
+  // "always loading" feel).
   if (!window.__opsConsoleFocusBound) {
     window.__opsConsoleFocusBound = true;
     window.addEventListener('focus', () => {
-      if (state.view === 'DASHBOARD' && state.projectId) fetchDashboard_(state.projectId, true);
+      if (state.view === 'DASHBOARD' && state.projectId) {
+        if (Date.now() - (dashboard.fetchedAt || 0) > FOCUS_REFRESH_MIN_MS) fetchDashboard_(state.projectId, true, false);
+      }
       if (state.view === 'STUDENT' && state.projectId && state.studentEmail) {
-        // Student detail focus refresh is added in Task 16; safe to keep here as a hook.
-        if (typeof fetchStudentDetail_ === 'function') fetchStudentDetail_(state.projectId, state.studentEmail);
+        if (typeof fetchStudentDetail_ === 'function' &&
+            Date.now() - (studentDetail.fetchedAt || 0) > FOCUS_REFRESH_MIN_MS) {
+          fetchStudentDetail_(state.projectId, state.studentEmail);
+        }
       }
     });
   }
@@ -1279,31 +1404,45 @@ function renderDashboard_(main) {
   startAsOfTicker_();
 }
 
-function fetchDashboard_(projectId, isRefresh) {
+/**
+ * @param {boolean} isRefresh    Show the in-flight state on the Refresh button
+ *                               (existing data stays painted).
+ * @param {boolean} [bypassCache] Skip the server's short-TTL cache. Defaults to
+ *                               `isRefresh` (the manual button); background
+ *                               revalidations pass false.
+ */
+function fetchDashboard_(projectId, isRefresh, bypassCache) {
+  const bypass = bypassCache === undefined ? !!isRefresh : !!bypassCache;
   if (isRefresh) {
     const btn = document.getElementById('db-refresh');
-    if (btn) { btn.disabled = true; btn.textContent = '↻ Refreshing…'; }
+    if (btn) { btn.disabled = true; btn.textContent = bypass ? '↻ Refreshing…' : '↻ Updating…'; }
   }
+  const key = projectId + '|' + (state.className || '');
   google.script.run
     .withSuccessHandler((resp) => {
+      const btn = document.getElementById('db-refresh');
+      if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
       if (!resp || !resp.ok) {
         setStatus('Could not load dashboard.', 'bad', 4000);
         return;
       }
-      dashboard.loadedFor = projectId + '|' + (state.className || '');
+      viewCachePut_('dash:' + key, resp);
+      // The user may have navigated on while this was in flight.
+      if (state.view !== 'DASHBOARD' || (state.projectId + '|' + (state.className || '')) !== key) return;
+      dashboard.loadedFor = key;
       dashboard.data = resp;
+      dashboard.fetchedAt = Date.now();
+      dashboard.fromCache = false;
       paintDashboard_();
-      const btn = document.getElementById('db-refresh');
-      if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
     })
     .withFailureHandler((e) => {
       const btn = document.getElementById('db-refresh');
       if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
       onFail_('loading dashboard')(e);
     })
-    // Scope to the selected class period (null = all). Refresh bypasses the
-    // server's short-TTL cache; normal loads use it.
-    .consoleGetProjectDashboard(projectId, state.className || null, !!isRefresh);
+    // Scope to the selected class period (null = all). The manual Refresh
+    // bypasses the server's short-TTL cache; normal loads use it.
+    .consoleGetProjectDashboard(projectId, state.className || null, bypass);
 }
 
 function maybeRenderUnarchiveBanner_(main, data) {
@@ -2129,8 +2268,15 @@ function renderStudentDetail_(main) {
   if (studentDetail.data) {
     paintStudentDetail_();
   } else {
-    body.innerHTML = '';
-    body.appendChild(buildSkeletonLines_(6));
+    const cached = viewCacheGet_('student:' + key);
+    if (cached) {
+      studentDetail.loadedFor = key;
+      studentDetail.data = cached;
+      paintStudentDetail_();
+    } else {
+      body.innerHTML = '';
+      body.appendChild(buildSkeletonLines_(6));
+    }
     fetchStudentDetail_(state.projectId, state.studentEmail);
   }
 }
@@ -2174,8 +2320,15 @@ function renderGroupDetail_(main) {
   if (groupDetail.data) {
     paintGroupDetail_();
   } else {
-    body.innerHTML = '';
-    body.appendChild(buildSkeletonLines_(6));
+    const cached = viewCacheGet_('group:' + key);
+    if (cached) {
+      groupDetail.loadedFor = key;
+      groupDetail.data = cached;
+      paintGroupDetail_();
+    } else {
+      body.innerHTML = '';
+      body.appendChild(buildSkeletonLines_(6));
+    }
     fetchGroupDetail_(state.projectId, state.groupId);
   }
 }
@@ -2187,7 +2340,10 @@ function fetchGroupDetail_(projectId, groupId) {
         setStatus('Could not load group.', 'bad', 4000);
         return;
       }
-      groupDetail.loadedFor = projectId + '|' + groupId;
+      const key = projectId + '|' + groupId;
+      viewCachePut_('group:' + key, resp);
+      if (state.view !== 'GROUP' || (state.projectId + '|' + state.groupId) !== key) return;
+      groupDetail.loadedFor = key;
       groupDetail.data = resp;
       paintGroupDetail_();
     })
@@ -2278,8 +2434,12 @@ function fetchStudentDetail_(projectId, email) {
         setStatus('Could not load student.', 'bad', 4000);
         return;
       }
-      studentDetail.loadedFor = projectId + '|' + email;
+      const key = projectId + '|' + email;
+      viewCachePut_('student:' + key, resp);
+      if (state.view !== 'STUDENT' || (state.projectId + '|' + state.studentEmail) !== key) return;
+      studentDetail.loadedFor = key;
       studentDetail.data = resp;
+      studentDetail.fetchedAt = Date.now();
       paintStudentDetail_();
     })
     .withFailureHandler((e) => {

@@ -50,8 +50,11 @@ function appendAuditEvent_(args) {
   };
   const tab = ensureAuditTab_();
   appendRow_(tab, HEADERS.AUDIT, event);
+  invalidateAuditCache_(event.projectId);
   return event;
 }
+
+var AUDIT_CACHE_TTL_SEC = 300;
 
 /**
  * Most recent unarchive event for a project, or null. Used by
@@ -62,15 +65,19 @@ function appendAuditEvent_(args) {
  */
 function latestUnarchiveFor_(projectId) {
   if (!projectId) return null;
-  const tab = ensureAuditTab_();
-  const rows = readAllAsObjects_(tab, HEADERS.AUDIT);
-  let latest = null;
-  rows.forEach((r) => {
-    if (r.projectId !== projectId) return;
-    if (r.action !== AUDIT_ACTIONS.UNARCHIVE) return;
-    if (latest === null || String(r.at || '') > String(latest.at || '')) latest = r;
+  // Cached per project (05_cache.js) — this sits on every dashboard load and
+  // the answer only changes when appendAuditEvent_ writes (which drops it).
+  return cachedJson_('audit:unarchive:' + String(projectId), AUDIT_CACHE_TTL_SEC, () => {
+    const tab = ensureAuditTab_();
+    const rows = readAllAsObjects_(tab, HEADERS.AUDIT);
+    let latest = null;
+    rows.forEach((r) => {
+      if (r.projectId !== projectId) return;
+      if (r.action !== AUDIT_ACTIONS.UNARCHIVE) return;
+      if (latest === null || String(r.at || '') > String(latest.at || '')) latest = r;
+    });
+    return latest;
   });
-  return latest;
 }
 
 /**

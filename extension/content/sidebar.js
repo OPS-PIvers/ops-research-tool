@@ -539,51 +539,163 @@ const OpsSidebar = (function () {
     state.loadingHighlights = true;
     render_();
 
+    if (_loadRetryTimer) { clearTimeout(_loadRetryTimer); _loadRetryTimer = null; }
+    const urlAtStart = normalizeUrl(opsPageUrl());
+
     try {
       let resp;
       try {
         resp = await chrome.runtime.sendMessage({ type: 'loadPageHighlights', rawUrl: opsPageUrl() });
       } catch (e) {
-        return; // offline / backend down; launcher already visible, nothing more to do
+        if (opsIsContextInvalidated_(e)) { showReloadHint_(); return; }
+        resp = null; // service worker asleep / messaging hiccup — retry below
       }
-      if (!resp || !resp.ok) return;
-      if (resp.source) {
-        const incoming = normalizeSourceObj_(resp.source);
-        const dirty = state.pageSource
-          && state.pageSource.sourceId === incoming.sourceId
-          && state.sourceSaveStatus === 'pending';
-        if (!dirty) state.pageSource = incoming;
-      }
-      if (!resp.highlights || resp.highlights.length === 0) return;
-      resp.highlights.forEach((h) => {
-        if (state.pageHighlights.some((x) => x.highlightId === h.highlightId)) return;
-        state.pageHighlights.push({
-          highlightId: h.highlightId,
-          sourceId: h.sourceId,
-          primaryCategory: h.primaryCategory,
-          secondaryCategory: h.secondaryCategory || '',
-          text: h.highlightedText,
-          note: h.note || '',
-          color: colorForLabel_(h.primaryCategory) || '#fff8c4',
-          syncStatus: 'saved',
-        });
-      });
+      // The page navigated (SPA) while we were waiting — that load is stale;
+      // the URL watcher has already kicked a fresh one.
+      if (normalizeUrl(opsPageUrl()) !== urlAtStart) return;
 
-      // Try to re-anchor on the page so the colored spans come back too.
-      // Failures are surfaced per-entry in the sidebar; no silent misanchoring.
-      //
-      // Defer mode (OPS_DEFER_REANCHOR === true, set by the PDF panel before
-      // this script loads) skips the document-wide walk because the host
-      // renders content lazily — the panel will call reanchorIn() once per
-      // page as it comes on screen. Without this we'd mark every highlight
-      // as "page changed" on first load, since no pages are in the DOM yet.
-      if (self.reAnchorHighlights && !self.OPS_DEFER_REANCHOR) {
-        scheduleReanchorRetries_(resp.highlights);
+      // Even a failed fetch can carry the not-yet-synced local queue (so the
+      // student's just-captured work is never blank); apply whatever came back.
+      if (resp && (resp.highlights || resp.source)) applyPageView_(resp, !!resp.ok);
+
+      if (!resp || !resp.ok || resp.noProject) {
+        // Offline, backend cold/down, or the project list hasn't resolved yet.
+        // The old code returned silently here and never tried again — the
+        // student saw an empty list until a manual reload. Retry with backoff.
+        scheduleLoadRetry_();
+        return;
       }
+      _loadAttempt = 0;
     } finally {
       state.loadingHighlights = false;
       render_();
     }
+  }
+
+  // Bounded retry for a failed page load: 3 attempts spaced out so a cold
+  // service worker / slow backend recovers without hammering it.
+  const LOAD_RETRY_DELAYS_MS = [2500, 7000, 20000];
+  let _loadAttempt = 0;
+  let _loadRetryTimer = null;
+
+  function scheduleLoadRetry_() {
+    if (_loadAttempt >= LOAD_RETRY_DELAYS_MS.length) return;
+    const delay = LOAD_RETRY_DELAYS_MS[_loadAttempt++];
+    _loadRetryTimer = setTimeout(() => {
+      _loadRetryTimer = null;
+      loadForCurrentPage().catch(() => {});
+    }, delay);
+  }
+
+  /**
+   * Merge a page view ({ source, highlights }) from the background into state.
+   * Used by the initial load, retries, and `pageHighlightsUpdated` pushes (the
+   * background refreshes the project snapshot after serving the cache).
+   *
+   * - New entries are added; entries this session created stay untouched.
+   * - Server-loaded entries are refreshed (category / note / secondary).
+   * - With `reconcile`, server-loaded entries missing from an authoritative
+   *   view are dropped (deleted from the Docs sidebar / another device) so the
+   *   panel doesn't keep showing work that no longer exists.
+   * - Rows flagged `_pending` (still in the offline queue) show "saving…".
+   */
+  function applyPageView_(resp, reconcile) {
+    if (resp.source) {
+      const incoming = normalizeSourceObj_(resp.source);
+      const dirty = state.pageSource
+        && state.pageSource.sourceId === incoming.sourceId
+        && state.sourceSaveStatus === 'pending';
+      if (!dirty) state.pageSource = incoming;
+    }
+    const list = resp.highlights || [];
+    const incomingIds = new Set(list.map((h) => h.highlightId));
+    let added = 0;
+    list.forEach((h) => {
+      const existing = state.pageHighlights.find((x) => x.highlightId === h.highlightId);
+      if (existing) {
+        if (existing.fromServer && state.editingId !== h.highlightId) {
+          existing.primaryCategory = h.primaryCategory;
+          existing.secondaryCategory = h.secondaryCategory || '';
+          existing.note = h.note || '';
+          existing.color = colorForLabel_(h.primaryCategory) || '#fff8c4';
+          existing.syncStatus = h._pending ? 'pending' : 'saved';
+        }
+        return;
+      }
+      added++;
+      state.pageHighlights.push({
+        highlightId: h.highlightId,
+        sourceId: h.sourceId,
+        primaryCategory: h.primaryCategory,
+        secondaryCategory: h.secondaryCategory || '',
+        text: h.highlightedText,
+        note: h.note || '',
+        color: colorForLabel_(h.primaryCategory) || '#fff8c4',
+        syncStatus: h._pending ? 'pending' : 'saved',
+        fromServer: true,
+      });
+    });
+    if (reconcile) {
+      const gone = state.pageHighlights.filter((x) => x.fromServer && !incomingIds.has(x.highlightId));
+      if (gone.length) {
+        gone.forEach((x) => { if (self.unwrapMark) self.unwrapMark(x.highlightId); });
+        state.pageHighlights = state.pageHighlights.filter((x) => gone.indexOf(x) < 0);
+      }
+    }
+
+    // Try to re-anchor on the page so the colored spans come back too.
+    // Failures are surfaced per-entry in the sidebar; no silent misanchoring.
+    // Always pass the FULL current set (reAnchor is idempotent) so an earlier
+    // entry's "page changed" flag isn't cleared by a pass that omits it.
+    //
+    // Defer mode (OPS_DEFER_REANCHOR === true, set by the PDF panel before
+    // this script loads) skips the document-wide walk because the host
+    // renders content lazily — the panel will call reanchorIn() once per
+    // page as it comes on screen. Without this we'd mark every highlight
+    // as "page changed" on first load, since no pages are in the DOM yet.
+    if (added > 0 && self.reAnchorHighlights && !self.OPS_DEFER_REANCHOR) {
+      scheduleReanchorRetries_(allForReanchor_());
+    }
+    if (!isEditingInPanel_()) render_();
+  }
+
+  function allForReanchor_() {
+    return state.pageHighlights.map((h) => ({
+      highlightId: h.highlightId,
+      primaryCategory: h.primaryCategory,
+      secondaryCategory: h.secondaryCategory,
+      highlightedText: h.text,
+    }));
+  }
+
+  /** Background push: a fresher view of this page for the active project. */
+  function applyUpdate(msg) {
+    if (!state.initialized) return;
+    if (self.OpsEnabled && !self.OpsEnabled.get()) return;
+    if (msg.normalizedUrl && msg.normalizedUrl !== normalizeUrl(opsPageUrl())) return;
+    if (state.project && msg.projectId && msg.projectId !== state.project.projectId) return;
+    applyPageView_(msg, true);
+  }
+
+  /**
+   * The page changed URL without a reload (pushState / SPA navigation). The
+   * saved work for the OLD URL is no longer this page's — clear it and load
+   * the new URL's. Same reset as switching projects, minus the project change.
+   */
+  function resetForNewUrl() {
+    state.pageHighlights.forEach((h) => { if (self.unwrapMark) self.unwrapMark(h.highlightId); });
+    cleanupReanchorRetries_();
+    if (_loadRetryTimer) { clearTimeout(_loadRetryTimer); _loadRetryTimer = null; }
+    _loadAttempt = 0;
+    state.pageHighlights = [];
+    state.pageSource = null;
+    state.filter = null;
+    state.editingId = null;
+    state.altPickerOpenId = null;
+    state.sourceSaveStatus = null;
+    state.loadingHighlights = true;
+    render_();
+    return loadForCurrentPage();
   }
 
   // Re-anchoring can run before late-rendered / hydrated / lazy-loaded body
@@ -1668,12 +1780,43 @@ const OpsSidebar = (function () {
     }
   }
 
-  return { addHighlight, markSynced, markError, focus, show, hide, toggle, _setSourceId, loadForCurrentPage, reanchorIn, whenLoaded, getContext, showReloadHint: showReloadHint_ };
+  return { addHighlight, markSynced, markError, focus, show, hide, toggle, _setSourceId, loadForCurrentPage, reanchorIn, whenLoaded, getContext, showReloadHint: showReloadHint_, applyUpdate, resetForNewUrl };
 })();
 
 self.OpsSidebar = OpsSidebar;
 
+// Background pushes: after serving a cached snapshot the service worker
+// refreshes from the server and sends the fresher page view here.
+try {
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (!msg || msg.type !== 'pageHighlightsUpdated') return;
+    try { OpsSidebar.applyUpdate(msg); } catch (e) { console.warn('[OPS sidebar] applyUpdate failed:', e); }
+  });
+} catch (e) { /* orphaned context — reload hint covers it */ }
+
+// Single-page-app navigation: many news / database sites change the URL via
+// pushState without a reload, so the content script never re-runs and the
+// sidebar kept showing the PREVIOUS article's highlights (and never loaded the
+// new one's). Watch the normalized URL and reload the page view on change.
+// Fragments are ignored by normalizeUrl, so #anchors don't churn. The PDF
+// panel pins its URL via OPS_PAGE_URL and is exempt.
+(function watchUrlChanges_() {
+  if (self.OPS_PAGE_URL) return;
+  let last = normalizeUrl(location.href);
+  const check = () => {
+    let now;
+    try { now = normalizeUrl(location.href); } catch (e) { return; }
+    if (now === last) return;
+    last = now;
+    OpsSidebar.resetForNewUrl().catch(() => {});
+  };
+  window.addEventListener('popstate', check);
+  window.addEventListener('hashchange', check);
+  setInterval(check, 1500);
+})();
+
 // Kick a server load on every page load so the sidebar reflects saved work
 // even after the page reloads. Fires once per content script instance. Best-
-// effort — fails silently if offline or no active project.
+// effort — retries with backoff if offline / the backend is cold, and shows
+// not-yet-synced local work meanwhile.
 OpsSidebar.loadForCurrentPage();

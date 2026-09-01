@@ -66,7 +66,15 @@ function ensureManifestHeaders_(tab) {
  * read, so callers transparently fall back to the Drive walk. An entry missing
  * its gids is returned as-is; the caller treats it as incomplete and re-resolves.
  */
+var MANIFEST_CACHE_TTL_SEC = 600;
+
 function loadProjectManifest_(projectId) {
+  // Cached per project (05_cache.js); record/forget below drop the entry.
+  return cachedJson_('manifest:' + String(projectId), MANIFEST_CACHE_TTL_SEC,
+    () => loadProjectManifestLive_(projectId));
+}
+
+function loadProjectManifestLive_(projectId) {
   try {
     const rows = readAllAsObjects_(getManifestTab_(), MANIFEST_HEADERS);
     const map = {};
@@ -110,6 +118,7 @@ function recordSoloSheetEntry_(projectId, email, spreadsheetId, sourcesGid, high
       highlightsGid: String(highlightsGid === undefined || highlightsGid === null ? '' : highlightsGid),
       updatedAt: nowIso_(),
     });
+    invalidateManifestCache_(projectId);
   } catch (e) {
     console.warn('[OPS] recordSoloSheetEntry_ failed: ' + (e && e.message || e));
     if (throwOnError) throw e;
@@ -144,6 +153,7 @@ function forgetSoloSheetId_(projectId, email) {
     const tab = getManifestTab_();
     const rowIdx = findRowByKey_(tab, MANIFEST_HEADERS, 'key', manifestKey_(projectId, email));
     if (rowIdx > 0) tab.deleteRow(rowIdx);
+    invalidateManifestCache_(projectId);
   } catch (e) {
     console.warn('[OPS] forgetSoloSheetId_ failed: ' + (e && e.message || e));
   }

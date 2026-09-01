@@ -332,6 +332,9 @@ function adminChangeStudentEmail(oldEmail, newEmail) {
     }
   }
   invalidateRosterMemo_();
+  // The student's Sheets get renamed + re-keyed below; drop every cached
+  // (student → sheetId) resolution so neither email resolves to a stale file.
+  bumpSheetRefVersion_();
 
   const errors = [];
   let renamedSheets = 0;
@@ -602,6 +605,7 @@ function adminAddStaffRow(row) {
   }
   const stored = { Name: name, Email: email, Role: role };
   appendRow_(tab, HEADERS.STAFF, stored);
+  invalidateStaffCache_();
   return { ok: true, row: stored };
 }
 
@@ -628,6 +632,7 @@ function adminUpdateStaffRow(email, fields) {
   HEADERS.STAFF.forEach((header, i) => {
     if (header in updates) tab.getRange(rowIdx, i + 1).setValue(updates[header]);
   });
+  invalidateStaffCache_();
   const all = readAllAsObjects_(tab, HEADERS.STAFF);
   const updated = all.find((r) => String(r.Email || '').toLowerCase() === target);
   return { ok: true, row: updated };
@@ -653,6 +658,7 @@ function adminChangeStaffEmail(oldEmail, newEmail) {
   const rowIdx = findRowByKeyCi_(tab, HEADERS.STAFF, 'Email', oldL);
   const emailCol = HEADERS.STAFF.indexOf('Email') + 1;
   tab.getRange(rowIdx, emailCol).setValue(newL);
+  invalidateStaffCache_();
   return { ok: true, oldEmail: oldL, newEmail: newL };
 }
 
@@ -668,6 +674,7 @@ function adminDeleteStaffRow(email) {
   const rowIdx = findRowByKeyCi_(tab, HEADERS.STAFF, 'Email', target);
   if (rowIdx < 0) throw new Error('Staff row not found: ' + target);
   tab.deleteRow(rowIdx);
+  invalidateStaffCache_();
   return { ok: true, email: target };
 }
 
