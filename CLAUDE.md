@@ -667,7 +667,11 @@ These supersede or refine the spec — apply them before defaulting to plan text
   (teacher = the class's TeacherEmail; admin = any class). **Add enrolls an
   EXISTING `Students` row only.** An unknown email returns
   `{ok:false, reason:'not_found'}` and the modal shows it inline; creating
-  students stays admin-only. **Remove = unenroll only.** Sheets are kept, and
+  students stays admin-only. **A non-admin can't enroll a student who is in
+  ANOTHER teacher's class in an active project shared with this class**
+  (`enrollConflictsWithOtherTeacher_` → `reason:'other_teacher'`). Without
+  that, enrolling would grant drill-down access to the student's Sheet, which
+  is found by email, not by class. Admins move those students. **Remove = unenroll only.** Sheets are kept, and
   `findSoloSheetInProject_` finds the same Sheet on re-enroll. A grouped student
   first leaves the group through `removeMemberFromGroupCore_` (active projects
   containing the class; `groupsToLeaveOnUnenroll_` picks groups filed under
@@ -685,19 +689,27 @@ These supersede or refine the spec — apply them before defaulting to plan text
     as **`citationFields.pasted = {text, italics}`**, so it rides every existing
     write/merge path untouched. **`formatCitation` returns it in place of the
     built citation**, so the preview, bibliography and drill-down all agree with
-    no per-caller logic. `pastedCitationOf_` sanitizes it (whitespace, clamped
-    and merged italics). It **counts as cited** via `isCitationComplete_`
+    no per-caller logic. `pastedCitationOf_` sanitizes it (whitespace
+    collapsed with italic ranges remapped, clamped, merged), and
+    `sanitizeCitationFieldsForStorage_` applies the same 2000-char cap on BOTH
+    write paths (`upsertSource_`, `sidebarUpdateSource`), so a giant paste
+    can't hit the 50k cell limit and wedge the source's queue. "Copy citation"
+    (`formatInlineCitation`) follows a paste too (`pastedInlineCitation_`:
+    quoted title, italic title, or the leading author name). It **counts as cited** via `isCitationComplete_`
     ([`62_aggregator.js`](apps-script/src/62_aggregator.js)), the single
     "citation done" rule used by the dashboard metric and the drill-down flags.
     The bibliography sorts it by its own first word. UI: a paste box on the
     extension Source tab AND the Docs source editor (`renderPasteBlock_` +
     `citationFromClipboard_` in both, which keeps `<i>`/`<em>`/inline-italic
-    from the clipboard HTML; **keep the two copies in sync**). A "Replace your
+    from the clipboard HTML and counts UTF-16 units so emoji don't shift
+    ranges; **keep the two copies in sync**). The extension keeps an
+    unconfirmed paste in `state.pasteDraft` across background re-renders. A "Replace your
     citation?" confirm comes first; "Use the built citation instead" deletes the
     key. The per-type fields hide while a paste is active.
   - **Links back to the source.** `formatCitation` now also returns `links:
-    [[start,end,href]]` (`citationLinkRanges_`: the source URL, else the first
-    URL-looking token; `www.`-only gets `https://`). The bibliography applies
+    [[start,end,href]]` (`citationLinkRanges_`: the LAST occurrence of a
+    URL-shaped source URL, else the first URL-looking token; `www.`-only gets
+    `https://`; a trailing period never enters the href). The bibliography applies
     them with `setLinkUrl`, so the URL in the Doc is clickable. "Open source ↗" sits on
     Docs sidebar cards + the source editor; drill-down titles and citation URLs
     are links.
@@ -715,7 +727,9 @@ These supersede or refine the spec — apply them before defaulting to plan text
     (no highlight needed; same `getOrCreateSourceId` path). The **first sign-in
     the backend recognizes switches the extension on**
     (`autoEnableOnFirstSignIn_`), only while `extensionEnabled` was never set,
-    so a student who turned it off stays off.
+    so a student who turned it off stays off, and only for an account on the
+    roster or staff list (an unrostered account would just get a toolbar that
+    says "No active project").
   - **Dashboard timing.** `consoleGetProjectDashboard` logs
     `[OPS] dashboard timing <projectId> {path, classes, students, sheets,
     setupMs, readMs, totalMs}` and returns it as `resp.timing`. Read it on a
