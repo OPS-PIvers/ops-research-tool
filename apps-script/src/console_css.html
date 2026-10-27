@@ -1279,7 +1279,37 @@ select, input, textarea { font: inherit; }
   cursor: pointer;
   font: inherit;
 }
-.db-manage:hover { background: var(--c-soft); }
+.db-manage:hover:not(:disabled) { background: var(--c-soft); }
+.db-manage:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Manage roster modal (class-scoped enroll/unenroll) */
+.roster-modal { max-width: 520px; }
+.roster-modal__adder { margin-top: 0; }
+.roster-modal__count {
+  font-size: 11px; color: var(--c-muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  margin: 14px 0 6px;
+}
+.roster-modal__list { max-height: 360px; }
+.roster-modal__row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 5px;
+}
+.roster-modal__row:hover { background: var(--c-soft); }
+.roster-modal__who { flex: 1; min-width: 0; }
+.roster-modal__name { font-size: 14px; color: var(--c-text); }
+.roster-modal__email {
+  font-size: 12px; color: var(--c-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.roster-modal__remove {
+  flex: none; padding: 5px 12px; border-radius: 4px; cursor: pointer;
+  background: transparent; color: var(--c-brand-secondary);
+  border: 1px solid var(--c-brand-secondary-tint); font: inherit; font-size: 13px;
+}
+.roster-modal__remove:hover:not(:disabled) { background: var(--c-brand-secondary-tint); }
+.roster-modal__remove:disabled { opacity: 0.5; cursor: not-allowed; }
+.roster-modal__empty { padding: 12px 10px; font-size: 13px; color: var(--c-muted); }
 .db-manage--on {
   background: var(--c-brand-primary-tint);
   border-color: var(--c-brand-primary);
