@@ -15,7 +15,13 @@ const els = {
   email: document.getElementById('identity-email'),
   error: document.getElementById('error'),
   forceDrain: document.getElementById('force-drain'),
-  reconnect: document.getElementById('reconnect'),
+  signin: document.getElementById('signin'),
+  signinTitle: document.getElementById('signin-title'),
+  signinBody: document.getElementById('signin-body'),
+  signinButton: document.getElementById('signin-button'),
+  signinError: document.getElementById('signin-error'),
+  signinAgain: document.getElementById('signin-again'),
+  signinAgainButton: document.getElementById('signin-again-button'),
   lastSync: document.getElementById('last-sync'),
   enabledToggle: document.getElementById('enabled-toggle'),
   enabledLabel: document.getElementById('enabled-label'),
@@ -28,11 +34,27 @@ const SYNC_STATUS_TEXT = {
   syncing: 'Saving…',
   error: 'Save error — retrying',
   offline: 'Offline — saved on this device',
-  needsAuth: 'Sign-in needed',
+  needsAuth: 'Signed out',
 };
+
+// Whether this browser has ever had a working sign-in. Decides the sign-in
+// card's wording: first-time setup vs. "you got signed out, here's how back".
+let hadIdentity = false;
 
 initEnabledToggle_();
 bootstrapFromCache_().then(() => bootstrapFromNetwork_());
+
+// Keep the popup live while it's open: a background drain can flip the status
+// (e.g. to 'needsAuth') or a sign-in can land identity.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if (changes.syncStatus || changes.lastSyncAt) {
+    getSyncStatusSafe_().then(renderSyncStatus);
+  }
+  if (changes.cachedMe && changes.cachedMe.newValue) {
+    renderIdentity(changes.cachedMe.newValue);
+  }
+});
 
 // Master on/off switch. Single global flag in chrome.storage.local; the
 // content scripts (content/enabled.js) read it and gate the toolbar + sidebar.
@@ -57,6 +79,7 @@ function reflectEnabled_(on) {
 // the popup feels snappy and doesn't appear to reload on every open.
 async function bootstrapFromCache_() {
   const cached = await chrome.storage.local.get(['cachedMe', 'syncStatus', 'lastSyncAt']);
+  hadIdentity = !!(cached.cachedMe && cached.cachedMe.ok);
   renderSyncStatus({ status: cached.syncStatus || 'idle', lastSyncAt: cached.lastSyncAt || null });
   renderIdentity(cached.cachedMe || null);
 }
@@ -73,34 +96,73 @@ async function bootstrapFromNetwork_() {
   }
   if (!refresh || !refresh.ok) {
     // A failed context refresh whose error is an auth wall means the cached
-    // token is dead and can't be silently refreshed — surface Reconnect.
+    // token is dead and can't be silently refreshed — show the sign-in card.
     if (refresh && /AUTH_REQUIRED/.test(refresh.error || '')) {
       renderSyncStatus({ status: 'needsAuth' });
     }
     return;
   }
   renderIdentity(refresh.me || null);
+  // Signed in fine. A stale 'needsAuth' left in storage from an earlier
+  // failure would otherwise keep the sign-in card up.
+  const s = await getSyncStatusSafe_();
+  if (s.status === 'needsAuth') {
+    await chrome.storage.local.set({ syncStatus: 'idle' });
+    renderSyncStatus({ status: 'idle', lastSyncAt: s.lastSyncAt });
+  }
 }
 
 function renderSyncStatus(s) {
   if (!s || !s.status) return;
   els.status.className = 'sync-status sync-status--' + s.status;
   els.status.textContent = SYNC_STATUS_TEXT[s.status] || s.status;
-  // Offer the interactive reconnect whenever syncing isn't cleanly healthy.
-  els.reconnect.hidden = !['needsAuth', 'error', 'offline'].includes(s.status);
+  renderSignIn_(s.status === 'needsAuth');
+  // Saves failing for another reason can still be an expired sign-in; offer
+  // the low-key way back in without shouting about it.
+  els.signinAgain.hidden = !['error', 'offline'].includes(s.status);
   if (s.lastSyncAt) {
     const d = new Date(s.lastSyncAt);
     els.lastSync.textContent = 'last sync ' + d.toLocaleTimeString();
   }
 }
 
+// The prominent sign-in card. Two wordings: first-time setup on a fresh
+// install, and "you were signed out" for an expired sign-in — the second also
+// reassures the student their unsaved work is still on this computer.
+function renderSignIn_(show) {
+  const wasShown = !els.signin.hidden;
+  els.signin.hidden = !show;
+  if (!show) {
+    // Signed back in (possibly by the worker while this popup sat open):
+    // replace "Not signed in" with the real identity.
+    if (wasShown) {
+      chrome.storage.local.get('cachedMe').then((c) => renderIdentity(c.cachedMe || null));
+    }
+    return;
+  }
+  if (hadIdentity) {
+    els.signinTitle.textContent = 'You\u2019ve been signed out';
+    els.signinBody.textContent =
+      'Sign in again with your school Google account. Anything you highlighted ' +
+      'is safe on this computer and will save as soon as you\u2019re back in.';
+  } else {
+    els.signinTitle.textContent = 'Sign in to get started';
+    els.signinBody.textContent =
+      'Use your school Google account to save your highlights and sources.';
+  }
+  els.name.textContent = 'Not signed in';
+  els.email.textContent = '';
+}
+
 function renderIdentity(meResp) {
+  if (!els.signin.hidden) return; // the sign-in card owns the identity line
   if (!meResp || !meResp.ok) {
     els.name.textContent = '—';
     els.email.textContent = '';
     els.teacherSection.hidden = true;
     return;
   }
+  hadIdentity = true;
   const roster = meResp.roster;
   const staff = meResp.staff;
 
@@ -147,55 +209,55 @@ els.forceDrain.addEventListener('click', async () => {
   setTimeout(() => { els.forceDrain.disabled = false; }, 1000);
 });
 
-// Interactive re-auth. The background drain only ever fetches tokens silently
-// (an alarm has no window to show a sign-in prompt), so when the account needs
-// re-consent the queue stalls at 'needsAuth'. The popup IS a window with a user
-// gesture, so the interactive flow can run here: clear the poisoned token, mint
-// a fresh one (showing the Google/SSO window if needed), then kick a drain.
-els.reconnect.addEventListener('click', async () => {
-  els.reconnect.disabled = true;
+// Interactive sign-in. Background drains only ever fetch tokens silently (an
+// alarm has no window to show a sign-in prompt), so when the token can't be
+// refreshed the queue waits at 'needsAuth' until the student clicks here.
+// The background worker runs the actual flow: the Google window takes focus
+// and closes this popup, and the worker is what's still around to finish.
+async function signIn_() {
+  els.signinButton.disabled = true;
+  els.signinAgainButton.disabled = true;
+  els.signinError.hidden = true;
   els.error.hidden = true;
-  els.status.textContent = 'Signing in…';
+  els.signinButton.textContent = 'Signing in\u2026';
+  let r;
   try {
-    await clearAllCachedAuthTokens_();
-    await getAuthTokenInteractive_();
+    r = await sendMessage({ type: 'signIn' });
   } catch (e) {
-    showError('Sign-in failed: ' + (e.message || e));
-    els.reconnect.disabled = false;
+    r = { ok: false, error: e.message || String(e) };
+  }
+  els.signinButton.disabled = false;
+  els.signinAgainButton.disabled = false;
+  els.signinButton.textContent = 'Sign in with Google';
+  if (!r || !r.ok) {
     renderSyncStatus({ status: 'needsAuth' });
+    els.signinError.textContent = friendlySignInError_(r && r.error);
+    els.signinError.hidden = false;
     return;
   }
-  // Fresh token is now cached extension-wide; the worker will pick it up.
-  await sendMessage({ type: 'refreshContext' }).then((r) => {
-    if (r && r.ok) renderIdentity(r.me || null);
-  }).catch(() => {});
-  await sendMessage({ type: 'forceDrain' }).catch(() => {});
-  const s = await sendMessage({ type: 'getSyncStatus' });
-  renderSyncStatus(s);
-  els.reconnect.disabled = false;
-});
-
-function getAuthTokenInteractive_() {
-  return new Promise((resolve, reject) => {
-    chrome.identity.getAuthToken({ interactive: true }, (token) => {
-      if (chrome.runtime.lastError || !token) {
-        reject(new Error((chrome.runtime.lastError && chrome.runtime.lastError.message) || 'no token'));
-        return;
-      }
-      resolve(token);
-    });
-  });
+  renderSyncStatus(await getSyncStatusSafe_());
+  renderIdentity(r.me || null);
 }
 
-function clearAllCachedAuthTokens_() {
-  return new Promise((resolve) => {
-    if (chrome.identity.clearAllCachedAuthTokens) {
-      chrome.identity.clearAllCachedAuthTokens(() => resolve());
-    } else {
-      resolve();
-    }
-  });
+// Turn chrome.identity / backend errors into something a 7th grader can act on.
+function friendlySignInError_(raw) {
+  const msg = String(raw || '');
+  if (/did not approve|cancel|closed/i.test(msg)) {
+    return 'Sign-in was cancelled. Click \u201cSign in with Google\u201d to try again.';
+  }
+  if (/not signed in/i.test(msg)) {
+    return 'Sign in to Chrome with your school account first, then try again.';
+  }
+  return 'Sign-in didn\u2019t work. Try again, and if it keeps happening, tell your teacher' +
+    (msg ? ' (' + msg + ')' : '') + '.';
 }
+
+function getSyncStatusSafe_() {
+  return sendMessage({ type: 'getSyncStatus' }).catch(() => ({ status: 'idle' }));
+}
+
+els.signinButton.addEventListener('click', signIn_);
+els.signinAgainButton.addEventListener('click', signIn_);
 
 // Redirect teachers directly to the GAS web app projects list (WEB_APP_URL)
 els.goToProjects.addEventListener('click', () => {

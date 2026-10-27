@@ -187,6 +187,8 @@ async function handleMessage(msg, sender) {
       // Share the single-flight so a popup-open doesn't fire a second 3-call
       // refresh on top of one the sidebar/toolbar already kicked.
       return refreshContextOnce_();
+    case 'signIn':
+      return signInInteractive_();
     case 'getSyncStatus':
       return getSyncStatus();
     case 'forceDrain':
@@ -738,6 +740,41 @@ async function getActiveProjectInfo() {
   }
   const bundle = project ? bundles.find((b) => b.bundleId === project.bundleId) || null : null;
   return { ok: true, activeProjectId, project, bundle, projects, projectsKnown: projects.length > 0 };
+}
+
+/**
+ * Interactive sign-in, started by the popup's "Sign in with Google" button.
+ * Runs HERE rather than in the popup because the Google window takes focus and
+ * Chrome closes the popup — any follow-up code in the popup would never run.
+ * The worker outlives the popup, so it can finish the job: mint the token,
+ * re-warm identity/projects, and drain whatever queued up while signed out.
+ * Background drains still never call this (no user present to sign in).
+ */
+async function signInInteractive_() {
+  await clearAllCachedTokens();
+  try {
+    await getAuthTokenAsync(true);
+  } catch (e) {
+    await setSyncStatus('needsAuth');
+    return { ok: false, error: e.message || String(e) };
+  }
+  let me = null;
+  try {
+    // Not the single-flight: one already in flight was started with the dead
+    // token and would hand back its auth failure.
+    const r = await refreshContext();
+    me = r && r.me;
+  } catch (e) {
+    // Got a Google token but the backend still bounced it — still signed out
+    // as far as saving goes.
+    if (e && e.authRequired) {
+      await setSyncStatus('needsAuth');
+      return { ok: false, error: e.message || String(e) };
+    }
+  }
+  await setSyncStatus('idle');
+  drain().catch(() => {});
+  return { ok: true, me };
 }
 
 /** Refresh roster + projects + bundles caches from GAS. Called by popup on open. */
