@@ -1717,6 +1717,88 @@ function devTestGroupsAll() {
 }
 
 // ============================================================
+// Teacher "Manage roster" (68_teacher_roster.js)
+// ============================================================
+
+/**
+ * Pure auth/normalization checks + a live DEV round trip: unenroll a grouped
+ * student (group exit runs first → solo Sheet rebuilt, 2-member group
+ * auto-disbands), re-enroll by a messy-cased email, and confirm the SAME solo
+ * Sheet resolves again (Sheets are kept on remove). Runs as the editor user
+ * (admin via devSeedDevProject). Node twin: test/teacher_roster.node.test.js.
+ */
+function devTestTeacherRoster() {
+  const project = devSeedDevProject();
+  const emails = devGroupsSeedRoster_(2);
+  const { check, state } = devGroupsChecker_();
+  try {
+    check('teacher owns class', canEditClassRoster_('t@x.org', false, { Class: 'C', TeacherEmail: 'T@x.org' }));
+    check('teacher refused on another class', !canEditClassRoster_('t@x.org', false, { Class: 'C', TeacherEmail: 'u@x.org' }));
+    check('admin allowed', canEditClassRoster_('a@x.org', true, { Class: 'C', TeacherEmail: 'u@x.org' }));
+    check('unknown class refused', !canEditClassRoster_('a@x.org', true, null));
+
+    const bundle = listBundles_().find((b) => b.bundleId === project.bundleId);
+    const a = emails[0];
+    const aSheet = findOrCreateStudentSheet_(a, project);
+    upsertSource_(aSheet, {
+      sourceId: 'tr-src-' + a, projectId: project.projectId,
+      rawUrl: 'https://devtr.example.com/' + a, scrapedTitle: 'tr', createdByEmail: a,
+    });
+    upsertHighlight_(aSheet, {
+      highlightId: 'tr-hl-' + a, sourceId: 'tr-src-' + a, projectId: project.projectId,
+      primaryCategory: bundle.label1, highlightedText: 'tr', createdByEmail: a,
+    });
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
+    const g = consoleGroupCreate(project.projectId, 'RosterProbe', emails);
+    check('fixture group created', g && g.ok === true);
+
+    const roster = consoleGetClassRoster('DEV');
+    check('roster lists the student', roster.students.some((s) => s.email === a));
+
+    const rm = consoleUnenrollStudentFromClass('DEV', a);
+    check('unenroll removed 1 row', rm.removed === 1);
+    check('left the group first', rm.leftGroups.length === 1 && rm.leftGroups[0].groupId === g.groupId);
+    check('2-member group auto-disbanded', rm.leftGroups[0].autoDisbanded === true);
+    check('roster no longer lists them', !rm.students.some((s) => s.email === a));
+    resetGroupSheetCache_();
+    const solo = findSoloSheetInProject_(a, project);
+    check('solo Sheet rebuilt + kept', !!solo);
+    const soloId = solo && solo.getId();
+    check('their highlight followed them out', !!solo && readAllAsObjects_(getTab_(solo, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS)
+      .some((h) => h.highlightId === 'tr-hl-' + a));
+    check('remove is idempotent', consoleUnenrollStudentFromClass('DEV', a).removed === 0);
+
+    const nf = consoleEnrollStudentInClass('DEV', 'nobody.here.zz@orono.k12.mn.us');
+    check('unknown email → not_found', nf.ok === false && nf.reason === 'not_found');
+    const add = consoleEnrollStudentInClass('DEV', '  ' + a.toUpperCase() + ' ');
+    check('re-enroll by messy-cased email', add.ok === true && add.alreadyEnrolled === false &&
+      getStudentClasses_(a).indexOf('DEV') >= 0);
+    check('already enrolled reported', consoleEnrollStudentInClass('DEV', a).alreadyEnrolled === true);
+    const again = findSoloSheetInProject_(a, project);
+    check('re-enroll resolves the SAME Sheet', !!again && again.getId() === soloId);
+
+    const audit = listAuditEventsForProject_('').filter((e) => String(e.detail).indexOf('email=' + a) >= 0);
+    check('audit: enroll + unenroll written',
+      audit.some((e) => e.action === AUDIT_ACTIONS.ROSTER_ENROLL) &&
+      audit.some((e) => e.action === AUDIT_ACTIONS.ROSTER_UNENROLL));
+  } finally {
+    try {
+      resetGroupSheetCache_(); bumpSheetRefVersion_();
+      listGroupsForProject_(project, 'DEV').forEach((g) => { try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {} });
+    } catch (e) {}
+    emails.forEach((e) => {   // friendly-named solos aren't matched by the cleanup's exact-name walk
+      try {
+        const ss = findSoloSheetInProject_(e, project);
+        if (ss) { DriveApp.getFileById(ss.getId()).setTrashed(true); forgetSoloSheetId_(project.projectId, e); }
+      } catch (err) {}
+    });
+    devGroupsTestCleanup_(emails);
+  }
+  console.log('devTestTeacherRoster' + state.pass + '/' + (state.pass + state.fail) + ' passed');
+  return state;
+}
+
+// ============================================================
 // Richer citation scrape: scrapedExtra storage + additive header heal
 // ============================================================
 

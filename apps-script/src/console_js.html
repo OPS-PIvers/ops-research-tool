@@ -1330,6 +1330,19 @@ function renderDashboard_(main) {
   });
   toolbar.appendChild(manageBtn);
 
+  // Manage roster — scoped to the class being viewed; disabled on "All classes"
+  // (synced in paintDashboard_ once the project's class scope is known).
+  const rosterBtn = document.createElement('button');
+  rosterBtn.className = 'db-manage';
+  rosterBtn.id = 'db-roster';
+  rosterBtn.textContent = 'Manage roster';
+  rosterBtn.disabled = true;
+  rosterBtn.addEventListener('click', () => {
+    const cls = rosterClassForDashboard_();
+    if (cls) openManageRosterModal_(cls);
+  });
+  toolbar.appendChild(rosterBtn);
+
   const asof = document.createElement('div');
   asof.className = 'db-asof';
   asof.id = 'db-asof';
@@ -1518,6 +1531,8 @@ function paintDashboard_() {
       avail.forEach((c) => tabsHost.appendChild(mkTab(tabLabels[c], c)));
     }
   }
+
+  syncRosterBtn_();
 
   const body = document.getElementById('db-body');
   if (!body) return;
@@ -3336,5 +3351,250 @@ function confirmDisband_() {
   modal.appendChild(actions);
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
+}
+// ============================================================
+// Manage roster (teacher, class-scoped) — 68_teacher_roster.js
+// ============================================================
+
+/** The class the roster button acts on: the active tab, or the only scoped class. */
+function rosterClassForDashboard_() {
+  const proj = dashboard.data && dashboard.data.project;
+  if (!proj) return null;
+  if (proj.activeClass) return proj.activeClass;
+  const scoped = proj.scopedClasses || [];
+  return scoped.length === 1 ? scoped[0] : null;
+}
+
+function syncRosterBtn_() {
+  const btn = document.getElementById('db-roster');
+  if (!btn) return;
+  const cls = rosterClassForDashboard_();
+  btn.disabled = !cls;
+  btn.title = cls ? 'Add or remove students in ' + classLabel_(cls) : 'Pick a class tab first';
+}
+
+function openManageRosterModal_(classKey) {
+  closeModal_();
+  const st = { label: classLabel_(classKey), students: null, busy: false, changed: false };
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.id = 'modal-backdrop';
+  const close = () => {
+    closeModal_();
+    const c = document.getElementById('roster-confirm-backdrop');
+    if (c) c.remove();
+    if (st.changed && state.view === 'DASHBOARD') fetchDashboard_(state.projectId, true);
+  };
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+
+  const modal = document.createElement('div');
+  modal.className = 'modal roster-modal';
+
+  const header = document.createElement('div');
+  header.className = 'modal__header';
+  header.textContent = 'Manage roster · ' + st.label;
+  modal.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'modal__body';
+
+  // Add-by-email row (existing district students only — the server enforces it).
+  const adder = document.createElement('form');
+  adder.className = 'modal__class-adder roster-modal__adder';
+  const input = document.createElement('input');
+  input.type = 'email';
+  input.placeholder = 'Add student by email';
+  input.autocomplete = 'off';
+  input.setAttribute('aria-label', 'Add student by email');
+  adder.appendChild(input);
+  const addBtn = document.createElement('button');
+  addBtn.type = 'submit';
+  addBtn.textContent = 'Add';
+  adder.appendChild(addBtn);
+  body.appendChild(adder);
+  const err = document.createElement('div');
+  err.className = 'modal__error';
+  err.setAttribute('role', 'alert');
+  body.appendChild(err);
+
+  const count = document.createElement('div');
+  count.className = 'roster-modal__count';
+  body.appendChild(count);
+  const list = document.createElement('div');
+  list.className = 'modal__classes roster-modal__list';
+  list.textContent = 'Loading…';
+  body.appendChild(list);
+  modal.appendChild(body);
+
+  const footer = document.createElement('div');
+  footer.className = 'modal__footer';
+  const done = document.createElement('button');
+  done.className = 'modal__btn';
+  done.textContent = 'Done';
+  done.addEventListener('click', close);
+  footer.appendChild(done);
+  modal.appendChild(footer);
+
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+  input.focus();
+
+  const apply = (resp) => {
+    if (!resp || !resp.ok || !Array.isArray(resp.students)) {
+      if (!st.students) list.textContent = '';
+      err.textContent = 'Could not load the roster — close and try again.';
+      return;
+    }
+    if (resp.label) st.label = resp.label;
+    header.textContent = 'Manage roster · ' + st.label;
+    st.students = resp.students;
+    paint();
+  };
+  const paint = () => {
+    list.innerHTML = '';
+    const n = st.students.length;
+    count.textContent = n + ' student' + (n === 1 ? '' : 's');
+    if (!n) {
+      const empty = document.createElement('div');
+      empty.className = 'roster-modal__empty';
+      empty.textContent = 'No students in this class yet.';
+      list.appendChild(empty);
+      return;
+    }
+    st.students.forEach((s) => {
+      const row = document.createElement('div');
+      row.className = 'roster-modal__row';
+      const who = document.createElement('div');
+      who.className = 'roster-modal__who';
+      const nm = document.createElement('div');
+      nm.className = 'roster-modal__name';
+      nm.textContent = s.name;
+      who.appendChild(nm);
+      if (s.name !== s.email) {
+        const em = document.createElement('div');
+        em.className = 'roster-modal__email';
+        em.textContent = s.email;
+        who.appendChild(em);
+      }
+      row.appendChild(who);
+      const rm = document.createElement('button');
+      rm.className = 'roster-modal__remove';
+      rm.textContent = 'Remove';
+      rm.disabled = st.busy;
+      rm.addEventListener('click', () => confirmRemove(s));
+      row.appendChild(rm);
+      list.appendChild(row);
+    });
+  };
+  const setBusy = (b) => {
+    st.busy = b;
+    addBtn.disabled = b;
+    input.disabled = b;
+    if (st.students) paint();
+  };
+
+  adder.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const email = input.value.trim();
+    err.textContent = '';
+    if (!email || st.busy) return;
+    setBusy(true);
+    addBtn.textContent = 'Adding…';
+    google.script.run
+      .withSuccessHandler((resp) => {
+        addBtn.textContent = 'Add';
+        setBusy(false);
+        if (!resp || !resp.ok) {
+          err.textContent = (resp && resp.message) || 'Could not add that student.';
+          input.focus();
+          return;
+        }
+        apply(resp);
+        input.value = '';
+        input.focus();
+        if (resp.alreadyEnrolled) {
+          setStatus(resp.email + ' is already in ' + st.label + '.', null, 3000);
+        } else {
+          st.changed = true;
+          setStatus('Added ' + resp.email + ' to ' + st.label + '.', 'good', 3000);
+        }
+      })
+      .withFailureHandler((e2) => {
+        addBtn.textContent = 'Add';
+        setBusy(false);
+        err.textContent = String(e2 && e2.message || e2);
+      })
+      .consoleEnrollStudentInClass(classKey, email);
+  });
+
+  // Second backdrop stacked over the roster modal (same .modal styles).
+  const confirmRemove = (s) => {
+    const display = [s.first, s.last].filter(Boolean).join(' ') || s.email;
+    const cb = document.createElement('div');
+    cb.className = 'modal-backdrop';
+    cb.id = 'roster-confirm-backdrop';
+    cb.addEventListener('click', (e) => { if (e.target === cb) cb.remove(); });
+    const m = document.createElement('div');
+    m.className = 'modal';
+    const h = document.createElement('div');
+    h.className = 'modal__header';
+    h.textContent = 'Remove student?';
+    m.appendChild(h);
+    const b = document.createElement('div');
+    b.className = 'modal__body';
+    const p = document.createElement('p');
+    p.style.margin = '0';
+    p.style.lineHeight = '1.5';
+    p.textContent = 'Remove ' + display + ' from ' + st.label + '? Their work is kept and comes back if they\'re re-added.';
+    b.appendChild(p);
+    m.appendChild(b);
+    const f = document.createElement('div');
+    f.className = 'modal__footer';
+    const cancel = document.createElement('button');
+    cancel.className = 'modal__btn';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', () => cb.remove());
+    f.appendChild(cancel);
+    const ok = document.createElement('button');
+    ok.className = 'modal__btn modal__btn--primary';
+    ok.style.background = 'var(--c-bad)';
+    ok.style.borderColor = 'var(--c-bad)';
+    ok.textContent = 'Remove';
+    ok.addEventListener('click', () => {
+      ok.disabled = true; cancel.disabled = true;
+      ok.textContent = 'Removing…';
+      setBusy(true);
+      google.script.run
+        .withSuccessHandler((resp) => {
+          cb.remove();
+          setBusy(false);
+          apply(resp);
+          st.changed = true;
+          const left = (resp && resp.leftGroups) || [];
+          setStatus('Removed ' + display + ' from ' + st.label +
+            (left.length ? ' — their group work moved back to a solo Sheet.' : '.'), 'good', 4000);
+        })
+        .withFailureHandler((e2) => {
+          cb.remove();
+          setBusy(false);
+          err.textContent = 'Remove failed: ' + String(e2 && e2.message || e2);
+        })
+        .consoleUnenrollStudentFromClass(classKey, s.email);
+    });
+    f.appendChild(ok);
+    m.appendChild(f);
+    cb.appendChild(m);
+    document.body.appendChild(cb);
+    ok.focus();
+  };
+
+  google.script.run
+    .withSuccessHandler(apply)
+    .withFailureHandler((e) => {
+      list.textContent = '';
+      err.textContent = 'Could not load roster: ' + String(e && e.message || e);
+    })
+    .consoleGetClassRoster(classKey);
 }
 </script>
