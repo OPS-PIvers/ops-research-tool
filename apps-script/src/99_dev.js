@@ -1305,15 +1305,24 @@ function devGroupsTestCleanup_(emails) {
         }
       }
     });
-    // Trash any solo Sheets named like our dev emails.
+    // Trash the dev emails' solo Sheets. Match by soloSheetNameMatches_ (via
+    // findSoloSheetFile_), not exact filename — current Sheets are named
+    // "<project> — Research — <email>", legacy ones bare <email>. Loop: it
+    // skips trashed files, so each pass finds the next copy (if any).
     [classFolder, findChildFolder_(classFolder, NAMES.ARCHIVED_STUDENTS_FOLDER)].forEach((parent) => {
       if (!parent) return;
       emails.forEach((e) => {
-        const f = findChildFile_(parent, e);
-        if (f) { try { f.setTrashed(true); } catch (err) {} }
+        let f;
+        while ((f = findSoloSheetFile_(parent, e))) {
+          try { f.setTrashed(true); } catch (err) { break; }
+        }
       });
     });
   }
+  // Don't let the manifest or the cached (student, project) → Sheet resolution
+  // point the next run at a Sheet we just trashed.
+  emails.forEach((e) => forgetSoloSheetId_(project.projectId, e));
+  bumpSheetRefVersion_();
 
   // Remove students (identity + enrollments).
   ensureClassSchema_();
