@@ -158,13 +158,17 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     extension → brand-styled modal with a click-to-open button to the published
     Web Store listing (`CONFIG.CHROME_WEBSTORE_URL`). Mainly for staff + personal
     devices; managed student devices get the extension force-installed.
-  - **Add-on publishing IN PROGRESS (2026-06-08):** pushed as **Apps Script
-    version 108**; the Workspace Marketplace SDK listing is being configured
-    (Editor Add-on → Docs → version 108, Visibility Private, Admin install). Any
-    future add-on code change needs a NEW `clasp version` + the SDK re-pointed at
-    it — the listing does NOT track the live script.
-  - **Still TODO in Phase 3:** finish + publish the Marketplace SDK listing
-    (point it at version 108) then admin-install domain-wide; real-Doc QA of
+  - **Add-on listing points at Apps Script version 113 (2026-10-27).** First
+    configured at version 108 (2026-06-08); re-pointed to 113 for the 2026-10-27
+    batch (paste box, Open source links, bibliography hyperlinks). The Workspace
+    Marketplace SDK listing (Editor Add-on → Docs, Visibility Private, Admin
+    install) does NOT track the live script: after any Docs-side change merges,
+    take the version number the CI deploy just created (the Actions log prints
+    `Deployed <id> @<N>`; every `main` deploy mints a new one, so no separate
+    `clasp version` is needed) and set it in **App Configuration**:
+    https://console.cloud.google.com/apis/api/appsmarket-component.googleapis.com/googleapps_sdk?project=ops-research-tool
+  - **Still TODO in Phase 3:** admin-install the add-on domain-wide (if not
+    done yet); real-Doc QA of
     bibliography formatting + cursor insertion; wire the extension's
     `focusHighlight` message (see §9) to the sidebar.
 - **Phase 4 — Teacher Console — sub-projects A/B/C/D COMPLETE.**
@@ -804,12 +808,16 @@ These supersede or refine the spec — apply them before defaulting to plan text
   [`extension/config.js`](extension/config.js). Source: GCP project linked to
   the GAS → **APIs & Services → Credentials** → Chrome-Extension-type OAuth
   client keyed on the unpacked extension's ID.
+- **CI deploy works (verified 2026-10-27).** `CLASPRC_JSON` + `GAS_DEPLOYMENT_ID`
+  are set: the merge of PR #7 ran Deploy Apps Script, pushed the source and
+  redeployed the Web App (`AKfycbwaWJe2…` → version 113). A push to `main`
+  touching `apps-script/**` needs no manual redeploy. The Docs add-on listing
+  is the one exception (Phase 3 bullet: re-point its version by hand).
 
 **Still open:**
-1. **Finish publishing the Docs editor add-on** (Phase 3). Pushed as **Apps
-   Script version 108**; the Workspace Marketplace SDK listing is mid-setup
-   (Editor Add-on → Docs → **version 108**, Visibility **Private**, Admin
-   install, Store Listing + ToS/privacy URLs). Internal/private = no Google
+1. **Finish rolling out the Docs editor add-on** (Phase 3). The Workspace
+   Marketplace SDK listing is set up (Editor Add-on → Docs → **version 113**,
+   Visibility **Private**, Admin install). Internal/private = no Google
    verification despite the restricted `drive` scope. Then **admin-install
    domain-wide** (Admin console → Apps → Google Workspace Marketplace apps) and
    confirm the `drive` OAuth client is **Trusted**. Dev/QA path stays: Editor →
@@ -817,7 +825,8 @@ These supersede or refine the spec — apply them before defaulting to plan text
 2. **Distribute the Chrome extension** (see §13 for the full recipe). Short
    version: do NOT "Pack extension" (self-hosted `.crx` is a dead path);
    publish privately to the Chrome Web Store and force-install via the Google
-   Admin console. **Published privately as v0.1.2** with store-assigned id
+   Admin console. **Published privately; v0.1.5 approved 2026-10-27** (sign-in
+   card, paste citation, Save this page, auto-enable) with store-assigned id
    **`goglhlpppkhiddkhgcknbiohcppgdggi`** (≠ the dev `nmela…` id). **Force-install
    that published id**, and set the **OAuth client's Application ID to the same
    published id** — otherwise the force-installed extension installs but
@@ -825,13 +834,10 @@ These supersede or refine the spec — apply them before defaulting to plan text
    the published rollout is what matters). **Verify sign-in on the *published*
    extension before scoping the force-install to students** — the dev/unpacked
    copy authenticating does NOT prove the published one does.
-3. **Verify CI secrets** are set so the deploy workflow runs — `CLASPRC_JSON`
-   secret + `GAS_DEPLOYMENT_ID` variable (see §11). Confirm a push to `main`
-   touching `apps-script/**` actually redeploys.
-4. **Confirm Class strings** against a real roster sample — `validateRoster()`
+3. **Confirm Class strings** against a real roster sample — `validateRoster()`
    only checks blank/duplicate emails today; consistency of Class strings (no
    leading/trailing whitespace, casing) is unvalidated against real data.
-5. **Pilot one section end-to-end** (extension → highlight → sidebar →
+4. **Pilot one section end-to-end** (extension → highlight → sidebar →
    bibliography insert, including group-routed members).
 
 ## 8. How to push / test from this repo
@@ -1046,8 +1052,8 @@ allowed in manifest") and assigns the published item its own id. So
 `key` from the uploaded zip** (source keeps it for dev). Consequence: the
 **published id is store-assigned and differs from the unpacked-dev id** until you
 make them match (below). *(Earlier this file claimed the `key` made the two ids
-identical — that was wrong; it bit the first upload.)* **Actual published id (as
-of 2026-06-08, v0.1.2): `goglhlpppkhiddkhgcknbiohcppgdggi`** — the match step was
+identical — that was wrong; it bit the first upload.)* **Actual published id (first
+published 2026-06-08 as v0.1.2; current v0.1.5): `goglhlpppkhiddkhgcknbiohcppgdggi`** — the match step was
 NOT done, so dev (`nmela…`) and published (`goglh…`) remain different ids.
 
 ### Make dev + published ids match (NOT done — the two ids differ)
