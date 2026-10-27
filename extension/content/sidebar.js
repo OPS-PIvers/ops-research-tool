@@ -343,6 +343,20 @@ const SIDEBAR_CSS = `
 /* Subtle per-source evidence-target nudge (shown only when this project sets a
    minHighlightsPerSource / minDistinctCategories requirement). */
 .src__hint { font-size:10.5px; color:#80868b; margin-top:6px; line-height:1.4; }
+.src__paste { margin-bottom:11px; padding:9px 10px; border:1px dashed #c6cad0; border-radius:7px; background:#fbfbfc; }
+.src__paste-lbl { display:block; font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:#80868b; margin-bottom:5px; }
+.src__paste-ta { min-height:40px; }
+.src__paste-cite { font-size:12px; line-height:1.5; color:#202124; padding-left:1.5em; text-indent:-1.5em; margin-bottom:6px; }
+.src__paste-confirm { margin-top:7px; }
+.src__paste-confirm[hidden] { display:none; }
+.src__paste-q { font-size:12px; color:#202124; margin-bottom:6px; }
+.src__paste-btns { display:flex; gap:6px; }
+.src__btn { border:1px solid #dadce0; background:#fff; color:#3c4043; border-radius:6px; padding:6px 12px; font:inherit; font-size:12px; cursor:pointer; }
+.src__btn--primary { background:#1a73e8; border-color:#1a73e8; color:#fff; font-weight:600; }
+.src__btn:disabled { opacity:0.6; cursor:default; }
+.src__link { border:none; background:none; padding:0; color:#1a73e8; font:inherit; font-size:12px; text-decoration:underline; cursor:pointer; }
+.src__save-page { margin-top:12px; }
+.src__save-err { margin-top:8px; color:#d93025; font-size:12px; }
 .facet__hint { padding:2px 8px 6px; font-size:10.5px; color:#80868b; line-height:1.4; }
 .toast {
   position:absolute; left:12px; right:12px; bottom:12px; z-index:5;
@@ -1120,7 +1134,161 @@ const OpsSidebar = (function () {
     f.url           = pick('url', src.rawUrl);
     f.archive       = pick('archive', extra.archive);
     f.accessDate    = pick('accessDate', src.accessDate);
+    if (cf.pasted) f.pasted = cf.pasted;   // server renders it in place of the fields
     return f;
+  }
+
+  // The usable pasted citation ({text, italics}) on a source, or null.
+  function pastedOf_(src) {
+    const p = src && src.citationFields && src.citationFields.pasted;
+    return p && String(p.text || '').trim() ? p : null;
+  }
+
+  // Clipboard HTML → { text, italics: [[start,end],...] }. Italic comes from
+  // <i>/<em>/<cite> or an inline font-style; whitespace is collapsed and
+  // trimmed. Same algorithm as citationFromClipboard_ in source_editor_js.html
+  // — keep the two in sync.
+  function citationFromClipboard_(html, plain) {
+    const chars = [];
+    const push = (str, it) => { for (const ch of str) chars.push({ ch, it }); };
+    if (html) {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const BLOCK = /^(P|DIV|BR|LI|TR|H[1-6])$/;
+      const walk = (node, it) => {
+        if (node.nodeType === 3) { push(node.nodeValue, it); return; }
+        if (node.nodeType !== 1) return;
+        const tag = node.tagName;
+        if (tag === 'SCRIPT' || tag === 'STYLE') return;
+        let nit = it;
+        if (tag === 'I' || tag === 'EM' || tag === 'CITE') nit = true;
+        const fs = node.style && node.style.fontStyle;
+        if (fs === 'italic' || fs === 'oblique') nit = true;
+        else if (fs === 'normal') nit = false;
+        if (BLOCK.test(tag)) push(' ', false);
+        node.childNodes.forEach((c) => walk(c, nit));
+        if (BLOCK.test(tag)) push(' ', false);
+      };
+      walk(doc.body, false);
+    } else {
+      push(plain || '', false);
+    }
+    // Collapse whitespace runs and trim, carrying each kept char's italic flag.
+    const out = [];
+    chars.forEach((c) => {
+      const ws = /\s/.test(c.ch);
+      if (ws) {
+        if (!out.length || out[out.length - 1].ch === ' ') return;
+        out.push({ ch: ' ', it: c.it });
+      } else out.push(c);
+    });
+    while (out.length && out[out.length - 1].ch === ' ') out.pop();
+    let text = '';
+    const italics = [];
+    let start = -1;
+    out.forEach((c, i) => {
+      text += c.ch;
+      if (c.it && start < 0) start = i;
+      if (!c.it && start >= 0) { italics.push([start, i]); start = -1; }
+    });
+    if (start >= 0) italics.push([start, out.length]);
+    // Don't italicize the spaces at a range's edges.
+    const trimmed = italics.map(([a, b]) => {
+      while (a < b && text[a] === ' ') a++;
+      while (b > a && text[b - 1] === ' ') b--;
+      return [a, b];
+    }).filter(([a, b]) => b > a);
+    return { text, italics: trimmed };
+  }
+
+  // "Paste a citation" block. With a pasted citation saved it shows that
+  // citation and a way back to the built one; otherwise a paste box that asks
+  // before replacing.
+  function renderPasteBlock_(src) {
+    const wrap = el_('div', 'src__paste');
+    const pasted = pastedOf_(src);
+    if (pasted) {
+      wrap.appendChild(el_('label', 'src__paste-lbl', 'Your pasted citation'));
+      const body = el_('div', 'src__paste-cite');
+      body.innerHTML = previewHtml_(pasted.text, pasted.italics || []);
+      wrap.appendChild(body);
+      const back = el_('button', 'src__link', 'Use the built citation instead');
+      back.type = 'button';
+      back.addEventListener('click', () => {
+        delete src.citationFields.pasted;
+        saveSource_();
+        render_();
+      });
+      wrap.appendChild(back);
+      return wrap;
+    }
+    wrap.appendChild(el_('label', 'src__paste-lbl', 'Have a citation from the site? Paste it here'));
+    const ta = document.createElement('textarea');
+    ta.className = 'src__ta src__paste-ta';
+    ta.placeholder = 'Copy the MLA citation the site gives you, then paste (Ctrl+V)';
+    wrap.appendChild(ta);
+    const confirm = el_('div', 'src__paste-confirm');
+    confirm.hidden = true;
+    confirm.appendChild(el_('div', 'src__paste-q', 'Replace your citation with this one?'));
+    const yes = el_('button', 'src__btn src__btn--primary', 'Replace');
+    const no = el_('button', 'src__btn', 'Cancel');
+    yes.type = 'button'; no.type = 'button';
+    const btns = el_('div', 'src__paste-btns');
+    btns.appendChild(yes); btns.appendChild(no);
+    confirm.appendChild(btns);
+    wrap.appendChild(confirm);
+
+    let pending = null;
+    const showConfirm = () => { confirm.hidden = !(pending && pending.text); };
+    ta.addEventListener('paste', (e) => {
+      const cd = e.clipboardData;
+      if (!cd) return;
+      e.preventDefault();
+      pending = citationFromClipboard_(cd.getData('text/html'), cd.getData('text/plain'));
+      ta.value = pending.text;
+      showConfirm();
+    });
+    ta.addEventListener('input', () => {
+      // Typed or edited by hand: plain text, so the clipboard italics no longer line up.
+      const text = ta.value.replace(/\s+/g, ' ').trim();
+      pending = text ? { text, italics: [] } : null;
+      showConfirm();
+    });
+    yes.addEventListener('click', () => {
+      if (!pending || !pending.text) return;
+      if (!src.citationFields) src.citationFields = {};
+      src.citationFields.pasted = { text: pending.text, italics: pending.italics };
+      saveSource_();
+      render_();
+    });
+    no.addEventListener('click', () => { pending = null; ta.value = ''; showConfirm(); });
+    return wrap;
+  }
+
+  // No source for this page yet: the student can still start its citation
+  // without highlighting first.
+  function renderSourceEmpty_() {
+    const wrap = el_('div', 'src__empty');
+    wrap.appendChild(el_('div', null, 'Save this page to start its citation, or highlight something on it.'));
+    const btn = el_('button', 'src__btn src__btn--primary src__save-page', 'Save this page as a source');
+    btn.type = 'button';
+    const err = el_('div', 'src__save-err');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; btn.textContent = 'Saving…'; err.textContent = '';
+      try {
+        const scrape = scrapePageMeta();
+        const r = await chrome.runtime.sendMessage({ type: 'getOrCreateSourceId', rawUrl: opsPageUrl(), scrape });
+        if (!r || !r.ok) throw new Error((r && r.error) || 'Could not save this page.');
+        _setSourceId(null, r.sourceId, scrape);
+        render_();
+      } catch (e) {
+        btn.disabled = false; btn.textContent = 'Save this page as a source';
+        err.textContent = (e && e.message) || String(e);
+        if (opsIsContextInvalidated_(e)) showReloadHint_();
+      }
+    });
+    wrap.appendChild(btn);
+    wrap.appendChild(err);
+    return wrap;
   }
 
   function renderSourceTab_() {
@@ -1128,7 +1296,7 @@ const OpsSidebar = (function () {
       // Same fetch window as the list: skeleton while loading, false-empty only
       // once the load has settled and there's genuinely no source yet.
       if (state.loadingHighlights) return renderSourceSkeleton_();
-      return el_('div', 'src__empty', 'Highlight something on this page to start its citation.');
+      return renderSourceEmpty_();
     }
     const src = state.pageSource;
     const fields = effectiveFields_(src);
@@ -1153,8 +1321,11 @@ const OpsSidebar = (function () {
     typeWrap.appendChild(sel);
     form.appendChild(typeWrap);
 
-    // Per-type fields
-    sourceFieldsFor_(fields.sourceType).forEach((def) => {
+    form.appendChild(renderPasteBlock_(src));
+
+    // Per-type fields — hidden while a pasted citation is in use (they'd have
+    // no visible effect); they come back with "Use the built citation instead".
+    if (!pastedOf_(src)) sourceFieldsFor_(fields.sourceType).forEach((def) => {
       const wrap = el_('div', 'src__fld');
       wrap.appendChild(el_('label', null, def.label));
       const inp = document.createElement('input');

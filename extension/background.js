@@ -777,6 +777,18 @@ async function signInInteractive_() {
   return { ok: true, me };
 }
 
+/**
+ * The first time the backend recognizes this browser's student — a Sign in
+ * click or a silent token — switch the extension on. Only when the switch has
+ * NEVER been set: a student who turned it off stays off. Keeps a force-install
+ * dormant until someone actually signs in (the v0.1.2 default-off intent).
+ */
+async function autoEnableOnFirstSignIn_(me) {
+  if (!me || !me.ok || !me.actor) return;
+  const { extensionEnabled } = await chrome.storage.local.get('extensionEnabled');
+  if (extensionEnabled === undefined) await chrome.storage.local.set({ extensionEnabled: true });
+}
+
 /** Refresh roster + projects + bundles caches from GAS. Called by popup on open. */
 async function refreshContext() {
   // One combined round-trip (the backend's `bootstrap` action). Each GAS call
@@ -790,6 +802,7 @@ async function refreshContext() {
     throw e;   // network / auth — same failure surface as before
   }
   if (boot && boot.ok && Array.isArray(boot.projects)) {
+    await autoEnableOnFirstSignIn_(boot.me);
     await setCache('cachedMe', boot.me);
     await setCache('cachedProjects', boot.projects);
     await setCache('cachedContextAt', Date.now());
@@ -806,7 +819,10 @@ async function refreshContext() {
     apiGet({ action: 'projects' }),
     apiGet({ action: 'bundles' }),
   ]);
-  if (me.ok) await setCache('cachedMe', me);
+  if (me.ok) {
+    await autoEnableOnFirstSignIn_(me);
+    await setCache('cachedMe', me);
+  }
   if (projects.ok) {
     await setCache('cachedProjects', projects.projects);
     // Stamp freshness only when the projects list actually updated, so a failed

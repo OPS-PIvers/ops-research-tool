@@ -759,27 +759,19 @@ function consoleGetStudentDetail(projectId, studentEmail) {
   // and embedded highlights array filtered to that source.
   const enriched = sources.map((s) => {
     const parsed = parseCitationFields_(s);
-    const formatted = formatCitation(
-      Object.assign({}, parsed, {
-        sourceType: parsed.sourceType || s.sourceType || 'website',
-        title:      parsed.title      || s.scrapedTitle  || '',
-        siteName:   parsed.siteName   || s.scrapedSite   || '',
-        author:     parsed.author     || s.scrapedAuthor || '',
-        publishedDate: parsed.publishedDate || s.scrapedDate || '',
-        url:        parsed.url        || s.rawUrl || '',
-        accessDate: s.accessDate || parsed.accessDate || '',
-      }),
-      bundle ? bundle.style : 'mla'
-    );
+    // Same field precedence as the bibliography (a cleared field stays
+    // cleared) and the same pasted-citation override — via the shared builder.
+    const formatted = formatCitation(buildCitationFields_(s), bundle ? bundle.style : 'mla');
     return {
       sourceId: s.sourceId,
       scrapedTitle: s.scrapedTitle,
+      rawUrl: s.rawUrl || '',
       citationFieldsParsed: parsed,
       primarySecondary: s.primarySecondary || 'unset',
       annotation: s.annotation || '',
       formattedCitation: formatted,
       completionFlags: {
-        citation:       !!(parsed.title && parsed.url),
+        citation:       isCitationComplete_(parsed),
         classification: s.primarySecondary && s.primarySecondary !== 'unset',
         annotation:     !!(s.annotation && String(s.annotation).trim().length > 0),
       },
@@ -1250,27 +1242,19 @@ function consoleGetGroupDashboard(projectId, groupId) {
   // Reuse the student-detail enrichment so the viewer renders identically.
   const enriched = sources.map((s) => {
     const parsed = parseCitationFields_(s);
-    const formatted = formatCitation(
-      Object.assign({}, parsed, {
-        sourceType: parsed.sourceType || s.sourceType || 'website',
-        title:      parsed.title      || s.scrapedTitle  || '',
-        siteName:   parsed.siteName   || s.scrapedSite   || '',
-        author:     parsed.author     || s.scrapedAuthor || '',
-        publishedDate: parsed.publishedDate || s.scrapedDate || '',
-        url:        parsed.url        || s.rawUrl || '',
-        accessDate: s.accessDate || parsed.accessDate || '',
-      }),
-      bundle ? bundle.style : 'mla'
-    );
+    // Same field precedence as the bibliography (a cleared field stays
+    // cleared) and the same pasted-citation override — via the shared builder.
+    const formatted = formatCitation(buildCitationFields_(s), bundle ? bundle.style : 'mla');
     return {
       sourceId: s.sourceId,
       scrapedTitle: s.scrapedTitle,
+      rawUrl: s.rawUrl || '',
       citationFieldsParsed: parsed,
       primarySecondary: s.primarySecondary || 'unset',
       annotation: s.annotation || '',
       formattedCitation: formatted,
       completionFlags: {
-        citation:       !!(parsed.title && parsed.url),
+        citation:       isCitationComplete_(parsed),
         classification: s.primarySecondary && s.primarySecondary !== 'unset',
         annotation:     !!(s.annotation && String(s.annotation).trim().length > 0),
       },

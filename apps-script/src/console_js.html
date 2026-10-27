@@ -2471,7 +2471,6 @@ function paintStudentDetail_() {
 }
 
 const SOURCES_DEFAULT_VISIBLE = 5;
-const SOURCES_DEFAULT_HL_COLLAPSE = 8;
 
 function buildSourcesViewer_() {
   const d = studentDetail.data;
@@ -2540,38 +2539,48 @@ function buildSourceCard_(s) {
   const agg = (studentDetail.data && studentDetail.data.aggregates) || {};
   const annotationRequired = agg.requireAnnotation !== false;
 
-  // Head: title + ps chip + count + completion flags
-  const head = document.createElement('div');
-  head.className = 'dd-source-card__head';
-  const t = document.createElement('div');
+  // Title — on its own line, linked back to the page the student saved.
+  const titleText = (s.citationFieldsParsed && s.citationFieldsParsed.title) || s.scrapedTitle || '(untitled)';
+  const t = document.createElement(s.rawUrl ? 'a' : 'div');
   t.className = 'dd-source-card__title';
-  t.textContent = (s.citationFieldsParsed && s.citationFieldsParsed.title) || s.scrapedTitle || '(untitled)';
-  head.appendChild(t);
+  t.textContent = titleText;
+  if (s.rawUrl) {
+    t.href = /^https?:\/\//i.test(s.rawUrl) ? s.rawUrl : 'https://' + s.rawUrl;
+    t.target = '_blank';
+    t.rel = 'noopener noreferrer';
+    t.title = 'Open source ↗ ' + s.rawUrl;
+    const arrow = document.createElement('span');
+    arrow.className = 'dd-source-card__ext';
+    arrow.setAttribute('aria-hidden', 'true');
+    arrow.textContent = ' ↗';
+    t.appendChild(arrow);
+  }
+  card.appendChild(t);
 
+  // One quiet meta line: classification · highlight count · completion flags.
+  const meta = document.createElement('div');
+  meta.className = 'dd-source-card__meta';
   const chip = document.createElement('span');
   chip.className = 'dd-source-card__chip dd-source-card__chip--' + s.primarySecondary;
-  chip.textContent = s.primarySecondary;
-  head.appendChild(chip);
-
+  chip.textContent = s.primarySecondary === 'unset' ? 'Not tagged' : s.primarySecondary[0].toUpperCase() + s.primarySecondary.slice(1);
+  meta.appendChild(chip);
   const cnt = document.createElement('span');
   cnt.className = 'dd-source-card__count';
   cnt.textContent = s.highlights.length + ' highlight' + (s.highlights.length === 1 ? '' : 's');
-  head.appendChild(cnt);
-
-  const flags = document.createElement('div');
+  meta.appendChild(cnt);
+  const flags = document.createElement('span');
   flags.className = 'dd-source-card__flags';
   flags.appendChild(makeFlagChip_('Cite', s.completionFlags.citation));
   flags.appendChild(makeFlagChip_('Tag', s.completionFlags.classification));
   if (annotationRequired) flags.appendChild(makeFlagChip_('Note', s.completionFlags.annotation));
-  head.appendChild(flags);
-
-  card.appendChild(head);
+  meta.appendChild(flags);
+  card.appendChild(meta);
 
   // Per-source evidence-depth progress (highlights / categories), when targeted.
   const evidence = buildEvidenceLine_(s.sourceId, agg.evidenceDepth);
   if (evidence) card.appendChild(evidence);
 
-  // Citation (with italics)
+  // Citation — set like a Works Cited entry (hanging indent), italics + link kept.
   if (s.formattedCitation && s.formattedCitation.text) {
     const cite = document.createElement('div');
     cite.className = 'dd-source-card__citation';
@@ -2579,35 +2588,48 @@ function buildSourceCard_(s) {
     card.appendChild(cite);
   }
 
-  // Annotation (if present)
   if (s.annotation) {
     const ann = document.createElement('div');
     ann.className = 'dd-source-card__annotation';
-    ann.textContent = '"' + s.annotation + '"';
+    const lbl = document.createElement('div');
+    lbl.className = 'dd-source-card__label';
+    lbl.textContent = 'Annotation';
+    ann.appendChild(lbl);
+    const txt = document.createElement('div');
+    txt.textContent = s.annotation;
+    ann.appendChild(txt);
     card.appendChild(ann);
   }
 
-  // Highlights grouped by primary category. Collapsed if many.
+  // Highlights start collapsed behind a one-line category summary. A native
+  // <details> toggles in place (no repaint), and the highlight nodes exist
+  // up front so the group view can still attach author bylines to them.
   if (s.highlights.length > 0) {
-    const collapseByDefault = s.highlights.length > SOURCES_DEFAULT_HL_COLLAPSE;
-    const key = 'expand:' + s.sourceId;
-    const expanded = studentDetail.expanded && studentDetail.expanded[key];
-    if (collapseByDefault && !expanded) {
-      const btn = document.createElement('button');
-      btn.className = 'dd-source-card__expand';
-      btn.textContent = 'Show ' + s.highlights.length + ' highlights';
-      btn.addEventListener('click', () => {
-        studentDetail.expanded = studentDetail.expanded || {};
-        studentDetail.expanded[key] = true;
-        paintStudentDetail_();
-      });
-      card.appendChild(btn);
-    } else {
-      card.appendChild(buildHighlightGroups_(s));
-    }
+    const det = document.createElement('details');
+    det.className = 'dd-source-card__hls';
+    const sum = document.createElement('summary');
+    sum.textContent = 'Highlights: ' + highlightSummary_(s.highlights);
+    det.appendChild(sum);
+    det.appendChild(buildHighlightGroups_(s));
+    card.appendChild(det);
   }
 
   return card;
+}
+
+/** "Main event 3 · Cause 2 · Effect 1" — counts by primary category, biggest first. */
+function highlightSummary_(highlights) {
+  const counts = {};
+  const order = [];
+  highlights.forEach((h) => {
+    const k = h.primaryCategory || 'No category';
+    if (!(k in counts)) { counts[k] = 0; order.push(k); }
+    counts[k]++;
+  });
+  return order
+    .sort((a, b) => counts[b] - counts[a])
+    .map((k) => k + ' ' + counts[k])
+    .join(' · ');
 }
 
 function makeFlagChip_(kind, complete) {
@@ -2665,16 +2687,28 @@ function colorForCategoryInDrill_(label) {
 }
 
 function renderCitationHtml_(formatted) {
+  // Italic and link ranges can overlap (a pasted URL inside italics), so cut
+  // the text at every range edge and style each piece on its own.
   const text = formatted.text || '';
   const italics = formatted.italics || [];
+  const links = formatted.links || [];
+  const cuts = [0, text.length];
+  italics.concat(links).forEach((r) => { cuts.push(r[0], r[1]); });
+  const edges = cuts
+    .filter((n) => n >= 0 && n <= text.length)
+    .sort((a, b) => a - b)
+    .filter((n, i, a) => i === 0 || n !== a[i - 1]);
   let html = '';
-  let cursor = 0;
-  italics.forEach(([s, e]) => {
-    if (s > cursor) html += esc_(text.slice(cursor, s));
-    html += '<em>' + esc_(text.slice(s, e)) + '</em>';
-    cursor = e;
-  });
-  if (cursor < text.length) html += esc_(text.slice(cursor));
+  for (let i = 0; i < edges.length - 1; i++) {
+    const a = edges[i], b = edges[i + 1];
+    let piece = esc_(text.slice(a, b));
+    if (italics.some((r) => r[0] <= a && b <= r[1])) piece = '<em>' + piece + '</em>';
+    const link = links.find((r) => r[0] <= a && b <= r[1]);
+    if (link && /^https?:\/\//i.test(link[2])) {
+      piece = '<a href="' + esc_(link[2]).replace(/"/g, '&quot;') + '" target="_blank" rel="noopener noreferrer">' + piece + '</a>';
+    }
+    html += piece;
+  }
   return html;
 }
 

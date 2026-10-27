@@ -16,8 +16,79 @@
 
 function formatCitation(fields, style) {
   const s = (style || 'mla').toLowerCase();
-  if (s === 'mla') return formatMLA_(coerceFieldsToStrings_(fields));
-  throw new Error('Unsupported citation style: ' + style);
+  if (s !== 'mla') throw new Error('Unsupported citation style: ' + style);
+  // A citation the student pasted (copied from Britannica, LoC, a database…)
+  // wins over the one built from fields. Every render path — preview,
+  // bibliography, drill-down — comes through here, so they all agree.
+  const pasted = pastedCitationOf_(fields);
+  if (pasted) {
+    return {
+      text: pasted.text,
+      italics: pasted.italics,
+      links: citationLinkRanges_(pasted.text, fields && fields.url),
+      pasted: true,
+    };
+  }
+  const f = coerceFieldsToStrings_(fields);
+  const out = formatMLA_(f);
+  out.links = citationLinkRanges_(out.text, f.url);
+  out.pasted = false;
+  return out;
+}
+
+const PASTED_CITATION_MAX_ = 2000;
+
+/**
+ * The pasted citation stored at citationFields.pasted = {text, italics}, or
+ * null when there isn't a usable one. Text is whitespace-collapsed; italic
+ * ranges are clamped to the text and dropped if malformed, so a hand-edited
+ * or truncated value can never throw downstream. Pure.
+ */
+function pastedCitationOf_(fields) {
+  const p = fields && fields.pasted;
+  if (!p || typeof p !== 'object') return null;
+  const text = String(p.text == null ? '' : p.text).replace(/\s+/g, ' ').trim().slice(0, PASTED_CITATION_MAX_);
+  if (!text) return null;
+  const italics = [];
+  (Array.isArray(p.italics) ? p.italics : []).forEach((r) => {
+    if (!Array.isArray(r)) return;
+    const a = Math.max(0, Math.floor(Number(r[0])));
+    const b = Math.min(text.length, Math.floor(Number(r[1])));
+    if (isFinite(a) && isFinite(b) && b > a) italics.push([a, b]);
+  });
+  italics.sort((x, y) => x[0] - y[0]);
+  // Overlapping ranges would double-wrap in the console renderer; merge them.
+  const merged = [];
+  italics.forEach((r) => {
+    const last = merged[merged.length - 1];
+    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+    else merged.push([r[0], r[1]]);
+  });
+  return { text: text, italics: merged };
+}
+
+/**
+ * Character ranges in a citation that should be hyperlinks: [[start, end,
+ * href], ...]. The source's own URL when it appears verbatim; otherwise the
+ * first URL-looking token (pasted citations often drop "https://", e.g.
+ * "www.britannica.com/event/…"). A trailing period is never part of the link.
+ * Pure.
+ */
+function citationLinkRanges_(text, url) {
+  const t = String(text || '');
+  const u = String(url || '').trim();
+  if (!t) return [];
+  if (u) {
+    const at = t.indexOf(u);
+    if (at >= 0) {
+      const end = at + u.replace(/[.,;]+$/, '').length;
+      return [[at, end, /^https?:\/\//i.test(u) ? u : 'https://' + u]];
+    }
+  }
+  const m = t.match(/(https?:\/\/|www\.)[^\s<>"]+/i);
+  if (!m) return [];
+  const token = m[0].replace(/[.,;)]+$/, '');
+  return [[m.index, m.index + token.length, /^https?:\/\//i.test(token) ? token : 'https://' + token]];
 }
 
 /**
@@ -25,11 +96,13 @@ function formatCitation(fields, style) {
  * cells to Date objects, and a round-tripped JSON.parse on citationFields
  * may surface those native types too. Everything downstream assumes strings,
  * so normalize here once. Returns a NEW object (does not mutate the input).
+ * The structured `pasted` value is handled by pastedCitationOf_, not here.
  */
 function coerceFieldsToStrings_(fields) {
   const out = {};
   const src = fields || {};
   Object.keys(src).forEach((k) => {
+    if (k === 'pasted') return;
     const v = src[k];
     if (v === null || v === undefined) out[k] = '';
     else if (typeof v === 'string') out[k] = v;

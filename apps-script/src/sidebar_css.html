@@ -290,6 +290,8 @@ select, input, textarea { font: inherit; }
   font-size: 11px; padding: 2px 4px;
 }
 .sb-source__action:hover { text-decoration: underline; }
+a.sb-source__action { text-decoration: none; }
+a.sb-source__action:hover { text-decoration: underline; }
 .sb-source__expand { /* keep selector for back-compat — handled by .sb-source__action */ }
 
 /* Per-source depth recap (shown only when a depth requirement is set). Subtle,
@@ -370,6 +372,36 @@ select, input, textarea { font: inherit; }
   padding: 6px 8px; line-height: 1.4;
 }
 .sb-source__preview em { font-style: italic; }
+/* Paste-a-citation block (source editor modal; mirrors the extension Source tab). */
+.sb-paste {
+  padding: 8px 10px; border: 1px dashed var(--c-line); border-radius: 6px; background: var(--c-soft);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.sb-paste textarea { min-height: 40px; background: #fff; }
+.sb-paste__cite {
+  font-size: 12px; line-height: 1.5; color: var(--c-text);
+  padding-left: 1.5em; text-indent: -1.5em;   /* MLA hanging indent */
+}
+.sb-paste__cite em { font-style: italic; }
+.sb-paste__confirm[hidden] { display: none; }
+.sb-paste__q { font-size: 12px; color: var(--c-text); margin-bottom: 6px; }
+.sb-paste__btns { display: flex; gap: 6px; }
+.sb-paste__link {
+  align-self: flex-start; border: none; background: none; padding: 0;
+  color: var(--c-accent); font-size: 12px; text-decoration: underline; cursor: pointer;
+}
+.sb-btn {
+  border: 1px solid var(--c-line); background: #fff; color: var(--c-text);
+  border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer;
+}
+.sb-btn--primary { background: var(--c-accent); border-color: var(--c-accent); color: #fff; font-weight: 600; }
+.sb-btn--primary:hover { background: var(--c-accent-strong); }
+/* "Open source ↗" link back to the original page. */
+.sb-open-source {
+  align-self: flex-start; font-size: 12px; font-weight: 500;
+  color: var(--c-accent); text-decoration: none;
+}
+.sb-open-source:hover { text-decoration: underline; }
 .sb-source__annotation {
   margin-top: 6px;
 }

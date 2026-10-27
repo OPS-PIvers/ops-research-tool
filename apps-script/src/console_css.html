@@ -636,21 +636,25 @@ select, input, textarea { font: inherit; }
 }
 .dd-source-card {
   border: 1px solid var(--c-line);
-  border-radius: 6px;
-  padding: 12px 14px;
-  margin-bottom: 10px;
-  background: var(--c-soft);
-}
-.dd-source-card__head {
-  display: flex; align-items: baseline; gap: 8px;
-  flex-wrap: wrap;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  background: var(--c-bg);
 }
 .dd-source-card__title {
-  font-size: 15px; font-weight: 500; color: var(--c-text);
-  flex: 1; min-width: 0;
+  display: block;
+  font-size: 15px; font-weight: 600; line-height: 1.35;
+  color: var(--c-text); text-decoration: none;
+  overflow-wrap: anywhere;
+}
+a.dd-source-card__title:hover { color: var(--c-accent); text-decoration: underline; }
+.dd-source-card__ext { color: var(--c-accent); font-weight: 500; }
+.dd-source-card__meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px;
+  margin-top: 6px;
 }
 .dd-source-card__chip {
-  font-size: 10px; padding: 2px 6px; border-radius: 999px;
+  font-size: 11px; font-weight: 500; padding: 1px 8px; border-radius: 999px;
 }
 /* Classification chips: primary = blue, secondary = red, unset = gray
    (matches the brand-aligned Docs sidebar — all on-palette). */
@@ -658,30 +662,43 @@ select, input, textarea { font: inherit; }
 .dd-source-card__chip--secondary { background: var(--c-brand-secondary-tint); color: var(--c-brand-secondary); }
 .dd-source-card__chip--unset     { background: var(--c-soft); color: var(--c-muted); }
 .dd-source-card__count {
-  font-size: 11px; color: var(--c-muted);
+  font-size: 12px; color: var(--c-muted);
 }
 .dd-source-card__flags {
-  display: inline-flex; gap: 4px; margin-left: auto;
+  display: inline-flex; gap: 4px;
 }
 .dd-source-card__flag {
-  font-size: 10px; padding: 2px 6px; border-radius: 999px;
+  font-size: 11px; padding: 1px 7px; border-radius: 999px;
   background: var(--c-bg); border: 1px solid var(--c-line);
   color: var(--c-muted);
 }
 .dd-source-card__flag--complete { background: var(--stop-good-bg); color: var(--stop-good); border-color: transparent; }
 .dd-source-card__flag--gap      { background: var(--stop-bad-bg); color: var(--stop-bad); border-color: transparent; }
+/* Citation set like a Works Cited entry: hanging indent, no box. */
 .dd-source-card__citation {
-  font-size: 12px; color: var(--c-text); margin-top: 8px;
-  background: var(--c-bg); padding: 8px 10px; border-radius: 4px;
-  border: 1px solid var(--c-line);
+  font-size: 13px; line-height: 1.55; color: var(--c-text);
+  margin-top: 12px;
+  padding-left: 2em; text-indent: -2em;
+  overflow-wrap: anywhere;
 }
 .dd-source-card__citation em { font-style: italic; }
+.dd-source-card__citation a { color: var(--c-accent); }
 .dd-source-card__annotation {
-  font-size: 12px; color: var(--c-text); margin-top: 6px; font-style: italic;
+  font-size: 13px; line-height: 1.55; color: var(--c-text); margin-top: 12px;
+}
+.dd-source-card__label {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--c-muted); margin-bottom: 2px;
 }
 /* Per-source evidence-depth line (shown only when the project sets a depth target). */
 .dd-source-card__evidence { font-size: 12px; color: var(--c-muted); margin-top: 4px; }
 .dd-source-card__evidence.is-met { color: var(--stop-good); }
+.dd-source-card__hls { margin-top: 12px; border-top: 1px solid var(--c-line); padding-top: 8px; }
+.dd-source-card__hls > summary {
+  cursor: pointer; font-size: 12px; color: var(--c-accent); font-weight: 500;
+  list-style-position: outside;
+}
+.dd-source-card__hls > summary:hover { text-decoration: underline; }
 .dd-cat-group {
   margin-top: 8px;
 }
@@ -702,10 +719,6 @@ select, input, textarea { font: inherit; }
 }
 .dd-hl__note {
   font-style: italic; color: var(--c-muted); font-size: 11px; margin-top: 4px;
-}
-.dd-source-card__expand {
-  background: transparent; border: none; color: var(--c-accent);
-  font-size: 12px; padding: 4px 0;
 }
 .dd-show-all {
   margin-top: 12px; text-align: center;

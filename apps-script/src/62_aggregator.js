@@ -111,7 +111,7 @@ function computeSourceCounts_(sources) {
 
 /**
  * Per-field completion:
- *   citation:       title AND url non-empty in citationFields (parsed JSON)
+ *   citation:       isCitationComplete_ (title + url entered, or a pasted citation)
  *   classification: primarySecondary !== 'unset'
  *   annotation:     trimmed annotation length > 0
  *
@@ -120,8 +120,7 @@ function computeSourceCounts_(sources) {
 function computeCompletion_(sources) {
   let citation = 0, classification = 0, annotation = 0;
   sources.forEach((s) => {
-    const parsed = parseCitationFields_(s);
-    if (parsed.title && parsed.url) citation++;
+    if (isCitationComplete_(parseCitationFields_(s))) citation++;
     if (s.primarySecondary && s.primarySecondary !== 'unset') classification++;
     if (s.annotation && String(s.annotation).trim().length > 0) annotation++;
   });
@@ -145,8 +144,7 @@ function computeCompletionSummary_(sources, requirements) {
   const needAnn = !requirements || requirements.requireAnnotation !== false;
   let complete = 0;
   sources.forEach((s) => {
-    const parsed = parseCitationFields_(s);
-    const citationOk = parsed.title && parsed.url;
+    const citationOk = isCitationComplete_(parseCitationFields_(s));
     const classOk = s.primarySecondary && s.primarySecondary !== 'unset';
     const annOk = !needAnn || (s.annotation && String(s.annotation).trim().length > 0);
     if (citationOk && classOk && annOk) complete++;
@@ -214,8 +212,7 @@ function computeSourcesProgress_(sources, requirements) {
 function computeGaps_(sources) {
   let cit = 0, cls = 0, ann = 0;
   sources.forEach((s) => {
-    const parsed = parseCitationFields_(s);
-    if (!(parsed.title && parsed.url)) cit++;
+    if (!isCitationComplete_(parseCitationFields_(s))) cit++;
     if (!s.primarySecondary || s.primarySecondary === 'unset') cls++;
     if (!s.annotation || String(s.annotation).trim().length === 0) ann++;
   });
@@ -287,6 +284,18 @@ function computeActivityByDay_(sources, highlights, projectCreatedAt) {
  * same-named copy here shadowed 52's richer version (62 loads after 52),
  * silently dropping the fallback and blanking scraped-only sources in the bib.
  */
+/**
+ * "Citation done" for the dashboard: the student entered title AND url, or
+ * pasted a whole citation (copied from the database/encyclopedia). Takes the
+ * RAW parse — scraped values never count. Pure.
+ */
+function isCitationComplete_(parsed) {
+  if (!parsed) return false;
+  if (parsed.title && parsed.url) return true;
+  const p = parsed.pasted;
+  return !!(p && typeof p === 'object' && String(p.text || '').trim());
+}
+
 function parseCitationFields_(source) {
   if (!source.citationFields) return {};
   try {
