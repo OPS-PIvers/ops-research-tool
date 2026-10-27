@@ -309,6 +309,7 @@ var DASH_CACHE_TTL_SEC = 45;
  * @param {boolean} [bypassCache] Skip the read cache (Refresh button).
  */
 function consoleGetProjectDashboard(projectId, className, bypassCache) {
+  const t0 = Date.now();
   const actorEmail = getActorEmail_();
   const staff = assertStaff_(actorEmail);
   if (!projectId) throw new Error('projectId required');
@@ -349,18 +350,32 @@ function consoleGetProjectDashboard(projectId, className, bypassCache) {
   // serial SpreadsheetApp path so the dashboard is never empty — correct-but-
   // slow beats fast-but-blank. A partial failure (one bad sheet) keeps the
   // parallel result; that sheet just shows zeros and is logged.
+  // Timing — decides whether the deferred precomputed rollup (CLAUDE.md §4) is
+  // worth building. Read it from the Executions log on a real whole-class load.
+  const tRead = Date.now();
+  let path = 'parallel';
   let result;
   try {
     result = computeDashboardParallel_(project, scopedClasses, bundle);
     if (result.readRequested > 0 && result.readErrors >= result.readRequested) {
       console.warn('[OPS] dashboard parallel read fully failed (' + result.readErrors +
         '/' + result.readRequested + ' sheets); falling back to serial.');
+      path = 'serial';
       result = computeDashboardSerial_(project, scopedClasses, bundle);
     }
   } catch (e) {
     console.warn('[OPS] dashboard parallel path threw; serial fallback: ' + (e && e.message || e));
+    path = 'serial';
     result = computeDashboardSerial_(project, scopedClasses, bundle);
   }
+  const timing = {
+    path: path,
+    classes: scopedClasses.length,
+    students: (result.students || []).length,
+    sheets: result.readRequested || 0,
+    setupMs: tRead - t0,
+    readMs: Date.now() - tRead,
+  };
   const students = result.students;
   const groups = result.groups;
 
@@ -395,7 +410,10 @@ function consoleGetProjectDashboard(projectId, className, bypassCache) {
     students,
     groups,
     asOf: nowIso_(),
+    timing: timing,   // the cold-read cost; a cache hit replays it unchanged
   };
+  timing.totalMs = Date.now() - t0;
+  console.log('[OPS] dashboard timing ' + projectId + ' ' + JSON.stringify(timing));
   if (banner) resp.recentUnarchive = banner;
   // >100KB values (a huge admin 'all' scope) silently fail to cache — caught
   // here so the request still returns; the parallel path is fast regardless.

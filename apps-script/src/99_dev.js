@@ -244,6 +244,40 @@ function devTestBibliographyCitationFallback() {
   return report;
 }
 
+/**
+ * Locks the pasted-citation override, citation link ranges, the "cleared field
+ * stays cleared" precedence, and pasted-counts-as-cited. Editor mirror of
+ * apps-script/test/citation.node.test.js (run that headless). Pure.
+ */
+function devTestCitationOverrides() {
+  const out = [];
+  let pass = true;
+  const check = (name, cond) => { out.push((cond ? 'PASS' : 'FAIL') + ' — ' + name); if (!cond) pass = false; };
+
+  const pastedText = 'Spector, Ronald H. "Vietnam War." Encyclopedia Britannica, 2024, www.britannica.com/event/Vietnam-War.';
+  const src = {
+    citationFields: JSON.stringify({ author: '', pasted: { text: pastedText, italics: [[34, 57]] } }),
+    scrapedAuthor: 'Wrong Scrape', scrapedTitle: 'Vietnam War', rawUrl: 'https://www.britannica.com/event/Vietnam-War',
+  };
+  const fields = buildCitationFields_(src);
+  check('cleared author is not re-filled from the scrape', fields.author === '');
+  const f = formatCitation(fields, 'mla');
+  check('pasted citation wins', f.pasted === true && f.text === pastedText);
+  check('pasted italics kept', JSON.stringify(f.italics) === '[[34,57]]');
+  check('URL in pasted citation is linked', f.links.length === 1 && f.links[0][2] === 'https://www.britannica.com/event/Vietnam-War');
+  check('pasted counts as cited', isCitationComplete_(parseCitationFields_(src)) === true);
+
+  const built = formatCitation({ sourceType: 'website', title: 'Agent Orange', url: 'https://www.history.com/x' }, 'mla');
+  const l = built.links[0];
+  check('built citation links its URL', !!l && built.text.slice(l[0], l[1]) === 'https://www.history.com/x');
+  check('title alone is not cited', isCitationComplete_({ title: 'T' }) === false);
+
+  out.push(pass ? 'ALL GREEN' : 'NOT GREEN');
+  const report = out.join('\n');
+  console.log(report);
+  return report;
+}
+
 /** Diagnostic: confirms whether the URL constructor works in this GAS runtime. */
 function devProbeUrlConstructor() {
   try {
