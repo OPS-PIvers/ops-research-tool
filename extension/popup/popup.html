@@ -11,6 +11,15 @@
     <div id="sync-status" class="sync-status sync-status--idle">All saved</div>
   </header>
 
+  <!-- Shown whenever the extension can't save because nobody is signed in:
+       a fresh install, or a sign-in that expired. -->
+  <section id="signin" class="signin" hidden>
+    <div class="signin__title" id="signin-title">Sign in to get started</div>
+    <p class="signin__body" id="signin-body">Use your school Google account to save highlights and sources.</p>
+    <button id="signin-button" type="button" class="btn-signin">Sign in with Google</button>
+    <p class="signin__error" id="signin-error" hidden></p>
+  </section>
+
   <section class="power-toggle">
     <label class="switch">
       <input type="checkbox" id="enabled-toggle" checked />
@@ -41,10 +50,12 @@
   <footer>
     <div class="footer__actions">
       <button id="force-drain" type="button">Sync now</button>
-      <button id="reconnect" type="button" class="btn-secondary" hidden>Reconnect</button>
     </div>
     <span id="last-sync" class="last-sync"></span>
   </footer>
+  <p class="signin-again" id="signin-again" hidden>
+    Not saving? <button id="signin-again-button" type="button" class="btn-link">Sign in again</button>
+  </p>
 
   <script src="../config.js"></script>
   <script src="../shared/ids.js"></script>

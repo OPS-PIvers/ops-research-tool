@@ -68,6 +68,20 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     on mark messages a sidebar to focus (no-op if absent).
   - Popup: identity surface, project picker (sticky), sync status pill,
     bundle preview, "Sync now" button, and a **master on/off toggle**.
+  - **Popup sign-in card (v0.1.5).** Nothing runs interactive auth except the
+    popup, so whenever the status is `needsAuth` (fresh install, or a token that
+    can't be silently refreshed) a prominent **"Sign in with Google"** card sits
+    at the top: "Sign in to get started" on a never-signed-in browser, "You've
+    been signed out … your highlights are safe on this computer" once a
+    `cachedMe` exists. It replaces the old hidden footer "Reconnect" button; a
+    small "Not saving? Sign in again" link remains under the footer on
+    `error`/`offline`. The flow runs in the **service worker** (`signIn`
+    message → `signInInteractive_` in [`background.js`](extension/background.js))
+    because the Google window closes the popup — the worker finishes the token
+    mint, context refresh, and queue drain. Raw `chrome.identity` errors are
+    mapped to student-readable text (`friendlySignInError_`, popup.js); a
+    "bad client id" error means the OAuth client's Application ID doesn't match
+    the running extension id (§13).
   - **Master on/off gate ([`content/enabled.js`](extension/content/enabled.js) +
     popup) DEFAULTS OFF as of v0.1.2.** A fresh/force-installed copy is dormant
     on install — no selection toolbar, no sidebar launcher — until the student
