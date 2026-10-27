@@ -665,6 +665,19 @@ function renderSource(source) {
   const spacer = document.createElement('span');
   spacer.style.flex = '1';
   meta.appendChild(spacer);
+  // Back to the original page, so a student can re-read the part that mattered.
+  const pageUrl = source.rawUrl || '';
+  if (pageUrl) {
+    const open = document.createElement('a');
+    open.className = 'sb-source__action';
+    open.href = /^https?:\/\//i.test(pageUrl) ? pageUrl : 'https://' + pageUrl;
+    open.target = '_blank';
+    open.rel = 'noopener noreferrer';
+    open.textContent = 'Open source ↗';
+    open.title = pageUrl;
+    open.addEventListener('click', (e) => e.stopPropagation());
+    meta.appendChild(open);
+  }
   const inlineBtn = document.createElement('button');
   inlineBtn.type = 'button';
   inlineBtn.className = 'sb-source__action';

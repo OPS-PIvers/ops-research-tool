@@ -34,7 +34,7 @@ function upsertSource_(studentSheet, source) {
     // Sidebar-owned: take the payload's value when it explicitly provides one
     // (the sidebar's own writes do), else keep what's stored, else default.
     sourceType: source.sourceType !== undefined ? (source.sourceType || '') : (prior ? prior.sourceType : ''),
-    citationFields: source.citationFields ? JSON.stringify(source.citationFields) : (prior ? prior.citationFields : ''),
+    citationFields: source.citationFields ? JSON.stringify(sanitizeCitationFieldsForStorage_(source.citationFields)) : (prior ? prior.citationFields : ''),
     primarySecondary: source.primarySecondary || (prior ? prior.primarySecondary : 'unset'),
     annotation: source.annotation !== undefined ? (source.annotation || '') : (prior ? prior.annotation : ''),
     annotationLastEdited: source.annotationLastEdited || (prior ? prior.annotationLastEdited : ''),

@@ -52,9 +52,12 @@ function insertBibliography_(projectId, annotated) {
     const fields = buildCitationFields_(s);
     const formatted = formatCitation(fields, style);
     return {
-      sortKey: bibSortKey_(fields, formatted.text),
+      // A pasted citation is ordered by its own first word, as MLA orders
+      // entries — its fields may not match what it says.
+      sortKey: formatted.pasted ? bibSortKey_({}, formatted.text) : bibSortKey_(fields, formatted.text),
       text: formatted.text,
       italics: formatted.italics || [],
+      links: formatted.links || [],
       annotation: s.annotation || '',
     };
   };
@@ -185,19 +188,26 @@ function buildCitationFields_(source) {
     try { fields = JSON.parse(source.citationFields) || {}; }
     catch (e) { fields = {}; }
   }
+  if (!fields || typeof fields !== 'object') fields = {};
   // Fill in fallbacks from scraped values so an unedited source still emits
-  // something reasonable rather than an empty citation.
-  if (!fields.title && source.scrapedTitle) fields.title = source.scrapedTitle;
-  if (!fields.siteName && source.scrapedSite) fields.siteName = source.scrapedSite;
-  if (!fields.publishedDate && source.scrapedDate) fields.publishedDate = source.scrapedDate;
-  if (!fields.author && source.scrapedAuthor) fields.author = source.scrapedAuthor;
-  if (!fields.url && source.rawUrl) fields.url = source.rawUrl;
+  // something reasonable rather than an empty citation. `key in fields` — the
+  // same precedence as the Docs editor and the extension: a field the student
+  // deliberately cleared stays cleared, it is never re-filled from the scrape.
+  const fill = (key, val) => { if (!(key in fields) && val) fields[key] = val; };
+  fill('title', source.scrapedTitle);
+  fill('siteName', source.scrapedSite);
+  fill('publishedDate', source.scrapedDate);
+  fill('author', source.scrapedAuthor);
+  fill('url', source.rawUrl);
+  // sourceType / accessDate aren't student-clearable, so a blank still falls back.
   if (!fields.sourceType && source.sourceType) fields.sourceType = source.sourceType;
   if (!fields.accessDate && source.accessDate) fields.accessDate = source.accessDate;
   // Coerce every value to a string. Sheets autocoerces numeric-looking cells
   // (e.g. a year scraped as "2024" returns as the number 2024) and Date cells
   // to native Date objects, both of which lack String methods like .replace.
+  // `pasted` is structured ({text, italics}) and handled by formatCitation.
   Object.keys(fields).forEach((k) => {
+    if (k === 'pasted') return;
     if (fields[k] === null || fields[k] === undefined) fields[k] = '';
     else if (typeof fields[k] !== 'string') fields[k] = String(fields[k]);
   });
@@ -214,7 +224,9 @@ function bibSortKey_(fields, citationText) {
     })();
     return lastFirst.toLowerCase();
   }
-  const title = String(fields.title || citationText || '').replace(/^(the|a|an)\s+/i, '');
+  const title = String(fields.title || citationText || '')
+    .replace(/^[\s"'\u201c\u2018]+/, '')
+    .replace(/^(the|a|an)\s+/i, '');
   return title.toLowerCase();
 }
 
@@ -239,6 +251,7 @@ function appendBibEntry_(body, idx, entry, includeAnnotation) {
   cite.setIndentFirstLine(0);
   cite.setIndentStart(36); // 0.5 inch in points
   applyItalicsRanges_(cite, entry.italics);
+  applyLinkRanges_(cite, entry.links);
   let next = idx + 1;
   if (includeAnnotation && entry.annotation && entry.annotation.trim()) {
     const ann = body.insertParagraph(next, entry.annotation.trim());
@@ -256,6 +269,17 @@ function applyItalicsRanges_(paragraph, ranges) {
   ranges.forEach(([start, end]) => {
     if (typeof start !== 'number' || typeof end !== 'number' || end <= start) return;
     try { text.setItalic(start, end - 1, true); }
+    catch (e) { /* out-of-range; skip silently */ }
+  });
+}
+
+/** Make the source URL inside a citation a real, clickable link. */
+function applyLinkRanges_(paragraph, ranges) {
+  if (!ranges || ranges.length === 0) return;
+  const text = paragraph.editAsText();
+  ranges.forEach(([start, end, href]) => {
+    if (typeof start !== 'number' || typeof end !== 'number' || end <= start || !href) return;
+    try { text.setLinkUrl(start, end - 1, href); }
     catch (e) { /* out-of-range; skip silently */ }
   });
 }

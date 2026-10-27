@@ -54,12 +54,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.cachedMe && changes.cachedMe.newValue) {
     renderIdentity(changes.cachedMe.newValue);
   }
+  // First sign-in switches the extension on (background autoEnableOnFirstSignIn_).
+  if (changes.extensionEnabled) reflectEnabled_(changes.extensionEnabled.newValue === true);
 });
 
 // Master on/off switch. Single global flag in chrome.storage.local; the
 // content scripts (content/enabled.js) read it and gate the toolbar + sidebar.
 // Undefined = never set = OFF by default (a fresh/force install is dormant
-// until the student flips it on here).
+// until the student signs in — which switches it on once — or flips it here).
 async function initEnabledToggle_() {
   const { extensionEnabled } = await chrome.storage.local.get('extensionEnabled');
   reflectEnabled_(extensionEnabled === true);

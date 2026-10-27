@@ -156,7 +156,7 @@ function sidebarUpdateSource(patch) {
     row.sourceType = patch.sourceType;
   }
   if (patch.citationFields !== undefined) {
-    row.citationFields = patch.citationFields ? JSON.stringify(patch.citationFields) : '';
+    row.citationFields = patch.citationFields ? JSON.stringify(sanitizeCitationFieldsForStorage_(patch.citationFields)) : '';
   }
   if (patch.primarySecondary !== undefined) {
     if (patch.primarySecondary && PRIMARY_SECONDARY.indexOf(patch.primarySecondary) < 0) {

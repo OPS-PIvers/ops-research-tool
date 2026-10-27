@@ -1,7 +1,7 @@
 /**
  * Node-side unit tests for the PURE page-view helpers in background.js:
- * overlayPendingOnData_ (offline-queue overlay) and selectPageData_ (page
- * narrowing). background.js is loaded into a vm context with the service-
+ * overlayPendingOnData_ (offline-queue overlay), selectPageData_ (page
+ * narrowing) and autoEnableOnFirstSignIn_ (storage stubbed). background.js is loaded into a vm context with the service-
  * worker globals stubbed; only the pure functions are called.
  *
  *   node extension/test/background_cache.node.test.js
@@ -102,5 +102,25 @@ console.log('selectPageData_:');
   check('no match → empty view', none.highlights.length === 0 && none.source === null && none.sourceCount === 0);
 }
 
-if (failures) { console.error('\n' + failures + ' failure(s)'); process.exit(1); }
-console.log('\nALL GREEN');
+(async () => {
+  console.log('autoEnableOnFirstSignIn_:');
+  let store = {};
+  sandbox.chrome.storage.local.get = async (k) => (k in store ? { [k]: store[k] } : {});
+  sandbox.chrome.storage.local.set = async (o) => { Object.assign(store, o); };
+  const me = { ok: true, actor: 'stu@orono.k12.mn.us', roster: { Name: 'Sam' } };
+  await sandbox.autoEnableOnFirstSignIn_(me);
+  check('never-set → switched on', store.extensionEnabled === true);
+  store = { extensionEnabled: false };
+  await sandbox.autoEnableOnFirstSignIn_(me);
+  check('deliberately off → stays off', store.extensionEnabled === false);
+  store = {};
+  await sandbox.autoEnableOnFirstSignIn_({ ok: false });
+  check('failed sign-in → untouched', !('extensionEnabled' in store));
+  await sandbox.autoEnableOnFirstSignIn_({ ok: true, actor: 'x@orono.k12.mn.us', roster: null, staff: null });
+  check('signed in but not on roster/staff → untouched', !('extensionEnabled' in store));
+  await sandbox.autoEnableOnFirstSignIn_({ ok: true, actor: 't@orono.k12.mn.us', staff: { Role: 'teacher' } });
+  check('staff → switched on', store.extensionEnabled === true);
+
+  if (failures) { console.error('\n' + failures + ' failure(s)'); process.exit(1); }
+  console.log('\nALL GREEN');
+})();

@@ -118,4 +118,6 @@ const AUDIT_ACTIONS = {
   GROUP_DISBAND: 'group_disband',
   GROUP_DISBAND_GROUP: 'group_disband_group',
   GROUP_UNMERGE: 'group_unmerge',
+  ROSTER_ENROLL: 'roster_enroll',       // teacher Manage-roster add (projectId blank — class-scoped)
+  ROSTER_UNENROLL: 'roster_unenroll',
 };

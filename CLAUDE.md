@@ -67,7 +67,8 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     (in-session only, vanishes on reload per spec). Optional note. Click
     on mark messages a sidebar to focus (no-op if absent).
   - Popup: identity surface, project picker (sticky), sync status pill,
-    bundle preview, "Sync now" button, and a **master on/off toggle**.
+    bundle preview, "Sync now" button, and a **master on/off toggle** (switched
+    on automatically at the first recognized sign-in — see §4, 2026-10-27).
   - **Popup sign-in card (v0.1.5).** Nothing runs interactive auth except the
     popup, so whenever the status is `needsAuth` (fresh install, or a token that
     can't be silently refreshed) a prominent **"Sign in with Google"** card sits
@@ -656,6 +657,83 @@ These supersede or refine the spec — apply them before defaulting to plan text
   `node extension/test/background_cache.node.test.js`, and editor
   `devTestPerfLayerAll` (see §8). `extension/test/` is excluded from the store
   zip by the build script.
+- **Teachers manage their own class rosters from the dashboard (2026-10-27).**
+  A **Manage roster** button beside Manage groups opens a modal for the class
+  tab being viewed (disabled on "All classes" until a tab is picked; a
+  single-class project uses its one class). All server logic is in
+  [`68_teacher_roster.js`](apps-script/src/68_teacher_roster.js):
+  `consoleGetClassRoster` / `consoleEnrollStudentInClass` /
+  `consoleUnenrollStudentFromClass`, gated by the pure `canEditClassRoster_`
+  (teacher = the class's TeacherEmail; admin = any class). **Add enrolls an
+  EXISTING `Students` row only.** An unknown email returns
+  `{ok:false, reason:'not_found'}` and the modal shows it inline; creating
+  students stays admin-only. **A non-admin can't enroll a student who is in
+  ANOTHER teacher's class in an active project shared with this class**
+  (`enrollConflictsWithOtherTeacher_` → `reason:'other_teacher'`). Without
+  that, enrolling would grant drill-down access to the student's Sheet, which
+  is found by email, not by class. Admins move those students. **Remove = unenroll only.** Sheets are kept, and
+  `findSoloSheetInProject_` finds the same Sheet on re-enroll. A grouped student
+  first leaves the group through `removeMemberFromGroupCore_` (active projects
+  containing the class; `groupsToLeaveOnUnenroll_` picks groups filed under
+  that class, or every group when no other project class remains). This runs
+  BEFORE the enrollment row drops, because the solo rebuild files the Sheet
+  under a class the student still shares. Writes go through `enroll_`/`unenroll_`
+  (roster cache dropped) plus an audit row (`roster_enroll`/`roster_unenroll`,
+  blank projectId, `class=…;email=…`). After a change the modal refetches the
+  current dashboard view with bypassCache. Other dashboard scopes age out
+  within the 45s TTL.
+- **Pasted citations, source links, drill-down cleanup (2026-10-27 teacher
+  feedback batch; ships with extension v0.1.5).**
+  - **Pasted citation.** A student can paste the citation a database or
+    encyclopedia gives them (Britannica, LoC…) instead of filling fields. Stored
+    as **`citationFields.pasted = {text, italics}`**, so it rides every existing
+    write/merge path untouched. **`formatCitation` returns it in place of the
+    built citation**, so the preview, bibliography and drill-down all agree with
+    no per-caller logic. `pastedCitationOf_` sanitizes it (whitespace
+    collapsed with italic ranges remapped, clamped, merged), and
+    `sanitizeCitationFieldsForStorage_` applies the same 2000-char cap on BOTH
+    write paths (`upsertSource_`, `sidebarUpdateSource`), so a giant paste
+    can't hit the 50k cell limit and wedge the source's queue. "Copy citation"
+    (`formatInlineCitation`) follows a paste too (`pastedInlineCitation_`:
+    quoted title, italic title, or the leading author name). It **counts as cited** via `isCitationComplete_`
+    ([`62_aggregator.js`](apps-script/src/62_aggregator.js)), the single
+    "citation done" rule used by the dashboard metric and the drill-down flags.
+    The bibliography sorts it by its own first word. UI: a paste box on the
+    extension Source tab AND the Docs source editor (`renderPasteBlock_` +
+    `citationFromClipboard_` in both, which keeps `<i>`/`<em>`/inline-italic
+    from the clipboard HTML and counts UTF-16 units so emoji don't shift
+    ranges; **keep the two copies in sync**). The extension keeps an
+    unconfirmed paste in `state.pasteDraft` across background re-renders. A "Replace your
+    citation?" confirm comes first; "Use the built citation instead" deletes the
+    key. The per-type fields hide while a paste is active.
+  - **Links back to the source.** `formatCitation` now also returns `links:
+    [[start,end,href]]` (`citationLinkRanges_`: the LAST occurrence of a
+    URL-shaped source URL, else the first URL-looking token; `www.`-only gets
+    `https://`; a trailing period never enters the href). The bibliography applies
+    them with `setLinkUrl`, so the URL in the Doc is clickable. "Open source ↗" sits on
+    Docs sidebar cards + the source editor; drill-down titles and citation URLs
+    are links.
+  - **Field precedence unified.** `buildCitationFields_` now uses the same `key
+    in fields` rule as the editor + extension (a cleared field stays cleared),
+    and the drill-down builds through it instead of its own inline `||`
+    fallback.
+  - **Drill-down source cards** are a reading layout: title (linked) · one meta
+    line (classification, count, Cite/Tag/Note) · citation with an MLA hanging
+    indent and no box · labelled annotation · highlights collapsed in a native
+    `<details>` with a "Main event 3 · Cause 2" summary (`highlightSummary_`).
+    The `<details>` toggles in place and its nodes exist up front, which keeps
+    the group view's author bylines working.
+  - **Extension:** the empty Source tab offers **"Save this page as a source"**
+    (no highlight needed; same `getOrCreateSourceId` path). The **first sign-in
+    the backend recognizes switches the extension on**
+    (`autoEnableOnFirstSignIn_`), only while `extensionEnabled` was never set,
+    so a student who turned it off stays off, and only for an account on the
+    roster or staff list (an unrostered account would just get a toolbar that
+    says "No active project").
+  - **Dashboard timing.** `consoleGetProjectDashboard` logs
+    `[OPS] dashboard timing <projectId> {path, classes, students, sheets,
+    setupMs, readMs, totalMs}` and returns it as `resp.timing`. Read it on a
+    real whole-class project before building the deferred precomputed rollup.
 
 ## 5. GAS V8 quirks discovered
 
@@ -866,6 +944,15 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   equivalents: `node apps-script/test/cache.node.test.js` and
   `node extension/test/background_cache.node.test.js` (queue overlay + page
   narrowing in `background.js`). `devFlushOpsCache` = manual flush.
+- Citation overrides (§4): **`devTestCitationOverrides`** (pasted wins + keeps
+  italics, links, cleared field stays cleared, pasted counts as cited). Headless:
+  `node apps-script/test/citation.node.test.js`.
+- Teacher Manage roster (§4): **`devTestTeacherRoster`** (DEV fixture: unenroll
+  a grouped student, which runs the group exit and auto-disband and keeps the
+  solo Sheet; re-enroll a messy-cased email and get the SAME Sheet back; check
+  not_found, alreadyEnrolled and the audit rows). Headless:
+  `node apps-script/test/teacher_roster.node.test.js` (auth decision, email
+  normalization, group-exit selection, row shaping).
 
 ## 9. How to start a session here
 

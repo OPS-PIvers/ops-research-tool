@@ -287,6 +287,9 @@ function renderCitationForm() {
   const form = document.createElement('div');
   form.className = 'sb-source__form';
 
+  // Way back to the original page, so a student can re-read it.
+  if (source.rawUrl) form.appendChild(openSourceLink_(source.rawUrl, 'sb-open-source'));
+
   // Source type
   form.appendChild(formField_('Source type', selectInput_(SRC_TYPES, fields.sourceType, (v) => {
     fields.sourceType = v;
@@ -297,8 +300,11 @@ function renderCitationForm() {
     render();   // re-render to swap the field set
   })));
 
-  // Per-type fields
-  sourceFieldsFor_(fields.sourceType).forEach((def) => {
+  form.appendChild(renderPasteBlock_(source, cf));
+
+  // Per-type fields — hidden while a pasted citation is in use (they'd have no
+  // visible effect); "Use the built citation instead" brings them back.
+  if (!pastedOf_(cf)) sourceFieldsFor_(fields.sourceType).forEach((def) => {
     const onChange = (v) => {
       fields[def.key] = v;
       cf[def.key] = v;
@@ -346,6 +352,158 @@ function renderCitationForm() {
   form.appendChild(dangerWrap);
 
   return form;
+}
+
+/** "Open source ↗" link to the page a source came from (new tab). */
+function openSourceLink_(url, className) {
+  const a = document.createElement('a');
+  a.className = className;
+  a.href = /^https?:\/\//i.test(url) ? url : 'https://' + url;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.textContent = 'Open source ↗';
+  a.title = url;
+  return a;
+}
+
+// The usable pasted citation ({text, italics}) in a citationFields object, or null.
+function pastedOf_(cf) {
+  const p = cf && cf.pasted;
+  return p && String(p.text || '').trim() ? p : null;
+}
+
+// Clipboard HTML → { text, italics: [[start,end],...] }. Italic comes from
+// <i>/<em>/<cite> or an inline font-style; whitespace is collapsed and
+// trimmed. Same algorithm as citationFromClipboard_ in extension/content/sidebar.js
+// — keep the two in sync.
+function citationFromClipboard_(html, plain) {
+  const chars = [];
+  // UTF-16 units (split('')), not code points: the server and previewHtml_
+  // index strings by UTF-16, so an emoji must count as two or ranges drift.
+  const push = (str, it) => { String(str).split('').forEach((ch) => chars.push({ ch, it })); };
+  if (html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const BLOCK = /^(P|DIV|BR|LI|UL|OL|TR|TD|TH|TABLE|BLOCKQUOTE|SECTION|ARTICLE|H[1-6])$/;
+    const walk = (node, it) => {
+      if (node.nodeType === 3) { push(node.nodeValue, it); return; }
+      if (node.nodeType !== 1) return;
+      const tag = node.tagName;
+      if (tag === 'SCRIPT' || tag === 'STYLE') return;
+      let nit = it;
+      if (tag === 'I' || tag === 'EM' || tag === 'CITE') nit = true;
+      const fs = node.style && node.style.fontStyle;
+      if (fs === 'italic' || fs === 'oblique') nit = true;
+      else if (fs === 'normal') nit = false;
+      if (BLOCK.test(tag)) push(' ', false);
+      node.childNodes.forEach((c) => walk(c, nit));
+      if (BLOCK.test(tag)) push(' ', false);
+    };
+    walk(doc.body, false);
+  } else {
+    push(plain || '', false);
+  }
+  // Collapse whitespace runs and trim, carrying each kept char's italic flag.
+  const out = [];
+  chars.forEach((c) => {
+    const ws = /\s/.test(c.ch);
+    if (ws) {
+      if (!out.length || out[out.length - 1].ch === ' ') return;
+      out.push({ ch: ' ', it: c.it });
+    } else out.push(c);
+  });
+  while (out.length && out[out.length - 1].ch === ' ') out.pop();
+  let text = '';
+  const italics = [];
+  let start = -1;
+  out.forEach((c, i) => {
+    text += c.ch;
+    if (c.it && start < 0) start = i;
+    if (!c.it && start >= 0) { italics.push([start, i]); start = -1; }
+  });
+  if (start >= 0) italics.push([start, out.length]);
+  // Same cap as the server (PASTED_CITATION_MAX_ in 51_citation.js).
+  if (text.length > 2000) text = text.slice(0, 2000);
+  // Don't italicize the spaces at a range's edges.
+  const trimmed = italics.map(([a, b]) => {
+    while (a < b && text[a] === ' ') a++;
+    while (b > a && text[b - 1] === ' ') b--;
+    return [a, b];
+  }).map(([a, b]) => [a, Math.min(b, text.length)]).filter(([a, b]) => b > a);
+  return { text, italics: trimmed };
+}
+
+// "Paste a citation" block — mirrors renderPasteBlock_ in the extension's
+// Source tab. With a pasted citation saved it shows that citation and a way
+// back to the built one; otherwise a paste box that asks before replacing.
+function renderPasteBlock_(source, cf) {
+  const wrap = document.createElement('div');
+  wrap.className = 'sb-paste';
+  const lab = document.createElement('label');
+  wrap.appendChild(lab);
+  const save = () => {
+    saveSourcePatch_({ citationFields: cf });
+    source.citationFieldsParsed = cf;
+    render();
+  };
+  const pasted = pastedOf_(cf);
+  if (pasted) {
+    lab.textContent = 'Your pasted citation';
+    const body = document.createElement('div');
+    body.className = 'sb-paste__cite';
+    body.innerHTML = renderPreviewHtml_(pasted);
+    wrap.appendChild(body);
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'sb-paste__link';
+    back.textContent = 'Use the built citation instead';
+    back.addEventListener('click', () => { delete cf.pasted; save(); });
+    wrap.appendChild(back);
+    return wrap;
+  }
+  lab.textContent = 'Have a citation from the site? Paste it here';
+  const ta = document.createElement('textarea');
+  ta.placeholder = 'Copy the MLA citation the site gives you, then paste (Ctrl+V)';
+  wrap.appendChild(ta);
+  const confirm = document.createElement('div');
+  confirm.className = 'sb-paste__confirm';
+  confirm.hidden = true;
+  const q = document.createElement('div');
+  q.className = 'sb-paste__q';
+  q.textContent = 'Replace your citation with this one?';
+  confirm.appendChild(q);
+  const btns = document.createElement('div');
+  btns.className = 'sb-paste__btns';
+  const yes = document.createElement('button');
+  yes.type = 'button'; yes.className = 'sb-btn sb-btn--primary'; yes.textContent = 'Replace';
+  const no = document.createElement('button');
+  no.type = 'button'; no.className = 'sb-btn'; no.textContent = 'Cancel';
+  btns.appendChild(yes); btns.appendChild(no);
+  confirm.appendChild(btns);
+  wrap.appendChild(confirm);
+
+  let pending = null;
+  const showConfirm = () => { confirm.hidden = !(pending && pending.text); };
+  ta.addEventListener('paste', (e) => {
+    const cd = e.clipboardData;
+    if (!cd) return;
+    e.preventDefault();
+    pending = citationFromClipboard_(cd.getData('text/html'), cd.getData('text/plain'));
+    ta.value = pending.text;
+    showConfirm();
+  });
+  ta.addEventListener('input', () => {
+    // Typed or edited by hand: plain text, so the clipboard italics no longer line up.
+    const text = ta.value.replace(/\s+/g, ' ').trim().slice(0, 2000);
+    pending = text ? { text: text, italics: [] } : null;
+    showConfirm();
+  });
+  yes.addEventListener('click', () => {
+    if (!pending || !pending.text) return;
+    cf.pasted = { text: pending.text, italics: pending.italics };
+    save();
+  });
+  no.addEventListener('click', () => { pending = null; ta.value = ''; showConfirm(); });
+  return wrap;
 }
 
 function sourceFieldsFor_(sourceType) {
