@@ -462,10 +462,13 @@ function computeDashboardParallel_(project, scopedClasses, bundle) {
   });
 
   // Resolve every enrolled student to a sheetId: group member → group Sheet;
-  // else manifest solo entry (id + tab gids); else Drive fallback (+ best-effort
-  // manifest backfill so the next load skips the walk). A manifest entry missing
-  // its gids is treated as incomplete and re-resolved.
+  // else manifest solo entry (id + tab gids); else ONE shared Drive walk of the
+  // project (+ best-effort manifest backfill so the next load skips it). A
+  // manifest entry missing its gids is treated as incomplete and re-resolved.
+  // Students with no Sheet yet always miss the manifest, so the walk must be
+  // shared — a walk per student made an unstarted class take minutes.
   const manifest = loadProjectManifest_(project.projectId);
+  let projectSheets = null;   // emailLower → fileId, built on the first miss
   const studentSheetId = {};   // email → sheetId|null
   const studentIsGroup = {};   // email → bool
   enrolled.forEach((r) => {
@@ -482,8 +485,12 @@ function computeDashboardParallel_(project, scopedClasses, bundle) {
       descById[entry.id] = { id: entry.id, sourcesGid: entry.sgid, highlightsGid: entry.hgid };
       return;
     }
-    // Miss / incomplete entry → resolve via Drive once, backfill the manifest.
-    const ss = getSoloSheetIfExists_(r.Email, project);
+    // Miss / incomplete entry → look it up in the shared walk, backfill the manifest.
+    if (!projectSheets) projectSheets = mapSoloSheetsInProject_(project);
+    let ss = null;
+    if (projectSheets[emailLower]) {
+      try { ss = SpreadsheetApp.openById(projectSheets[emailLower]); } catch (e) { ss = null; }
+    }
     if (ss) {
       const id = ss.getId();
       recordSoloSheetForSs_(project.projectId, r.Email, ss);

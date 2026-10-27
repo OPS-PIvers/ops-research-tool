@@ -51,6 +51,42 @@ function soloSheetNameMatches_(fileName, email) {
 }
 
 /**
+ * The email a solo Sheet file name is keyed by (lowercased), or '' for a name
+ * that isn't a solo Sheet (group sheets carry no @ token). Same rule as
+ * soloSheetNameMatches_: the email is the whole name or its last space-
+ * delimited token.
+ */
+function soloSheetEmailFromName_(fileName) {
+  const n = String(fileName).toLowerCase();
+  const token = n.slice(n.lastIndexOf(' ') + 1);
+  return token.indexOf('@') > 0 ? token : '';
+}
+
+/**
+ * Every solo Sheet in the project in ONE walk of its class folders:
+ * { emailLower: fileId }. The dashboard uses this for students the manifest
+ * doesn't know, instead of walking every class folder once PER student — with
+ * most of a class not started yet, that per-student walk was the whole load
+ * time (30–180 s for 30–120 students).
+ */
+function mapSoloSheetsInProject_(project) {
+  const out = {};
+  const folders = DriveApp.getFolderById(project.rootFolderId).getFolders();
+  while (folders.hasNext()) {
+    const cf = folders.next();
+    const nm = cf.getName();
+    if (nm === NAMES.ARCHIVED_FOLDER || nm === NAMES.ARCHIVED_STUDENTS_FOLDER) continue;
+    const files = cf.getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      const email = soloSheetEmailFromName_(f.getName());
+      if (email && !out[email] && !f.isTrashed()) out[email] = f.getId();
+    }
+  }
+  return out;
+}
+
+/**
  * Find a (student, project) solo Sheet file by email, name-format-agnostic.
  * Skips trashed files (a solo Sheet absorbed into a group is trashed, not
  * deleted) — see findChildFile_.

@@ -738,6 +738,14 @@ These supersede or refine the spec — apply them before defaulting to plan text
     `[OPS] dashboard timing <projectId> {path, classes, students, sheets,
     setupMs, readMs, totalMs}` and returns it as `resp.timing`. Read it on a
     real whole-class project before building the deferred precomputed rollup.
+    **First real reading (History Day, 2026-10-27): 18–51 s for one 29-student
+    class, 78–178 s for all four (120 students), with only 1–2 Sheets in
+    existence.** The cost was not the CSV reads: every student with no Sheet
+    misses the manifest and used to walk every class folder on its own. The
+    dashboard now does ONE walk per load (`mapSoloSheetsInProject_`,
+    [`11_provisioning.js`](apps-script/src/11_provisioning.js)). Re-measure
+    with `gcloud logging read 'textPayload:"dashboard timing"'` before
+    deciding on the rollup.
 
 ## 5. GAS V8 quirks discovered
 
