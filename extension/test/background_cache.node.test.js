@@ -107,7 +107,7 @@ console.log('selectPageData_:');
   let store = {};
   sandbox.chrome.storage.local.get = async (k) => (k in store ? { [k]: store[k] } : {});
   sandbox.chrome.storage.local.set = async (o) => { Object.assign(store, o); };
-  const me = { ok: true, actor: 'stu@orono.k12.mn.us' };
+  const me = { ok: true, actor: 'stu@orono.k12.mn.us', roster: { Name: 'Sam' } };
   await sandbox.autoEnableOnFirstSignIn_(me);
   check('never-set → switched on', store.extensionEnabled === true);
   store = { extensionEnabled: false };
@@ -116,6 +116,10 @@ console.log('selectPageData_:');
   store = {};
   await sandbox.autoEnableOnFirstSignIn_({ ok: false });
   check('failed sign-in → untouched', !('extensionEnabled' in store));
+  await sandbox.autoEnableOnFirstSignIn_({ ok: true, actor: 'x@orono.k12.mn.us', roster: null, staff: null });
+  check('signed in but not on roster/staff → untouched', !('extensionEnabled' in store));
+  await sandbox.autoEnableOnFirstSignIn_({ ok: true, actor: 't@orono.k12.mn.us', staff: { Role: 'teacher' } });
+  check('staff → switched on', store.extensionEnabled === true);
 
   if (failures) { console.error('\n' + failures + ' failure(s)'); process.exit(1); }
   console.log('\nALL GREEN');

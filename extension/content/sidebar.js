@@ -406,6 +406,7 @@ const OpsSidebar = (function () {
     panelEl: null,
     listEl: null,
     launcherEl: null,
+    pasteDraft: null,      // unconfirmed paste on the Source tab: {sourceId, pending, value}
     project: null,
     projects: [],         // all active projects the student belongs to (drives the picker)
     bundle: null,
@@ -1150,10 +1151,12 @@ const OpsSidebar = (function () {
   // — keep the two in sync.
   function citationFromClipboard_(html, plain) {
     const chars = [];
-    const push = (str, it) => { for (const ch of str) chars.push({ ch, it }); };
+    // UTF-16 units (split('')), not code points: the server and previewHtml_
+    // index strings by UTF-16, so an emoji must count as two or ranges drift.
+    const push = (str, it) => { String(str).split('').forEach((ch) => chars.push({ ch, it })); };
     if (html) {
       const doc = new DOMParser().parseFromString(html, 'text/html');
-      const BLOCK = /^(P|DIV|BR|LI|TR|H[1-6])$/;
+      const BLOCK = /^(P|DIV|BR|LI|UL|OL|TR|TD|TH|TABLE|BLOCKQUOTE|SECTION|ARTICLE|H[1-6])$/;
       const walk = (node, it) => {
         if (node.nodeType === 3) { push(node.nodeValue, it); return; }
         if (node.nodeType !== 1) return;
@@ -1191,12 +1194,14 @@ const OpsSidebar = (function () {
       if (!c.it && start >= 0) { italics.push([start, i]); start = -1; }
     });
     if (start >= 0) italics.push([start, out.length]);
+    // Same cap as the server (PASTED_CITATION_MAX_ in 51_citation.js).
+    if (text.length > 2000) text = text.slice(0, 2000);
     // Don't italicize the spaces at a range's edges.
     const trimmed = italics.map(([a, b]) => {
       while (a < b && text[a] === ' ') a++;
       while (b > a && text[b - 1] === ' ') b--;
       return [a, b];
-    }).filter(([a, b]) => b > a);
+    }).map(([a, b]) => [a, Math.min(b, text.length)]).filter(([a, b]) => b > a);
     return { text, italics: trimmed };
   }
 
@@ -1237,30 +1242,41 @@ const OpsSidebar = (function () {
     confirm.appendChild(btns);
     wrap.appendChild(confirm);
 
-    let pending = null;
+    // An unconfirmed paste lives in state, not just the DOM, so a background
+    // re-render (pageHighlightsUpdated, a new highlight) doesn't wipe it.
+    const draft = state.pasteDraft && state.pasteDraft.sourceId === src.sourceId ? state.pasteDraft : null;
+    let pending = draft ? draft.pending : null;
+    if (draft) ta.value = draft.value;
+    const remember = () => {
+      state.pasteDraft = pending ? { sourceId: src.sourceId, pending, value: ta.value } : null;
+    };
     const showConfirm = () => { confirm.hidden = !(pending && pending.text); };
+    showConfirm();
     ta.addEventListener('paste', (e) => {
       const cd = e.clipboardData;
       if (!cd) return;
       e.preventDefault();
       pending = citationFromClipboard_(cd.getData('text/html'), cd.getData('text/plain'));
       ta.value = pending.text;
+      remember();
       showConfirm();
     });
     ta.addEventListener('input', () => {
       // Typed or edited by hand: plain text, so the clipboard italics no longer line up.
-      const text = ta.value.replace(/\s+/g, ' ').trim();
+      const text = ta.value.replace(/\s+/g, ' ').trim().slice(0, 2000);
       pending = text ? { text, italics: [] } : null;
+      remember();
       showConfirm();
     });
     yes.addEventListener('click', () => {
       if (!pending || !pending.text) return;
       if (!src.citationFields) src.citationFields = {};
       src.citationFields.pasted = { text: pending.text, italics: pending.italics };
+      state.pasteDraft = null;
       saveSource_();
       render_();
     });
-    no.addEventListener('click', () => { pending = null; ta.value = ''; showConfirm(); });
+    no.addEventListener('click', () => { pending = null; ta.value = ''; state.pasteDraft = null; showConfirm(); });
     return wrap;
   }
 

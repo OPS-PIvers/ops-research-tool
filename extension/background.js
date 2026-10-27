@@ -778,13 +778,16 @@ async function signInInteractive_() {
 }
 
 /**
- * The first time the backend recognizes this browser's student — a Sign in
- * click or a silent token — switch the extension on. Only when the switch has
+ * The first time the backend recognizes this browser's user (on the roster or
+ * staff) — a Sign in click or a silent token — switch the extension on. Only when the switch has
  * NEVER been set: a student who turned it off stays off. Keeps a force-install
  * dormant until someone actually signs in (the v0.1.2 default-off intent).
  */
 async function autoEnableOnFirstSignIn_(me) {
-  if (!me || !me.ok || !me.actor) return;
+  // Only someone the tool actually knows — a rostered student or staff. A
+  // district account with no roster row would just get a toolbar on every
+  // page that can only say "No active project". It turns on once they're added.
+  if (!me || !me.ok || !me.actor || !(me.roster || me.staff)) return;
   const { extensionEnabled } = await chrome.storage.local.get('extensionEnabled');
   if (extensionEnabled === undefined) await chrome.storage.local.set({ extensionEnabled: true });
 }

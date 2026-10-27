@@ -272,6 +272,18 @@ function computeActivityByDay_(sources, highlights, projectCreatedAt) {
 }
 
 /**
+ * "Citation done" for the dashboard: the student entered title AND url, or
+ * pasted a whole citation (copied from the database/encyclopedia). Takes the
+ * RAW parse — scraped values never count. Pure.
+ */
+function isCitationComplete_(parsed) {
+  if (!parsed) return false;
+  if (parsed.title && parsed.url) return true;
+  const p = parsed.pasted;
+  return !!(p && typeof p === 'object' && String(p.text || '').trim());
+}
+
+/**
  * Parse ONLY the `citationFields` JSON column to an object — no scraped*
  * fallback. Safe on null, malformed JSON, and non-string types. This is the
  * RAW parser the completion metrics need: "citation complete" must mean the
@@ -284,18 +296,6 @@ function computeActivityByDay_(sources, highlights, projectCreatedAt) {
  * same-named copy here shadowed 52's richer version (62 loads after 52),
  * silently dropping the fallback and blanking scraped-only sources in the bib.
  */
-/**
- * "Citation done" for the dashboard: the student entered title AND url, or
- * pasted a whole citation (copied from the database/encyclopedia). Takes the
- * RAW parse — scraped values never count. Pure.
- */
-function isCitationComplete_(parsed) {
-  if (!parsed) return false;
-  if (parsed.title && parsed.url) return true;
-  const p = parsed.pasted;
-  return !!(p && typeof p === 'object' && String(p.text || '').trim());
-}
-
 function parseCitationFields_(source) {
   if (!source.citationFields) return {};
   try {

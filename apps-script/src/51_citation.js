@@ -47,14 +47,28 @@ const PASTED_CITATION_MAX_ = 2000;
 function pastedCitationOf_(fields) {
   const p = fields && fields.pasted;
   if (!p || typeof p !== 'object') return null;
-  const text = String(p.text == null ? '' : p.text).replace(/\s+/g, ' ').trim().slice(0, PASTED_CITATION_MAX_);
+  const raw = String(p.text == null ? '' : p.text);
+  // Collapse whitespace runs + trim, recording where each raw index lands so
+  // the italic ranges move with the text instead of drifting.
+  const map = [];
+  let text = '';
+  for (let i = 0; i < raw.length; i++) {
+    map.push(text.length);
+    if (/\s/.test(raw[i])) {
+      if (text.length && text[text.length - 1] !== ' ') text += ' ';
+    } else text += raw[i];
+  }
+  map.push(text.length);
+  text = text.replace(/ $/, '').slice(0, PASTED_CITATION_MAX_);
   if (!text) return null;
   const italics = [];
   (Array.isArray(p.italics) ? p.italics : []).forEach((r) => {
     if (!Array.isArray(r)) return;
-    const a = Math.max(0, Math.floor(Number(r[0])));
-    const b = Math.min(text.length, Math.floor(Number(r[1])));
-    if (isFinite(a) && isFinite(b) && b > a) italics.push([a, b]);
+    const ra = Math.floor(Number(r[0])), rb = Math.floor(Number(r[1]));
+    if (!isFinite(ra) || !isFinite(rb)) return;
+    const a = map[Math.max(0, Math.min(raw.length, ra))];
+    const b = Math.min(text.length, map[Math.max(0, Math.min(raw.length, rb))]);
+    if (b > a) italics.push([a, b]);
   });
   italics.sort((x, y) => x[0] - y[0]);
   // Overlapping ranges would double-wrap in the console renderer; merge them.
@@ -68,6 +82,20 @@ function pastedCitationOf_(fields) {
 }
 
 /**
+ * Write-side guard for citationFields: replaces `pasted` with its sanitized
+ * form (≤ PASTED_CITATION_MAX_ chars, clean italics) or drops it when empty,
+ * so an oversized paste can't hit the 50k Sheets cell limit and wedge every
+ * later write for the source. Returns the (copied) object.
+ */
+function sanitizeCitationFieldsForStorage_(cf) {
+  if (!cf || typeof cf !== 'object' || !('pasted' in cf)) return cf;
+  const out = Object.assign({}, cf);
+  const p = pastedCitationOf_(cf);
+  if (p) out.pasted = p; else delete out.pasted;
+  return out;
+}
+
+/**
  * Character ranges in a citation that should be hyperlinks: [[start, end,
  * href], ...]. The source's own URL when it appears verbatim; otherwise the
  * first URL-looking token (pasted citations often drop "https://", e.g.
@@ -78,11 +106,14 @@ function citationLinkRanges_(text, url) {
   const t = String(text || '');
   const u = String(url || '').trim();
   if (!t) return [];
-  if (u) {
-    const at = t.indexOf(u);
+  // The URL sits at the END of an MLA entry, so take its last occurrence — a
+  // short or bare value ("history.com") can also appear inside the site name.
+  // Only URL-shaped values (a dot or slash) are matched at all.
+  const clean = u.replace(/[.,;]+$/, '');
+  if (clean && /[./]/.test(clean)) {
+    const at = t.lastIndexOf(clean);
     if (at >= 0) {
-      const end = at + u.replace(/[.,;]+$/, '').length;
-      return [[at, end, /^https?:\/\//i.test(u) ? u : 'https://' + u]];
+      return [[at, at + clean.length, /^https?:\/\//i.test(clean) ? clean : 'https://' + clean]];
     }
   }
   const m = t.match(/(https?:\/\/|www\.)[^\s<>"]+/i);
@@ -126,7 +157,36 @@ function coerceFieldsToStrings_(fields) {
 function formatInlineCitation(fields, style, page) {
   const s = (style || 'mla').toLowerCase();
   if (s !== 'mla') throw new Error('Unsupported citation style: ' + style);
+  // MLA: the in-text form must match the start of the Works Cited entry, so a
+  // pasted citation drives it (its fields may be hidden scrape leftovers).
+  const pasted = pastedCitationOf_(fields);
+  const fromPaste = pasted ? pastedInlineCitation_(pasted, page) : '';
+  if (fromPaste) return fromPaste;
   return formatMlaInline_(coerceFieldsToStrings_(fields), page);
+}
+
+/**
+ * In-text form from a pasted entry's first element: a quoted title →
+ * ("Short Title"); an italic title → (Short Title); otherwise the author's
+ * last name (text before the first comma/period). '' when nothing sensible —
+ * the caller then falls back to the fields. Pure.
+ */
+function pastedInlineCitation_(pasted, page) {
+  const text = pasted.text;
+  const pageStr = page ? ' ' + String(page).trim() : '';
+  const q = text.match(/^["\u201c]([^"\u201d]+)["\u201d]/);
+  if (q) {
+    const t = shortenTitleForInline_(q[1].replace(/[.,;:]+$/, ''));
+    return t ? '("' + t + '"' + pageStr + ')' : '';
+  }
+  if ((pasted.italics || []).some((r) => r[0] === 0)) {
+    const r = pasted.italics.find((x) => x[0] === 0);
+    const t = shortenTitleForInline_(text.slice(0, r[1]).replace(/[.,;:]+$/, ''));
+    return t ? '(' + t + pageStr + ')' : '';
+  }
+  const lead = text.split(/[,.]/)[0].trim();
+  if (!lead || lead.length > 40) return '';
+  return '(' + lead + pageStr + ')';
 }
 
 function formatMlaInline_(f, page) {

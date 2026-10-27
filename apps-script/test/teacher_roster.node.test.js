@@ -20,7 +20,7 @@ const src = ['02_constants.js', '61_console_api.js', '68_teacher_roster.js']
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(src, sandbox);
-const { canEditClassRoster_, normalizeRosterEmail_, groupsToLeaveOnUnenroll_, shapeClassRosterRows_, ROSTER_NOT_FOUND_MSG } = sandbox;
+const { canEditClassRoster_, normalizeRosterEmail_, groupsToLeaveOnUnenroll_, shapeClassRosterRows_, ROSTER_NOT_FOUND_MSG, enrollConflictsWithOtherTeacher_ } = sandbox;
 
 let failures = 0;
 function check(label, cond) {
@@ -87,6 +87,16 @@ console.log('shapeClassRosterRows_:');
 console.log('not-found copy:');
 eq('message matches the product copy', ROSTER_NOT_FOUND_MSG,
   'No student with that email in the district roster — ask an admin to add them.');
+
+console.log('enrollConflictsWithOtherTeacher_:');
+{
+  const teacherOf = { 'A P1': 'a@x.org', 'B P2': 'b@x.org', 'A P4': 'a@x.org', 'Art': 'c@x.org' };
+  const shared = [{ classes: ['A P1', 'B P2'] }];
+  check('B\'s student in a shared project → refused', enrollConflictsWithOtherTeacher_('A@x.org', 'A P1', ['B P2'], shared, teacherOf) === true);
+  check('other teacher\'s class but no shared project → allowed', enrollConflictsWithOtherTeacher_('a@x.org', 'A P1', ['Art'], shared, teacherOf) === false);
+  check('student only in my other class → allowed', enrollConflictsWithOtherTeacher_('a@x.org', 'A P1', ['A P4'], [{ classes: ['A P1', 'A P4'] }], teacherOf) === false);
+  check('unenrolled student → allowed', enrollConflictsWithOtherTeacher_('a@x.org', 'A P1', [], shared, teacherOf) === false);
+}
 
 if (failures) { console.error('\n' + failures + ' FAILED'); process.exit(1); }
 console.log('\nALL GREEN');

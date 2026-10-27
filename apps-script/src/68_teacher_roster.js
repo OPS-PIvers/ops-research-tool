@@ -26,6 +26,30 @@ function canEditClassRoster_(actorEmail, isAdmin, classRec) {
   return !!a && String(classRec.TeacherEmail || '').trim().toLowerCase() === a;
 }
 
+var ROSTER_OTHER_TEACHER_MSG = 'That student is in another teacher\'s class in a project you share — ask an admin to move them.';
+
+/**
+ * Pure: would enrolling this student into classKey hand the actor access to a
+ * student another teacher already has in a SHARED active project? The
+ * drill-down authorizes a teacher who teaches any project class the student is
+ * in, and the student's Sheet is found by email, not class — so a teacher
+ * could otherwise enroll someone else's student and read their work.
+ *   projects       = [{ classes:[...] }] active projects (class keys)
+ *   studentClasses = the student's current class keys
+ *   teacherOf      = classKey → TeacherEmail (lowercased)
+ * Admins never call this (they may move anyone).
+ */
+function enrollConflictsWithOtherTeacher_(actorEmail, classKey, studentClasses, projects, teacherOf) {
+  const a = String(actorEmail || '').trim().toLowerCase();
+  const others = (studentClasses || []).filter((c) =>
+    c !== classKey && String(teacherOf[c] || '').toLowerCase() !== a);
+  if (!others.length) return false;
+  return (projects || []).some((p) => {
+    const cl = p.classes || [];
+    return cl.indexOf(classKey) >= 0 && others.some((c) => cl.indexOf(c) >= 0);
+  });
+}
+
 /** Pure: trimmed + lowercased email, or '' if it isn't email-shaped. */
 function normalizeRosterEmail_(raw) {
   const e = String(raw || '').trim().toLowerCase();
@@ -60,7 +84,7 @@ function shapeClassRosterRows_(students) {
   });
 }
 
-/** Server-side gate shared by all three endpoints. Returns {actorEmail, cls}. */
+/** Server-side gate shared by all three endpoints. Returns {actorEmail, cls, isAdmin}. */
 function assertCanEditClassRoster_(classKey) {
   const actorEmail = getActorEmail_();
   const staff = assertStaff_(actorEmail);
@@ -68,8 +92,9 @@ function assertCanEditClassRoster_(classKey) {
   if (!key) throw new Error('class required');
   const cls = getClassRecord_(key);
   if (!cls) throw new Error('No such class: ' + key);
-  if (!canEditClassRoster_(actorEmail, isAdmin_(staff), cls)) throw new Error('Class not in your scope');
-  return { actorEmail, cls };
+  const isAdmin = isAdmin_(staff);
+  if (!canEditClassRoster_(actorEmail, isAdmin, cls)) throw new Error('Class not in your scope');
+  return { actorEmail, cls, isAdmin };
 }
 
 function classRosterPayload_(cls) {
@@ -99,6 +124,18 @@ function consoleEnrollStudentInClass(classKey, email) {
   const cls = a.cls.Class;
   if (enrollmentsForClass_(cls).indexOf(em) >= 0) {
     return Object.assign(classRosterPayload_(a.cls), { email: em, alreadyEnrolled: true });
+  }
+  if (!a.isAdmin) {
+    const studentClasses = getStudentClasses_(em);
+    const teacherOf = {};
+    studentClasses.forEach((c) => {
+      const rec = getClassRecord_(c);
+      teacherOf[c] = rec ? String(rec.TeacherEmail || '').toLowerCase() : '';
+    });
+    const projects = listActiveProjects_().map((p) => ({ classes: projectClassList_(p) }));
+    if (enrollConflictsWithOtherTeacher_(a.actorEmail, cls, studentClasses, projects, teacherOf)) {
+      return { ok: false, reason: 'other_teacher', message: ROSTER_OTHER_TEACHER_MSG };
+    }
   }
   enroll_(em, cls);
   appendAuditEvent_({
