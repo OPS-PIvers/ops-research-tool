@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <base target="_top" />
+    <?!= includeFile_('sidebar_css') ?>
+    <?!= includeFile_('research_css') ?>
+    <script>
+      // "My research": the Docs sidebar list (sidebar_js, PAGE mode) beside the
+      // source editor (source_editor_js, embedded mode). Served by
+      // serveResearchHtml_ in 60_console_routing.js.
+      window.OPS_PAGE = { projectId: <?!= JSON.stringify(requestedProjectId) ?> };
+      window.OPS_EDITOR_CTX = { embedded: true, projectId: '', sourceId: '', focusHighlightId: '', bundle: null };
+    </script>
+  </head>
+  <body class="sb-body rp-body">
+    <div id="rp-offline" class="rp-offline" role="status" hidden>
+      You're offline. Changes won't save until you reconnect.
+    </div>
+
+    <header class="rp-header">
+      <div class="rp-brand">
+        <h1 class="sb-title">My research</h1>
+        <div id="sb-actor" class="sb-actor"></div>
+      </div>
+      <div class="rp-project">
+        <label for="sb-project">Project</label>
+        <select id="sb-project" disabled>
+          <option>Loading…</option>
+        </select>
+      </div>
+      <button id="rp-refresh" type="button" class="sb-btn rp-refresh">Refresh</button>
+    </header>
+
+    <div class="rp-layout">
+      <aside class="rp-list" aria-label="Your sources">
+        <?!= includeFile_('sidebar_list') ?>
+        <div id="sb-status" class="sb-status" role="status"></div>
+      </aside>
+
+      <section class="rp-editor" aria-label="Edit source">
+        <button id="rp-back" type="button" class="rp-back">‹ All sources</button>
+        <?!= includeFile_('source_editor_body') ?>
+      </section>
+    </div>
+
+    <?!= includeFile_('source_editor_js') ?>
+    <?!= includeFile_('sidebar_js') ?>
+  </body>
+</html>

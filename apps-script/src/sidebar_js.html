@@ -2,7 +2,12 @@
 // All server calls go through google.script.run. State lives in `state`;
 // every interaction mutates state then re-renders. Render is full-redraw
 // per change — sidebar is small and re-renders are cheap.
-
+//
+// Two hosts. The Docs sidebar (sidebar.html), and the "My research" web page
+// (research.html), which sets window.OPS_PAGE. The page has no Doc, so no
+// insert menu, and it edits sources in its right-hand pane (OpsSourceEditor)
+// instead of the Docs modal.
+const PAGE = window.OPS_PAGE || null;
 
 const state = {
   ctx: null,           // sidebarGetContext response
@@ -24,6 +29,8 @@ const state = {
   lastDataJson: null,           // JSON of last sidebarGetProjectData response (polling diff)
   pollHandle: null,             // setInterval handle for the modal-open polling loop
   pollUnchangedTicks: 0,        // bounded fallback stop counter
+  selectedSourceId: null,       // page only: source open in the editor pane
+  lastLoadAt: 0,                // page only: throttles the on-focus refresh
 };
 
 const els = {
@@ -59,13 +66,15 @@ function bootstrap() {
   google.script.run
     .withSuccessHandler(onContext)
     .withFailureHandler(onFail('loading context'))
-    .sidebarGetContext();
+    .sidebarGetContext(PAGE ? PAGE.projectId || '' : '');
 
   els.project.addEventListener('change', () => {
     state.projectId = els.project.value;
+    state.selectedSourceId = null;
     google.script.run.sidebarSetActiveProject(state.projectId);
     loadProjectData();
   });
+  if (PAGE) bindPage_();
   els.fltPrim.addEventListener('change', () => { state.filterPS.primary = els.fltPrim.checked; updateFilterBadge_(); render(); });
   els.fltSec.addEventListener('change', () => { state.filterPS.secondary = els.fltSec.checked; updateFilterBadge_(); render(); });
   els.fltUnset.addEventListener('change', () => { state.filterPS.unset = els.fltUnset.checked; updateFilterBadge_(); render(); });
@@ -79,16 +88,19 @@ function bootstrap() {
   });
   els.vmEvidence.addEventListener('click', () => setViewMode_('evidence'));
   els.vmSource.addEventListener('click', () => setViewMode_('source'));
-  els.insertTrigger.addEventListener('click', toggleInsertMenu_);
-  els.insertAnnotated.addEventListener('click', () => { closeInsertMenu_(); insertBibliography(true); });
-  els.insertWorks.addEventListener('click', () => { closeInsertMenu_(); insertBibliography(false); });
-  els.openEditor.addEventListener('click', openEditorFromFooter_);
 
   // Dismiss the source-classification popover on outside click / Escape /
   // scroll (it's fixed-positioned to the chip, so scrolling would desync it).
   document.addEventListener('click', () => { if (state.psMenuOpen) closePsMenu_(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.psMenuOpen) closePsMenu_(); });
   els.main.addEventListener('scroll', () => { if (state.psMenuOpen) closePsMenu_(); });
+
+  // Docs footer only — the page has neither the insert menu nor "Open Editor".
+  if (PAGE) return;
+  els.insertTrigger.addEventListener('click', toggleInsertMenu_);
+  els.insertAnnotated.addEventListener('click', () => { closeInsertMenu_(); insertBibliography(true); });
+  els.insertWorks.addEventListener('click', () => { closeInsertMenu_(); insertBibliography(false); });
+  els.openEditor.addEventListener('click', openEditorFromFooter_);
 
   // Dismiss the insert popover on outside click or Escape.
   document.addEventListener('click', (e) => {
@@ -178,14 +190,23 @@ function populateProjectPicker(projects, activeId) {
   els.project.disabled = false;
 }
 
-function loadProjectData() {
+// silent = a background refresh on the page: keep the list on screen instead
+// of the skeleton, and don't announce it.
+function loadProjectData(silent) {
   if (!state.projectId) return;
-  setStatus('Loading project data…');
-  renderSidebarLoading_();
+  if (!silent) {
+    setStatus('Loading project data…');
+    renderSidebarLoading_();
+    if (PAGE) window.OpsSourceEditor.clear('Loading…');
+  }
+  state.lastLoadAt = Date.now();
+  const projectId = state.projectId;
   google.script.run
-    .withSuccessHandler(onProjectData)
-    .withFailureHandler(onFail('loading data'))
-    .sidebarGetProjectData(state.projectId);
+    .withSuccessHandler((resp) => {
+      if (projectId === state.projectId) onProjectData(resp);   // ignore a reply for a project we left
+    })
+    .withFailureHandler(silent ? () => {} : onFail('loading data'))
+    .sidebarGetProjectData(projectId);
 }
 
 function onProjectData(resp) {
@@ -196,17 +217,29 @@ function onProjectData(resp) {
   state.sources = resp.sources || [];
   state.highlights = resp.highlights || [];
   state.requirements = resp.requirements || null;
-  els.insertTrigger.disabled = state.sources.length === 0;
-  els.openEditor.disabled = state.sources.length === 0;
+  syncFooter_();
   setStatus('');
   renderFilter();
   render();
+  if (PAGE) syncEditorPane_();
+}
+
+function syncFooter_() {
+  if (PAGE) return;
+  els.insertTrigger.disabled = state.sources.length === 0;
+  els.openEditor.disabled = state.sources.length === 0;
 }
 
 // ---------- filter ----------
 
+// The bundle of the project being viewed. ctx.activeBundle is only the one the
+// sidebar opened on, so a project switch looks its bundle up instead.
 function activeBundle() {
-  return state.ctx && state.ctx.activeBundle ? state.ctx.activeBundle : null;
+  const ctx = state.ctx;
+  if (!ctx) return null;
+  const project = (ctx.projects || []).find((p) => p.projectId === state.projectId);
+  const bundle = project && (ctx.bundles || []).find((b) => b.bundleId === project.bundleId);
+  return bundle || ctx.activeBundle || null;
 }
 
 const SORT_OPTIONS = [
@@ -558,7 +591,7 @@ function renderSourcesProgress_() {
 
 function renderSource(source) {
   const card = document.createElement('div');
-  card.className = 'sb-source';
+  card.className = 'sb-source' + (PAGE && state.selectedSourceId === source.sourceId ? ' sb-source--selected' : '');
   card.setAttribute('data-source-id', source.sourceId);
 
   const sourceMode = state.viewMode === 'source';
@@ -685,6 +718,15 @@ function renderSource(source) {
   inlineBtn.title = 'Copy the MLA in-text citation to your clipboard, then paste it into your doc';
   inlineBtn.addEventListener('click', (e) => { e.stopPropagation(); copyInlineForSource(source, inlineBtn); });
   meta.appendChild(inlineBtn);
+  if (PAGE) {
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'sb-source__action sb-source__action--edit';
+    editBtn.textContent = state.selectedSourceId === source.sourceId ? 'Editing' : 'Edit';
+    editBtn.setAttribute('aria-pressed', state.selectedSourceId === source.sourceId ? 'true' : 'false');
+    editBtn.addEventListener('click', (e) => { e.stopPropagation(); openSourceEditor_(source.sourceId, null); });
+    meta.appendChild(editBtn);
+  }
   card.appendChild(meta);
 
   if (sourceExpanded) {
@@ -901,6 +943,11 @@ const OPEN_EDITOR_BTN_LABEL = 'Open Editor';
  * sidebar's polling loop knows to refresh while the modal is open.
  */
 function openSourceEditor_(sourceId, focusHighlightId) {
+  if (PAGE) {
+    showInPane_(sourceId, focusHighlightId);
+    document.body.classList.add('rp-editing');   // narrow screens: swap list → editor
+    return;
+  }
   state.modalOpenForSourceId = sourceId;
   state.lastDataJson = JSON.stringify({ sources: state.sources, highlights: state.highlights });
   startEditorPolling_();
@@ -922,6 +969,106 @@ function openSourceEditor_(sourceId, focusHighlightId) {
       onFail('opening editor')(e);
     })
     .sidebarOpenSourceEditor(state.projectId, sourceId, focusHighlightId || '');
+}
+
+// ---------- "My research" page (PAGE only) ----------
+
+const PAGE_REFRESH_MIN_MS = 30000;   // on-focus refresh throttle, same as the console
+
+function bindPage_() {
+  document.getElementById('rp-refresh').addEventListener('click', () => loadProjectData(true));
+  document.getElementById('rp-back').addEventListener('click', () => {
+    document.body.classList.remove('rp-editing');
+  });
+  // Pick up highlights the extension saved in another tab when the student
+  // comes back to this one.
+  const onReturn = () => {
+    if (document.visibilityState !== 'visible') return;
+    if (Date.now() - state.lastLoadAt < PAGE_REFRESH_MIN_MS) return;
+    loadProjectData(true);
+  };
+  window.addEventListener('focus', onReturn);
+  document.addEventListener('visibilitychange', onReturn);
+  const offline = document.getElementById('rp-offline');
+  const syncOnline = () => { offline.hidden = navigator.onLine; };
+  window.addEventListener('online', syncOnline);
+  window.addEventListener('offline', syncOnline);
+  syncOnline();
+  window.OpsSourceEditor.clear('Loading…');
+}
+
+function showInPane_(sourceId, focusHighlightId) {
+  state.selectedSourceId = sourceId;
+  window.OpsSourceEditor.show({ sources: state.sources, highlights: state.highlights }, {
+    projectId: state.projectId,
+    sourceId,
+    bundle: activeBundle(),
+    focusHighlightId: focusHighlightId || '',
+    onChange: onEditorChange_,
+  });
+  render();
+}
+
+// After a (re)load: keep the open source if it still exists, else open the
+// first one in the list. A refresh never re-renders the editor while the
+// student is typing in it; their objects just stop being the list's until the
+// next switch, which is harmless (both sides save to the same row).
+function syncEditorPane_() {
+  if (state.sources.length === 0) {
+    state.selectedSourceId = null;
+    window.OpsSourceEditor.clear('No sources yet. Highlight something on a web page with the extension, and it shows up here.');
+    render();
+    return;
+  }
+  if (window.OpsSourceEditor.hasFocus()) return;
+  const keep = state.sources.some((s) => s.sourceId === state.selectedSourceId);
+  const first = pickFirstVisibleSource_();
+  showInPane_(keep ? state.selectedSourceId : first.sourceId, null);
+}
+
+// The editor edits the same source/highlight objects the list renders, so most
+// changes just need a re-render. Deletes and restores replace array members.
+function onEditorChange_(evt) {
+  if (evt.type === 'highlightDeleted') {
+    state.highlights = state.highlights.filter((h) => h.highlightId !== evt.highlightId);
+  } else if (evt.type === 'highlightRestored') {
+    state.highlights.push(evt.highlight);
+  } else if (evt.type === 'sourceDeleted') {
+    state.sources = state.sources.filter((s) => s.sourceId !== evt.sourceId);
+    state.highlights = state.highlights.filter((h) => h.sourceId !== evt.sourceId);
+    if (state.selectedSourceId === evt.sourceId) state.selectedSourceId = null;
+  } else if (evt.type === 'switched') {
+    state.selectedSourceId = evt.sourceId;
+  } else if (evt.type === 'saved' && evt.sourceId) {
+    scheduleInlineRefresh_();
+  }
+  if (evt.type !== 'saved') {
+    renderFilter();
+    render();
+  }
+}
+
+// "Copy citation" reads source.inlineCitation, which the server formats. After
+// a citation edit, re-fetch and copy over just that field, so a copy doesn't
+// paste the old author. Only that field: the rest of the local objects may be
+// ahead of the server while saves are in flight.
+let inlineRefreshTimer = null;
+function scheduleInlineRefresh_() {
+  clearTimeout(inlineRefreshTimer);
+  inlineRefreshTimer = setTimeout(() => {
+    const projectId = state.projectId;
+    google.script.run
+      .withSuccessHandler((resp) => {
+        if (!resp || !resp.ok || projectId !== state.projectId) return;
+        const byId = {};
+        (resp.sources || []).forEach((s) => { byId[s.sourceId] = s; });
+        state.sources.forEach((s) => {
+          if (byId[s.sourceId]) s.inlineCitation = byId[s.sourceId].inlineCitation;
+        });
+      })
+      .withFailureHandler(() => {})
+      .sidebarGetProjectData(projectId);
+  }, 1500);
 }
 
 const POLL_INTERVAL_MS = 3000;
@@ -976,8 +1123,7 @@ function onPollResponse_(resp) {
   state.sources = resp.sources || [];
   state.highlights = resp.highlights || [];
   state.requirements = resp.requirements || null;
-  els.insertTrigger.disabled = state.sources.length === 0;
-  els.openEditor.disabled = state.sources.length === 0;
+  syncFooter_();
   renderFilter();
   render();
 

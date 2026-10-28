@@ -1,0 +1,42 @@
+<!-- Source list markup shared by the Docs sidebar (sidebar.html) and the
+     "My research" page (research.html). Driven by sidebar_js. -->
+<section class="sb-viewmode">
+  <div class="sb-viewmode__row">
+    <div class="sb-viewmode__pills" role="tablist">
+      <button id="sb-vm-evidence" type="button" class="sb-viewmode__pill sb-viewmode__pill--active" role="tab">By evidence</button>
+      <button id="sb-vm-source" type="button" class="sb-viewmode__pill" role="tab">By source</button>
+    </div>
+    <div class="sb-sortfilter" id="sb-sortfilter" hidden>
+      <button id="sb-sortfilter-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+        <span>Sort &amp; Filter</span>
+        <span id="sb-sortfilter-badge" class="sb-sortfilter__badge" hidden></span>
+        <span class="sb-sortfilter__caret" aria-hidden="true">▾</span>
+      </button>
+      <div id="sb-sortfilter-pop" class="sb-sortfilter-pop" role="menu" aria-label="Sort and filter" hidden>
+      <div class="sb-pop-section">
+        <div class="sb-pop-section__title">Sort by</div>
+        <div id="sb-sort-opts"></div>
+      </div>
+      <div class="sb-pop-section">
+        <div class="sb-pop-section__title">Categories</div>
+        <div id="sb-filter-cats"></div>
+      </div>
+      <div class="sb-pop-section">
+        <div class="sb-pop-section__title">Type</div>
+        <div class="sb-filter__row sb-filter__row--ps">
+          <label class="sb-ps-chip"><input type="checkbox" id="sb-flt-primary" checked /> Primary</label>
+          <label class="sb-ps-chip"><input type="checkbox" id="sb-flt-secondary" checked /> Secondary</label>
+          <label class="sb-ps-chip"><input type="checkbox" id="sb-flt-unset" checked /> Unset</label>
+        </div>
+      </div>
+      <div class="sb-pop-actions">
+        <button id="sb-filter-clear" type="button">Clear all</button>
+      </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<main id="sb-main" class="sb-main">
+  <div class="sb-empty">Pick a project to begin.</div>
+</main>

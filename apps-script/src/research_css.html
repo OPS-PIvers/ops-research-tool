@@ -1,0 +1,99 @@
+<style>
+/* "My research" page layout. Everything inside the two panes is styled by
+   sidebar_css (the Docs sidebar list + the source editor modal); this only
+   places them side by side and adapts them to a full browser tab. */
+.rp-body {
+  height: 100vh;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+
+.rp-offline {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  background: var(--c-red-subtle); color: var(--c-bad);
+  font-size: 13px; font-weight: 500; text-align: center;
+}
+.rp-offline[hidden] { display: none; }
+
+.rp-header {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--c-line);
+}
+.rp-brand { min-width: 0; margin-right: auto; }
+.rp-brand .sb-title { font-size: 18px; }
+.rp-project { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rp-project label {
+  font-size: 10px; color: var(--c-muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.rp-project select {
+  min-width: 0; max-width: 320px;
+  padding: 6px 8px; border: 1.5px solid var(--c-line); border-radius: 6px;
+}
+.rp-project select:focus {
+  outline: none; border-color: #4356a9;
+  box-shadow: 0 0 0 3px rgba(45, 63, 137, 0.12);
+}
+.rp-refresh:hover { border-color: var(--c-accent); color: var(--c-accent); }
+
+.rp-layout {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+}
+
+.rp-list {
+  min-height: 0;
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--c-line);
+}
+.rp-list .sb-main { height: auto; flex: 1; min-height: 0; padding-bottom: 8px; }
+.rp-list .sb-status { padding: 4px 12px 8px; margin: 0; }
+
+/* The source open in the editor. */
+.sb-source--selected { box-shadow: inset 3px 0 0 var(--c-accent); padding-left: 9px; }
+.sb-source--selected .sb-source__title { color: var(--c-accent-strong); }
+.sb-source__action--edit { font-weight: 600; }
+.sb-source__action--edit[aria-pressed="true"] { color: var(--c-muted); cursor: default; text-decoration: none; }
+
+/* Same flex column the Docs modal gets from .sb-body--modal. */
+.rp-editor {
+  min-height: 0; min-width: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.rp-back {
+  display: none;
+  align-self: flex-start;
+  margin: 8px 12px 0; padding: 4px 0;
+  border: none; background: none;
+  color: var(--c-accent); font-size: 13px; font-weight: 500;
+}
+
+/* Narrow: one column. The list shows until a source is picked, then the
+   editor takes over with a way back. */
+@media (max-width: 900px) {
+  .rp-layout { grid-template-columns: minmax(0, 1fr); }
+  .rp-list { border-right: none; }
+  .rp-editor { display: none; }
+  .rp-editing .rp-list { display: none; }
+  .rp-editing .rp-editor { display: flex; }
+  .rp-back { display: block; }
+}
+
+/* The editor's citation + evidence panes stack once they'd be cramped. */
+@media (max-width: 1100px) {
+  .rp-editor .sb-modal__body { flex-direction: column; overflow-y: auto; }
+  .rp-editor .sb-modal__pane { overflow-y: visible; }
+  .rp-editor .sb-modal__pane--left {
+    flex: none; padding-right: 0; padding-bottom: 12px;
+    border-right: none; border-bottom: 1px solid var(--c-line);
+  }
+  .rp-editor .sb-modal__pane--right { flex: none; }
+}
+@media (min-width: 901px) and (max-width: 1100px) {
+  .rp-layout { grid-template-columns: minmax(280px, 320px) minmax(0, 1fr); }
+}
+</style>

@@ -1,0 +1,41 @@
+<!-- Source editor markup shared by the Docs modal (source_editor.html) and
+     the "My research" page (research.html). Driven by source_editor_js. -->
+<header class="sb-modal__header">
+  <button id="ed-close" type="button" class="sb-modal__close" title="Close">&times;</button>
+  <div id="ed-source-dd" class="sb-srcdd">
+    <button id="ed-source-trigger" type="button" class="sb-srcdd__trigger"
+            aria-haspopup="listbox" aria-expanded="false" disabled>
+      <span id="ed-source-label" class="sb-srcdd__label">Loading…</span>
+      <span class="sb-srcdd__caret" aria-hidden="true">▾</span>
+    </button>
+    <div id="ed-source-menu" class="sb-srcdd__menu" role="listbox"
+         aria-label="Choose a source" hidden></div>
+  </div>
+</header>
+
+<div class="sb-modal__body">
+  <section class="sb-modal__pane sb-modal__pane--left" id="ed-left">
+    <h2 class="sb-modal__paneheader">Citation</h2>
+    <div id="ed-citation" class="sb-modal__citation">
+      <div class="sb-loading">
+        <div class="sb-loading__spinner"></div>
+        <div class="sb-loading__label">Loading source…</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sb-modal__pane sb-modal__pane--right" id="ed-right">
+    <div class="sb-modal__paneheader-row">
+      <h2 class="sb-modal__paneheader" id="ed-evheader">Evidence</h2>
+    </div>
+    <div id="ed-filter" class="sb-modal__filter"></div>
+    <div id="ed-evidence" class="sb-modal__evidence">
+      <div class="sb-loading">
+        <div class="sb-loading__spinner"></div>
+        <div class="sb-loading__label">Loading evidence…</div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div id="ed-status" class="sb-modal__status"></div>

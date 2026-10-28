@@ -1,8 +1,23 @@
 <script>
+// Scoped in an IIFE: the "My research" page loads this next to sidebar_js,
+// which has its own top-level state/els/render/setStatus.
+(function () {
 const SRC_TYPES = ['website', 'article', 'book', 'primary'];
 const PS_OPTS = ['primary', 'secondary', 'unset'];
 
+// Two hosts. The Docs modal (source_editor.html) sets the context and the
+// editor loads itself. The "My research" page (research.html) sets
+// {embedded: true} and drives it through window.OpsSourceEditor, handing over
+// the data its list already holds and hearing about edits via onChange.
 const ctx = window.OPS_EDITOR_CTX;
+const embedded = !!ctx.embedded;
+let onHostChange = null;
+function notifyHost_(evt) {
+  // Deferred: callers update the source object right after saving, and the
+  // page's list should render the updated object.
+  const fn = onHostChange;
+  if (fn) setTimeout(() => fn(evt), 0);
+}
 const editor = {
   source: null,            // the source currently being edited
   highlights: [],          // highlights for the currently-edited source
@@ -29,7 +44,8 @@ const els = {
   status:        document.getElementById('ed-status'),
 };
 
-els.close.addEventListener('click', () => { if (!editor.busy) google.script.host.close(); });
+if (embedded) els.close.hidden = true;   // the page has no dialog to close
+else els.close.addEventListener('click', () => { if (!editor.busy) google.script.host.close(); });
 
 // Custom source switcher — toggle on the trigger, dismiss on outside click /
 // Escape, arrow-key navigation within the open menu.
@@ -71,7 +87,38 @@ function toggleSourceMenu_() {
   if (els.sourceMenu.hidden) openSourceMenu_(); else closeSourceMenu_();
 }
 
-bootstrap();
+if (embedded) {
+  window.OpsSourceEditor = {
+    // data = {sources, highlights} (the page's own arrays — edits to a source
+    // or highlight object show up in its list on the next render);
+    // opts = {projectId, sourceId, bundle, focusHighlightId, onChange}.
+    show(data, opts) {
+      ctx.projectId = opts.projectId;
+      ctx.sourceId = opts.sourceId;
+      ctx.focusHighlightId = opts.focusHighlightId || '';
+      editor.bundle = opts.bundle || null;
+      onHostChange = opts.onChange || null;
+      editor.perSourceFilter = null;
+      editor.editingHighlightId = null;
+      editor.confirmingHighlightDeleteId = null;
+      editor.confirmingSourceDelete = false;
+      onData({ ok: true, sources: data.sources, highlights: data.highlights });
+    },
+    clear(message) {
+      editor.source = null;
+      renderEmpty(message || 'Pick a source to edit it.');
+    },
+    // True while the student is typing in the editor, so a background refresh
+    // doesn't re-render the field out from under them.
+    hasFocus() {
+      const a = document.activeElement;
+      return !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)
+        && (els.citation.contains(a) || els.evidence.contains(a)));
+    },
+  };
+} else {
+  bootstrap();
+}
 
 function bootstrap() {
   google.script.run
@@ -90,7 +137,7 @@ function onData(resp) {
   editor.source = editor.allSources.find((s) => s.sourceId === ctx.sourceId) || null;
   editor.highlights = editor.allHighlights.filter((h) => h.sourceId === ctx.sourceId);
   if (!editor.source) {
-    renderEmpty('This source no longer exists. Close this window.');
+    renderEmpty(embedded ? 'This source no longer exists.' : 'This source no longer exists. Close this window.');
     return;
   }
   setStatus('');
@@ -121,6 +168,7 @@ function switchSource_(newSourceId) {
   }
   loadSourceIntoEditor_(next);
   render();
+  notifyHost_({ type: 'switched', sourceId: newSourceId });
 }
 
 /**
@@ -640,11 +688,36 @@ function renderPreviewHtml_(formatted) {
 
 function saveSourcePatch_(patch) {
   const merged = Object.assign({}, patch, { sourceId: ctx.sourceId, projectId: ctx.projectId });
-  google.script.run
-    .withSuccessHandler(() => setStatus('Saved.', 'good', 1500))
-    .withFailureHandler(onFail('saving source'))
-    .sidebarUpdateSource(merged);
+  notifyHost_({ type: 'edited', sourceId: ctx.sourceId });
+  sendPatch_('source:' + merged.sourceId, 'sidebarUpdateSource', merged);
 }
+
+// Saves go straight to the server (no offline queue here — the extension is
+// the offline-safe capture path). A failed save keeps what the student typed
+// on screen, says so, and is re-sent when the browser comes back online;
+// later edits to the same row fold into the pending one.
+const unsaved = {};   // row key → { fn, patch }
+
+function sendPatch_(key, fn, patch) {
+  const prev = unsaved[key];
+  const merged = prev ? Object.assign({}, prev.patch, patch) : patch;
+  unsaved[key] = { fn, patch: merged };
+  google.script.run
+    .withSuccessHandler(() => {
+      if (unsaved[key] && unsaved[key].patch === merged) delete unsaved[key];
+      setStatus(Object.keys(unsaved).length ? 'Some changes are not saved yet.' : 'Saved.',
+        Object.keys(unsaved).length ? 'bad' : 'good', 1500);
+      notifyHost_({ type: 'saved', sourceId: merged.sourceId || null });
+    })
+    .withFailureHandler((e) => {
+      setStatus('Not saved — check your connection. Your changes are still here and will save when you reconnect.'
+        + (navigator.onLine ? ' (' + (e && e.message || e) + ')' : ''), 'bad');
+    })[fn](merged);
+}
+
+window.addEventListener('online', () => {
+  Object.keys(unsaved).forEach((key) => sendPatch_(key, unsaved[key].fn, {}));
+});
 
 function renderEvidenceList_() {
   els.evidence.innerHTML = '';
@@ -870,10 +943,8 @@ function swatch_(label, color, active, onClick) {
 
 function saveHighlightPatch_(highlight, patch) {
   const merged = Object.assign({}, patch, { highlightId: highlight.highlightId, projectId: ctx.projectId });
-  google.script.run
-    .withSuccessHandler(() => setStatus('Saved.', 'good', 1500))
-    .withFailureHandler(onFail('saving highlight'))
-    .sidebarUpdateHighlight(merged);
+  notifyHost_({ type: 'edited', sourceId: highlight.sourceId });
+  sendPatch_('highlight:' + merged.highlightId, 'sidebarUpdateHighlight', merged);
 }
 
 /**
@@ -887,10 +958,13 @@ function optimisticallyDeleteHighlight_(highlight) {
   const snapshot = highlight;
 
   editor.highlights = editor.highlights.filter((h) => h.highlightId !== highlight.highlightId);
+  // allHighlights too, or switching away and back to this source revives it.
+  editor.allHighlights = editor.allHighlights.filter((h) => h.highlightId !== highlight.highlightId);
   editor.confirmingHighlightDeleteId = null;
   if (editor.editingHighlightId === highlight.highlightId) editor.editingHighlightId = null;
   render();
   setStatus('Deleted.', 'good', 1500);
+  notifyHost_({ type: 'highlightDeleted', highlightId: highlight.highlightId });
 
   google.script.run
     .withSuccessHandler(() => { /* already reflected */ })
@@ -900,8 +974,10 @@ function optimisticallyDeleteHighlight_(highlight) {
         else arr.splice(idx, 0, item);
       };
       insertAt(editor.highlights, snapshotIdx, snapshot);
+      editor.allHighlights.push(snapshot);
       render();
       setStatus('Delete failed: ' + (e && e.message || e), 'bad');
+      notifyHost_({ type: 'highlightRestored', highlight: snapshot });
     })
     .sidebarDeleteHighlight(highlight.highlightId, ctx.projectId, false);
 }
@@ -1011,8 +1087,15 @@ function performDeleteSource_() {
       const idx = editor.allSources.findIndex((s) => s.sourceId === deletedId);
       editor.allSources = editor.allSources.filter((s) => s.sourceId !== deletedId);
       editor.allHighlights = editor.allHighlights.filter((h) => h.sourceId !== deletedId);
+      notifyHost_({ type: 'sourceDeleted', sourceId: deletedId });
 
       if (editor.allSources.length === 0) {
+        if (embedded) {
+          setBusy_(false);
+          editor.source = null;
+          renderEmpty('No sources left in this project.');
+          return;
+        }
         google.script.host.close();   // nothing left to edit (overlay tears down with it)
         return;
       }
@@ -1024,6 +1107,7 @@ function performDeleteSource_() {
       populateSourceSelect_();
       render();
       setStatus('Source deleted.', 'good', 2000);
+      notifyHost_({ type: 'switched', sourceId: next.sourceId });
     })
     .withFailureHandler((e) => {
       setBusy_(false);
@@ -1068,4 +1152,5 @@ function setBusy_(on, label) {
     ov.style.display = 'none';
   }
 }
+})();
 </script>
