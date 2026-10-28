@@ -323,40 +323,71 @@ const SIDEBAR_CSS = `
 .facet__lab { flex:1; }
 .facet__count { color:#9aa0a6; font-variant-numeric:tabular-nums; }
 .facet--active .facet__count { color:#1a73e8; }
-.src { padding:10px 14px 16px; overflow-y:auto; }
-.src__empty { padding:24px 14px; text-align:center; color:#5f6368; font-size:12px; line-height:1.5; }
-.src__fld { margin-bottom:9px; }
-.src__fld label { display:block; font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:#80868b; margin-bottom:3px; }
-.src__fld input, .src__fld select {
-  width:100%; border:1px solid #dadce0; border-radius:6px; padding:6px 8px; font:inherit; font-size:12.5px; color:#202124; background:#fff;
+/* Source tab — OPS palette, sized for students. Mirrors the Docs/web source
+   editor (apps-script/src/source_editor_css.html). */
+.src { padding:14px 16px 20px; overflow-y:auto; display:flex; flex-direction:column; gap:22px; font-size:14px; color:#333; }
+.src__empty { padding:24px 14px; text-align:center; color:#595959; font-size:14px; line-height:1.5; }
+.src__sec { display:flex; flex-direction:column; gap:9px; }
+.src__sec-head { display:flex; align-items:baseline; gap:8px; }
+.src__sec-title { margin:0; font-family:"Lexend", "Roboto", -apple-system, "Segoe UI", sans-serif; font-size:14.5px; font-weight:600; color:#1d2a5d; }
+.src__tag { font-size:11.5px; font-weight:500; padding:1px 8px; border-radius:999px; }
+.src__tag--required { background:#eaecf5; color:#1d2a5d; }
+.src__tag--optional { background:#f3f3f3; color:#666; }
+.src__sec-body { display:flex; flex-direction:column; gap:12px; }
+.src__help { margin:0; font-size:12.5px; line-height:1.5; color:#595959; }
+.src__fld { display:flex; flex-direction:column; gap:4px; }
+.src__fld-lbl { font-size:13px; font-weight:500; color:#333; }
+.src__fld-opt { font-weight:400; color:#666; }
+.src__fld input, .src__fld select, .src__ta {
+  width:100%; min-height:36px; border:1px solid #949494; border-radius:6px; padding:7px 9px;
+  font:inherit; font-size:14px; line-height:1.4; color:#333; background:#fff;
 }
-.src__seg { display:flex; border:1px solid #dadce0; border-radius:7px; overflow:hidden; }
-.src__seg button { flex:1; border:none; border-right:1px solid #eceff1; background:#fff; padding:7px 4px; font-size:12px; color:#5f6368; text-align:center; }
+.src__fld input:focus, .src__fld select:focus, .src__ta:focus {
+  outline:none; border-color:#4356a9; box-shadow:0 0 0 3px rgba(45,63,137,0.15);
+}
+.src__ta { resize:vertical; line-height:1.5; }
+.src__ta--ann { min-height:120px; }
+.src__count { margin:-3px 0 0; font-size:12px; color:#666; text-align:right; font-variant-numeric:tabular-nums; }
+.src__seg { display:flex; border:1px solid #949494; border-radius:8px; overflow:hidden; background:#fff; }
+.src__seg button { flex:1; min-height:38px; border:none; border-right:1px solid #949494; background:#fff; padding:7px 4px; font:inherit; font-size:13.5px; color:#333; text-align:center; }
 .src__seg button:last-child { border-right:none; }
-.src__seg button.src__seg--on { background:#e8f0fe; color:#1a73e8; font-weight:600; }
-.src__ta { width:100%; border:1px solid #dadce0; border-radius:6px; padding:6px 8px; font:inherit; font-size:12.5px; min-height:48px; resize:vertical; }
-.src__preview { margin-top:10px; padding:9px 11px; background:#f8f9fa; border:1px solid #eceff1; border-radius:7px; font-size:11.5px; line-height:1.5; color:#3c4043; }
-.src__preview-lbl { display:block; font-size:9.5px; text-transform:uppercase; letter-spacing:0.05em; color:#9aa0a6; margin-bottom:3px; }
-.src__status { font-size:10.5px; color:#0f9d58; margin-top:8px; min-height:14px; }
-.src__status--pending { color:#b06000; }
-.src__status--error { color:#d93025; }
+.src__seg button:hover:not(.src__seg--on) { background:#f3f3f3; }
+.src__seg button:focus-visible { outline:2px solid #2d3f89; outline-offset:-3px; }
+.src__seg button.src__seg--on { font-weight:600; }
+.src__seg button.src__seg-btn--primary.src__seg--on { background:#2d3f89; color:#fff; }
+.src__seg button.src__seg-btn--secondary.src__seg--on { background:#ad2122; color:#fff; }
+.src__seg button.src__seg-btn--unset.src__seg--on { background:#f3f3f3; color:#333; }
+.src__preview {
+  padding:12px 14px 12px calc(14px + 2em); text-indent:-2em;
+  background:#f4f6fa; border:1px solid #eaecf5; border-radius:8px;
+  font-size:14px; line-height:1.6; color:#333; overflow-wrap:anywhere;
+}
+.src__preview em { font-style:italic; }
+.src__preview-wait { color:#666; }
+.src__missing { margin:0; font-size:12.5px; line-height:1.5; color:#333; font-weight:500; }
+.src__missing[hidden] { display:none; }
+.src__status { font-size:12.5px; color:#4356a9; min-height:16px; margin-top:-10px; }
+.src__status--pending { color:#666; }
+.src__status--error { color:#ad2122; font-weight:500; }
 /* Subtle per-source evidence-target nudge (shown only when this project sets a
    minHighlightsPerSource / minDistinctCategories requirement). */
-.src__hint { font-size:10.5px; color:#80868b; margin-top:6px; line-height:1.4; }
-.src__paste { margin-bottom:11px; padding:9px 10px; border:1px dashed #c6cad0; border-radius:7px; background:#fbfbfc; }
-.src__paste-lbl { display:block; font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:#80868b; margin-bottom:5px; }
-.src__paste-ta { min-height:40px; }
-.src__paste-cite { font-size:12px; line-height:1.5; color:#202124; padding-left:1.5em; text-indent:-1.5em; margin-bottom:6px; }
-.src__paste-confirm { margin-top:7px; }
+.src__hint { font-size:12.5px; color:#595959; line-height:1.4; }
+.src__paste { display:flex; flex-direction:column; gap:8px; }
+.src__paste--open { padding:11px; border:1px dashed #949494; border-radius:8px; }
+.src__paste-lbl { display:flex; flex-direction:column; gap:4px; font-size:13px; font-weight:500; color:#333; }
+.src__paste-ta { min-height:60px; }
+.src__paste-note { margin:0; font-size:12.5px; color:#595959; }
 .src__paste-confirm[hidden] { display:none; }
-.src__paste-q { font-size:12px; color:#202124; margin-bottom:6px; }
-.src__paste-btns { display:flex; gap:6px; }
-.src__btn { border:1px solid #dadce0; background:#fff; color:#3c4043; border-radius:6px; padding:6px 12px; font:inherit; font-size:12px; cursor:pointer; }
-.src__btn--primary { background:#1a73e8; border-color:#1a73e8; color:#fff; font-weight:600; }
+.src__paste-q { font-size:13.5px; color:#333; margin-bottom:6px; }
+.src__paste-btns { display:flex; gap:8px; }
+.src__btn { min-height:34px; border:1px solid #949494; background:#fff; color:#333; border-radius:6px; padding:6px 14px; font:inherit; font-size:13.5px; cursor:pointer; }
+.src__btn--primary { background:#2d3f89; border-color:#2d3f89; color:#fff; font-weight:600; }
+.src__btn--primary:hover { background:#1d2a5d; }
 .src__btn:disabled { opacity:0.6; cursor:default; }
-.src__link { border:none; background:none; padding:0; color:#1a73e8; font:inherit; font-size:12px; text-decoration:underline; cursor:pointer; }
+.src__link { align-self:flex-start; border:none; background:none; padding:2px 0; color:#2d3f89; font:inherit; font-size:13px; text-decoration:underline; text-underline-offset:2px; cursor:pointer; }
+.src__link:hover { color:#1d2a5d; }
 .src__save-page { margin-top:12px; }
-.src__save-err { margin-top:8px; color:#d93025; font-size:12px; }
+.src__save-err { margin-top:8px; color:#ad2122; font-size:13px; }
 .facet__hint { padding:2px 8px 6px; font-size:10.5px; color:#80868b; line-height:1.4; }
 .toast {
   position:absolute; left:12px; right:12px; bottom:12px; z-index:5;
@@ -407,6 +438,7 @@ const OpsSidebar = (function () {
     listEl: null,
     launcherEl: null,
     pasteDraft: null,      // unconfirmed paste on the Source tab: {sourceId, pending, value}
+    pasteOpenFor: null,    // sourceId whose "paste a citation" box is expanded
     project: null,
     projects: [],         // all active projects the student belongs to (drives the picker)
     bundle: null,
@@ -1090,26 +1122,79 @@ const OpsSidebar = (function () {
   const SRC_TYPES = ['website', 'article', 'book', 'primary'];
   const PS_OPTS = ['primary', 'secondary', 'unset'];
 
+  // Field set per source type; `optional` fields never count as missing.
+  // Same keys, labels and order as sourceFieldsFor_ in
+  // apps-script/src/source_editor_js.html — keep the two in sync.
   function sourceFieldsFor_(sourceType) {
     switch (sourceType) {
       case 'website': return [
-        { key:'title', label:'Title' }, { key:'siteName', label:'Site name' },
-        { key:'author', label:'Author' }, { key:'publishedDate', label:'Published date' },
-        { key:'url', label:'URL' }];
+        { key:'title', label:'Title' }, { key:'author', label:'Author' },
+        { key:'siteName', label:'Website name' }, { key:'publishedDate', label:'Date published' },
+        { key:'url', label:'Web address (URL)' }];
       case 'article': return [
-        { key:'title', label:'Article title' }, { key:'publication', label:'Publication name' },
-        { key:'author', label:'Author' }, { key:'publishedDate', label:'Published date' },
-        { key:'volume', label:'Volume (opt.)' }, { key:'issue', label:'Issue (opt.)' },
-        { key:'pages', label:'Pages (opt.)' }, { key:'url', label:'URL' }];
+        { key:'title', label:'Article title' }, { key:'author', label:'Author' },
+        { key:'publication', label:'Newspaper, magazine, or journal' }, { key:'publishedDate', label:'Date published' },
+        { key:'volume', label:'Volume', optional:true }, { key:'issue', label:'Issue', optional:true },
+        { key:'pages', label:'Pages', optional:true }, { key:'url', label:'Web address (URL)' }];
       case 'book': return [
         { key:'title', label:'Book title' }, { key:'author', label:'Author' },
-        { key:'publisher', label:'Publisher' }, { key:'publishedDate', label:'Year' }];
+        { key:'publisher', label:'Publisher' }, { key:'publishedDate', label:'Year published' }];
       case 'primary': return [
-        { key:'title', label:'Title' }, { key:'author', label:'Author / creator' },
-        { key:'publishedDate', label:'Date' }, { key:'archive', label:'Archive / repository' },
-        { key:'url', label:'URL' }];
+        { key:'title', label:'Title or description' }, { key:'author', label:'Who made it' },
+        { key:'publishedDate', label:'Date made' }, { key:'archive', label:'Where it is kept (archive, library, museum)' },
+        { key:'url', label:'Web address (URL)' }];
       default: return [];
     }
+  }
+
+  // Student-facing wording, shared with the Docs/web source editor
+  // (apps-script/src/source_editor_js.html) — keep the two in sync.
+  const SRC_TYPE_LABELS = {
+    website: 'Website',
+    article: 'Article (newspaper, magazine, journal)',
+    book: 'Book',
+    primary: 'Historical document, photo, or object',
+  };
+  const PS_LABELS = { primary: 'Primary', secondary: 'Secondary', unset: 'Not sure yet' };
+  const PS_HELP = 'Primary: made at the time (a letter, photo, speech, diary). '
+    + 'Secondary: made later by someone studying it (a textbook, article, documentary).';
+  const ANNOTATION_HELP = 'In 2–3 sentences: what is this source, and how will it help your project?';
+  const ANNOTATION_PLACEHOLDER = 'This source is… It helps my project because…';
+  const SAVE_STATUS_TEXT = {
+    pending: 'Saving…',
+    saved: 'Saved',
+    error: 'Not saved yet. It will keep trying, and your work is safe on this computer.',
+  };
+
+  // Blank fields of this source type, by label (URL and optional ones don't count).
+  function missingFields_(fields) {
+    return sourceFieldsFor_(fields.sourceType)
+      .filter((d) => !d.optional && d.key !== 'url' && !String(fields[d.key] || '').trim())
+      .map((d) => d.label);
+  }
+  function sentenceCountLabel_(text) {
+    const t = String(text || '').trim();
+    if (!t) return 'Not started';
+    const n = t.split(/[.!?]+(?:\s+|$)/).filter((s) => s.trim()).length;
+    return n + (n === 1 ? ' sentence' : ' sentences');
+  }
+  function missingText_(fields) {
+    const m = missingFields_(fields);
+    if (!m.length) return '';
+    return 'Not filled in yet: ' + m.join(', ') + '. Add ' + (m.length === 1 ? 'it' : 'them')
+      + ' if the source shows ' + (m.length === 1 ? 'it.' : 'them.');
+  }
+  // A titled group in the Source tab; returns its body.
+  function srcSection_(parent, title, tag) {
+    const sec = el_('section', 'src__sec');
+    const head = el_('div', 'src__sec-head');
+    head.appendChild(el_('h3', 'src__sec-title', title));
+    if (tag) head.appendChild(el_('span', 'src__tag src__tag--' + tag, tag === 'required' ? 'Required' : 'Optional'));
+    sec.appendChild(head);
+    const body = el_('div', 'src__sec-body');
+    sec.appendChild(body);
+    parent.appendChild(sec);
+    return body;
   }
 
   // Effective field values: student-entered citationFields win (including
@@ -1211,12 +1296,10 @@ const OpsSidebar = (function () {
   function renderPasteBlock_(src) {
     const wrap = el_('div', 'src__paste');
     const pasted = pastedOf_(src);
+    // The preview above already shows a pasted citation.
     if (pasted) {
-      wrap.appendChild(el_('label', 'src__paste-lbl', 'Your pasted citation'));
-      const body = el_('div', 'src__paste-cite');
-      body.innerHTML = previewHtml_(pasted.text, pasted.italics || []);
-      wrap.appendChild(body);
-      const back = el_('button', 'src__link', 'Use the built citation instead');
+      wrap.appendChild(el_('p', 'src__paste-note', 'You pasted this citation from the site.'));
+      const back = el_('button', 'src__link', 'Build it from the details instead');
       back.type = 'button';
       back.addEventListener('click', () => {
         delete src.citationFields.pasted;
@@ -1226,11 +1309,27 @@ const OpsSidebar = (function () {
       wrap.appendChild(back);
       return wrap;
     }
-    wrap.appendChild(el_('label', 'src__paste-lbl', 'Have a citation from the site? Paste it here'));
+    const draft = state.pasteDraft && state.pasteDraft.sourceId === src.sourceId ? state.pasteDraft : null;
+    // Collapsed until asked for (or while an unconfirmed paste is waiting).
+    if (!draft && state.pasteOpenFor !== src.sourceId) {
+      const open = el_('button', 'src__link', 'Does the site give you a citation? Paste it instead');
+      open.type = 'button';
+      open.addEventListener('click', () => {
+        state.pasteOpenFor = src.sourceId;
+        render_();
+        const t = state.shadowRoot && state.shadowRoot.querySelector('.src__paste-ta');
+        if (t) t.focus();
+      });
+      wrap.appendChild(open);
+      return wrap;
+    }
+    wrap.classList.add('src__paste--open');
+    const lbl = el_('label', 'src__paste-lbl', 'Paste the citation from the site');
     const ta = document.createElement('textarea');
     ta.className = 'src__ta src__paste-ta';
-    ta.placeholder = 'Copy the MLA citation the site gives you, then paste (Ctrl+V)';
-    wrap.appendChild(ta);
+    ta.placeholder = 'Copy the MLA citation the site gives you, then paste it here (Ctrl+V)';
+    lbl.appendChild(ta);
+    wrap.appendChild(lbl);
     const confirm = el_('div', 'src__paste-confirm');
     confirm.hidden = true;
     confirm.appendChild(el_('div', 'src__paste-q', 'Replace your citation with this one?'));
@@ -1244,7 +1343,6 @@ const OpsSidebar = (function () {
 
     // An unconfirmed paste lives in state, not just the DOM, so a background
     // re-render (pageHighlightsUpdated, a new highlight) doesn't wipe it.
-    const draft = state.pasteDraft && state.pasteDraft.sourceId === src.sourceId ? state.pasteDraft : null;
     let pending = draft ? draft.pending : null;
     if (draft) ta.value = draft.value;
     const remember = () => {
@@ -1273,10 +1371,11 @@ const OpsSidebar = (function () {
       if (!src.citationFields) src.citationFields = {};
       src.citationFields.pasted = { text: pending.text, italics: pending.italics };
       state.pasteDraft = null;
+      state.pasteOpenFor = null;
       saveSource_();
       render_();
     });
-    no.addEventListener('click', () => { pending = null; ta.value = ''; state.pasteDraft = null; showConfirm(); });
+    no.addEventListener('click', () => { state.pasteDraft = null; state.pasteOpenFor = null; render_(); });
     return wrap;
   }
 
@@ -1316,94 +1415,113 @@ const OpsSidebar = (function () {
     }
     const src = state.pageSource;
     const fields = effectiveFields_(src);
+    const pasted = pastedOf_(src);
 
+    // Same order, labels and help text as the Docs/web source editor
+    // (renderCitationForm in apps-script/src/source_editor_js.html).
     const form = el_('div', 'src');
 
-    // Source type
-    const typeWrap = el_('div', 'src__fld');
-    typeWrap.appendChild(el_('label', null, 'Source type'));
-    const sel = document.createElement('select');
-    SRC_TYPES.forEach((t) => {
-      const o = document.createElement('option'); o.value = t; o.textContent = t;
-      if (t === fields.sourceType) o.selected = true; sel.appendChild(o);
-    });
-    sel.addEventListener('change', () => {
-      if (!src.citationFields) src.citationFields = {};
-      src.citationFields.sourceType = sel.value;
-      src.sourceType = sel.value;
-      saveSource_();
-      render_(); // re-render to swap the field set
-    });
-    typeWrap.appendChild(sel);
-    form.appendChild(typeWrap);
+    // 1. The citation itself, first.
+    const cite = srcSection_(form, 'Your citation (MLA)');
+    const preview = el_('div', 'src__preview');
+    preview.id = 'ops-src-preview';
+    preview.innerHTML = '<span class="src__preview-wait">Building your citation…</span>';
+    cite.appendChild(preview);
+    const missing = el_('p', 'src__missing', pasted ? '' : missingText_(fields));
+    missing.hidden = !missing.textContent;
+    cite.appendChild(missing);
+    cite.appendChild(renderPasteBlock_(src));
 
-    form.appendChild(renderPasteBlock_(src));
-
-    // Per-type fields — hidden while a pasted citation is in use (they'd have
-    // no visible effect); they come back with "Use the built citation instead".
-    if (!pastedOf_(src)) sourceFieldsFor_(fields.sourceType).forEach((def) => {
-      const wrap = el_('div', 'src__fld');
-      wrap.appendChild(el_('label', null, def.label));
-      const inp = document.createElement('input');
-      inp.type = 'text'; inp.value = fields[def.key] || '';
-      const commit = () => {
+    // 2. The details it's built from — hidden while a pasted citation is in
+    // use (they'd have no visible effect).
+    if (!pasted) {
+      const det = srcSection_(form, 'Citation details');
+      const typeWrap = el_('label', 'src__fld');
+      typeWrap.appendChild(el_('span', 'src__fld-lbl', 'What kind of source is it?'));
+      const sel = document.createElement('select');
+      SRC_TYPES.forEach((t) => {
+        const o = document.createElement('option'); o.value = t; o.textContent = SRC_TYPE_LABELS[t] || t;
+        if (t === fields.sourceType) o.selected = true; sel.appendChild(o);
+      });
+      sel.addEventListener('change', () => {
         if (!src.citationFields) src.citationFields = {};
-        src.citationFields[def.key] = inp.value;
+        src.citationFields.sourceType = sel.value;
+        src.sourceType = sel.value;
         saveSource_();
-        schedulePreview_();
-      };
-      inp.addEventListener('change', commit);
-      inp.addEventListener('blur', commit);
-      wrap.appendChild(inp);
-      form.appendChild(wrap);
-    });
+        render_(); // re-render to swap the field set
+      });
+      typeWrap.appendChild(sel);
+      det.appendChild(typeWrap);
 
-    // Primary/Secondary segmented control
-    const tagWrap = el_('div', 'src__fld');
-    tagWrap.appendChild(el_('label', null, 'Tag'));
+      sourceFieldsFor_(fields.sourceType).forEach((def) => {
+        const wrap = el_('label', 'src__fld');
+        const lbl = el_('span', 'src__fld-lbl', def.label);
+        if (def.optional) lbl.appendChild(el_('span', 'src__fld-opt', ' (optional)'));
+        wrap.appendChild(lbl);
+        const inp = document.createElement('input');
+        inp.type = 'text'; inp.value = fields[def.key] || '';
+        const commit = () => {
+          if (!src.citationFields) src.citationFields = {};
+          src.citationFields[def.key] = inp.value;
+          saveSource_();
+          schedulePreview_();
+          const m = state.shadowRoot && state.shadowRoot.querySelector('.src__missing');
+          if (m) { m.textContent = missingText_(effectiveFields_(src)); m.hidden = !m.textContent; }
+        };
+        inp.addEventListener('change', commit);
+        inp.addEventListener('blur', commit);
+        wrap.appendChild(inp);
+        det.appendChild(wrap);
+      });
+    }
+
+    // 3. Primary or secondary.
+    const ps = srcSection_(form, 'Primary or secondary?');
     const seg = el_('div', 'src__seg');
+    seg.setAttribute('role', 'radiogroup');
+    seg.setAttribute('aria-label', 'Primary or secondary source');
     PS_OPTS.forEach((opt) => {
-      const b = el_('button', 'src__seg-btn' + ((src.primarySecondary || 'unset') === opt ? ' src__seg--on' : ''), opt[0].toUpperCase() + opt.slice(1));
+      const on = (src.primarySecondary || 'unset') === opt;
+      const b = el_('button', 'src__seg-btn src__seg-btn--' + opt + (on ? ' src__seg--on' : ''), PS_LABELS[opt]);
       b.type = 'button';
+      b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
       b.addEventListener('click', () => { src.primarySecondary = opt; saveSource_(); render_(); });
       seg.appendChild(b);
     });
-    tagWrap.appendChild(seg);
-    form.appendChild(tagWrap);
+    ps.appendChild(seg);
+    ps.appendChild(el_('p', 'src__help', PS_HELP));
 
     // Per-source evidence-target nudge (computed each render from the live
     // pageHighlights, so it tracks add/remove/recategorize). Renders nothing
     // when the project sets no highlight/category depth requirement.
     const hintText = evidenceHint_(state.pageHighlights, state.project && state.project.requirements);
-    if (hintText) form.appendChild(el_('div', 'src__hint', hintText));
+    if (hintText) ps.appendChild(el_('div', 'src__hint', hintText));
 
-    // Annotation — label flags required vs optional from the project requirement
-    // (default: required; only "optional" when requireAnnotation is explicitly false).
+    // 4. Annotation — required unless the project explicitly says otherwise.
     const annOptional = !!(state.project && state.project.requirements
       && state.project.requirements.requireAnnotation === false);
-    const annWrap = el_('div', 'src__fld');
-    annWrap.appendChild(el_('label', null, 'Annotation (' + (annOptional ? 'optional' : 'required') + ')'));
+    const ann = srcSection_(form, 'Annotation', annOptional ? 'optional' : 'required');
+    ann.appendChild(el_('p', 'src__help', ANNOTATION_HELP));
     const ta = document.createElement('textarea');
-    ta.className = 'src__ta'; ta.value = src.annotation || '';
-    ta.placeholder = '2–3 sentence annotation…';
+    ta.className = 'src__ta src__ta--ann'; ta.value = src.annotation || '';
+    ta.placeholder = ANNOTATION_PLACEHOLDER;
+    ta.setAttribute('aria-label', 'Annotation');
+    ann.appendChild(ta);
+    const count = el_('p', 'src__count', sentenceCountLabel_(ta.value));
+    ann.appendChild(count);
     let annTimer;
     ta.addEventListener('input', () => {
+      count.textContent = sentenceCountLabel_(ta.value);
       clearTimeout(annTimer);
       src.annotation = ta.value;
       annTimer = setTimeout(() => saveSource_(), 600);
     });
-    annWrap.appendChild(ta);
-    form.appendChild(annWrap);
-
-    // Live preview (C4 wires the network call; container + initial paint here)
-    const preview = el_('div', 'src__preview');
-    preview.id = 'ops-src-preview';
-    preview.innerHTML = '<span class="src__preview-lbl">MLA preview</span><em>…</em>';
-    form.appendChild(preview);
 
     // Save status
     const status = el_('div', 'src__status' + (state.sourceSaveStatus ? ' src__status--' + state.sourceSaveStatus : ''));
-    status.textContent = { pending: 'saving…', saved: '✓ saved', error: '⚠ save failed' }[state.sourceSaveStatus] || '';
+    status.setAttribute('role', 'status');
+    status.textContent = SAVE_STATUS_TEXT[state.sourceSaveStatus] || '';
     form.appendChild(status);
 
     schedulePreview_();
@@ -1416,7 +1534,7 @@ const OpsSidebar = (function () {
     if (!state.pageSource) return;
     state.sourceSaveStatus = 'pending';
     const statusEl = state.shadowRoot && state.shadowRoot.querySelector('.src__status');
-    if (statusEl) { statusEl.textContent = 'saving…'; statusEl.className = 'src__status src__status--pending'; }
+    if (statusEl) { statusEl.textContent = SAVE_STATUS_TEXT.pending; statusEl.className = 'src__status src__status--pending'; }
     clearTimeout(_srcSaveTimer);
     const snapshot = JSON.parse(JSON.stringify(state.pageSource));
     _srcSaveTimer = setTimeout(() => {
@@ -1432,7 +1550,7 @@ const OpsSidebar = (function () {
     const el = state.shadowRoot && state.shadowRoot.querySelector('.src__status');
     if (!el) return;
     el.className = 'src__status' + (state.sourceSaveStatus ? ' src__status--' + state.sourceSaveStatus : '');
-    el.textContent = { pending: 'saving…', saved: '✓ saved', error: '⚠ save failed' }[state.sourceSaveStatus] || '';
+    el.textContent = SAVE_STATUS_TEXT[state.sourceSaveStatus] || '';
   }
 
   let _previewTimer = null;
@@ -1450,10 +1568,10 @@ const OpsSidebar = (function () {
         const cur = state.shadowRoot && state.shadowRoot.querySelector('#ops-src-preview');
         if (!cur) return;
         if (!res || !res.ok) {
-          cur.innerHTML = '<span class="src__preview-lbl">MLA preview</span><em>Preview updates when you\'re back online.</em>';
+          cur.innerHTML = '<span class="src__preview-wait">Your citation will show here when you\'re back online.</span>';
           return;
         }
-        cur.innerHTML = '<span class="src__preview-lbl">MLA preview</span>' + previewHtml_(res.text || '', res.italics || []);
+        cur.innerHTML = previewHtml_(res.text || '', res.italics || []);
       })
       .catch(() => {});
   }

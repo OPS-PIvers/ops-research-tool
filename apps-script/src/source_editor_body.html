@@ -14,8 +14,7 @@
 </header>
 
 <div class="sb-modal__body">
-  <section class="sb-modal__pane sb-modal__pane--left" id="ed-left">
-    <h2 class="sb-modal__paneheader">Citation</h2>
+  <section class="sb-modal__pane sb-modal__pane--left" id="ed-left" aria-label="Citation and annotation">
     <div id="ed-citation" class="sb-modal__citation">
       <div class="sb-loading">
         <div class="sb-loading__spinner"></div>
@@ -26,16 +25,16 @@
 
   <section class="sb-modal__pane sb-modal__pane--right" id="ed-right">
     <div class="sb-modal__paneheader-row">
-      <h2 class="sb-modal__paneheader" id="ed-evheader">Evidence</h2>
+      <h2 class="sb-modal__paneheader" id="ed-evheader">Your highlights</h2>
     </div>
     <div id="ed-filter" class="sb-modal__filter"></div>
     <div id="ed-evidence" class="sb-modal__evidence">
       <div class="sb-loading">
         <div class="sb-loading__spinner"></div>
-        <div class="sb-loading__label">Loading evidence…</div>
+        <div class="sb-loading__label">Loading highlights…</div>
       </div>
     </div>
   </section>
 </div>
 
-<div id="ed-status" class="sb-modal__status"></div>
+<div id="ed-status" class="sb-modal__status" role="status" aria-live="polite"></div>

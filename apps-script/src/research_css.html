@@ -25,10 +25,7 @@
 .rp-brand { min-width: 0; margin-right: auto; }
 .rp-brand .sb-title { font-size: 18px; }
 .rp-project { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.rp-project label {
-  font-size: 10px; color: var(--c-muted);
-  text-transform: uppercase; letter-spacing: 0.04em;
-}
+.rp-project label { font-size: 13px; font-weight: 500; color: var(--c-text); }
 .rp-project select {
   min-width: 0; max-width: 320px;
   padding: 6px 8px; border: 1.5px solid var(--c-line); border-radius: 6px;
@@ -51,6 +48,15 @@
 }
 .rp-list .sb-main { height: auto; flex: 1; min-height: 0; padding-bottom: 8px; }
 .rp-list .sb-status { padding: 4px 12px 8px; margin: 0; }
+
+/* The list is the Docs sidebar's, sized up for a full page. */
+.rp-list .sb-source__title { font-size: 14px; }
+.rp-list .sb-source__meta,
+.rp-list .sb-source__action { font-size: 12px; }
+.rp-list .sb-highlight { font-size: 13px; }
+.rp-list .sb-hl-tag { font-size: 11px; }
+.rp-list .sb-viewmode__pill { font-size: 12px; }
+.rp-project select { font-size: 14px; }
 
 /* The source open in the editor. */
 .sb-source--selected { box-shadow: inset 3px 0 0 var(--c-accent); padding-left: 9px; }
@@ -83,14 +89,11 @@
   .rp-back { display: block; }
 }
 
-/* The editor's citation + evidence panes stack once they'd be cramped. */
+/* The editor's citation + highlights panes stack once they'd be cramped. */
 @media (max-width: 1100px) {
   .rp-editor .sb-modal__body { flex-direction: column; overflow-y: auto; }
   .rp-editor .sb-modal__pane { overflow-y: visible; }
-  .rp-editor .sb-modal__pane--left {
-    flex: none; padding-right: 0; padding-bottom: 12px;
-    border-right: none; border-bottom: 1px solid var(--c-line);
-  }
+  .rp-editor .sb-modal__pane--left { flex: none; border-right: none; border-bottom: 1px solid var(--c-line); }
   .rp-editor .sb-modal__pane--right { flex: none; }
 }
 @media (min-width: 901px) and (max-width: 1100px) {

@@ -999,7 +999,7 @@ function bindPage_() {
 
 function showInPane_(sourceId, focusHighlightId) {
   state.selectedSourceId = sourceId;
-  window.OpsSourceEditor.show({ sources: state.sources, highlights: state.highlights }, {
+  window.OpsSourceEditor.show({ sources: state.sources, highlights: state.highlights, requirements: state.requirements }, {
     projectId: state.projectId,
     sourceId,
     bundle: activeBundle(),

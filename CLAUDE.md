@@ -794,6 +794,32 @@ These supersede or refine the spec — apply them before defaulting to plan text
   used: built the templates with a mocked `google.script.run` and drove them in
   Playwright.
 
+- **Source editor polished for students (2026-10-28; extension v0.1.7).**
+  Same layout, chosen over a guided-steps redesign. The Docs modal, the "My
+  research" pane and the extension Source tab now share one order and one set
+  of wording:
+  1. **Your citation (MLA)** comes first: the live preview at full size with an
+     MLA hanging indent, then "Not filled in yet: …" (`missingFields_`, which
+     skips optional fields and URL). The paste box sits behind a "Paste it
+     instead" link.
+  2. **Citation details** has plain-language type labels (`SRC_TYPE_LABELS`)
+     and sentence-case field labels (`sourceFieldsFor_` gained
+     `optional`/`wide`).
+  3. **Primary or secondary?** offers Primary / Secondary / **Not sure yet**,
+     plus `PS_HELP`.
+  4. **Annotation** has a required/optional tag, `ANNOTATION_HELP`, a roomy box
+     and a sentence count.
+
+  Highlights use named category chips instead of bare color dots, and labelled
+  Edit/Delete buttons. "Remove this source" is a quiet link at the bottom.
+  **The copy constants and field defs exist in both
+  [`source_editor_js.html`](apps-script/src/source_editor_js.html) and
+  [`extension/content/sidebar.js`](extension/content/sidebar.js); keep them in
+  sync.** Editor styles moved out of `sidebar_css` into
+  [`source_editor_css.html`](apps-script/src/source_editor_css.html), which the
+  modal and `research.html` load. Field borders are `#949494` (3:1). The value
+  `unset` is unchanged; only its label is new.
+
 ## 5. GAS V8 quirks discovered
 
 - `new URL(...)` **throws** in GAS V8. The global is advertised but unusable.
