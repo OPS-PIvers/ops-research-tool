@@ -105,10 +105,12 @@ function handlePost_(e) {
  *
  * Phase 4 will add teacher dashboards / project-wide reads (admin-gated).
  *
- * No-action requests serve the Teacher Console HTML (60_console_routing.js).
+ * No-action requests serve HTML (60_console_routing.js): ?view=research is the
+ * student "My research" page, anything else the Teacher Console.
  */
 function doGet(e) {
   const params = (e && e.parameter) || {};
+  if (!params.action && params.view === 'research') return serveResearchHtml_(params);
   if (!params.action) return serveConsoleHtml_();
   return jsonResponse_(handleGet_(e));
 }

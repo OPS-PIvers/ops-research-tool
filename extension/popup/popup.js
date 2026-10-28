@@ -1,7 +1,8 @@
 /**
- * Toolbar popup. Deliberately minimal — three things only:
+ * Toolbar popup. Deliberately minimal:
  *   - Master on/off switch
  *   - Identity surface (name + email from cached 'me')
+ *   - "Open my research" (the web app's all-sources page)
  *   - Sync status + "Sync now"
  *
  * Project selection and the category key now live in the in-page sidebar; PDF
@@ -27,6 +28,8 @@ const els = {
   enabledLabel: document.getElementById('enabled-label'),
   teacherSection: document.getElementById('teacher-section'),
   goToProjects: document.getElementById('go-to-projects'),
+  researchSection: document.getElementById('research-section'),
+  openResearch: document.getElementById('open-research'),
 };
 
 const SYNC_STATUS_TEXT = {
@@ -154,6 +157,7 @@ function renderSignIn_(show) {
   }
   els.name.textContent = 'Not signed in';
   els.email.textContent = '';
+  els.researchSection.hidden = true;
 }
 
 function renderIdentity(meResp) {
@@ -162,11 +166,13 @@ function renderIdentity(meResp) {
     els.name.textContent = '—';
     els.email.textContent = '';
     els.teacherSection.hidden = true;
+    els.researchSection.hidden = true;
     return;
   }
   hadIdentity = true;
   const roster = meResp.roster;
   const staff = meResp.staff;
+  els.researchSection.hidden = !(roster || staff);
 
   if (staff) {
     const roleLabel = staff.Role === 'admin' ? 'Admin' : 'Teacher';
@@ -260,6 +266,21 @@ function getSyncStatusSafe_() {
 
 els.signinButton.addEventListener('click', signIn_);
 els.signinAgainButton.addEventListener('click', signIn_);
+
+// "My research" page, opened on the project the in-page sidebar is using. If
+// the lookup fails the page falls back to the server-side active project.
+els.openResearch.addEventListener('click', async () => {
+  els.openResearch.disabled = true;
+  let projectId = '';
+  try {
+    const info = await sendMessage({ type: 'getActiveProject' });
+    projectId = (info && info.activeProjectId) || '';
+  } catch (e) { /* open without it */ }
+  const url = CONFIG.WEB_APP_URL + '?view=research'
+    + (projectId ? '&projectId=' + encodeURIComponent(projectId) : '');
+  chrome.tabs.create({ url });
+  els.openResearch.disabled = false;
+});
 
 // Redirect teachers directly to the GAS web app projects list (WEB_APP_URL)
 els.goToProjects.addEventListener('click', () => {

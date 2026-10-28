@@ -13,8 +13,11 @@
 /**
  * Bootstrap call when the sidebar loads. Returns enough to render the
  * project picker + active context without a second round trip.
+ *
+ * preferredProjectId (optional) is the project the "My research" page was
+ * opened for; it becomes the active project when the caller can see it.
  */
-function sidebarGetContext() {
+function sidebarGetContext(preferredProjectId) {
   const actorEmail = getActorEmail_();
   const projects = listActiveProjectsForStudent_(actorEmail);
   const bundles = listBundles_();
@@ -25,8 +28,15 @@ function sidebarGetContext() {
   // class's projects.
   const visibleProjects = isStaff ? listActiveProjects_() : projects;
 
+  const isVisible = (id) => !!id && visibleProjects.some((p) => p.projectId === id);
   let activeProjectId = getActiveProjectForActor_(actorEmail);
-  if (!activeProjectId && visibleProjects.length > 0) {
+  if (isVisible(preferredProjectId) && preferredProjectId !== activeProjectId) {
+    activeProjectId = preferredProjectId;
+    setActiveProjectForActor_(actorEmail, activeProjectId);
+  }
+  // A stale active project (archived, or the student left its class) would
+  // load data for a project the picker doesn't list; fall back like a fresh one.
+  if (!isVisible(activeProjectId) && visibleProjects.length > 0) {
     activeProjectId = visibleProjects[0].projectId;
     setActiveProjectForActor_(actorEmail, activeProjectId);
   }

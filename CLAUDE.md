@@ -167,6 +167,8 @@ Moving the project = edit that one file, `clasp push`, redeploy.
     `Deployed <id> @<N>`; every `main` deploy mints a new one, so no separate
     `clasp version` is needed) and set it in **App Configuration**:
     https://console.cloud.google.com/apis/api/appsmarket-component.googleapis.com/googleapps_sdk?project=ops-research-tool
+  - **"My research" web page** (`?view=research`) reuses this sidebar list +
+    the source editor outside the Doc; see §4 (2026-10-28). No insert there.
   - **Still TODO in Phase 3:** admin-install the add-on domain-wide (if not
     done yet); real-Doc QA of
     bibliography formatting + cursor insertion; wire the extension's
@@ -746,6 +748,51 @@ These supersede or refine the spec — apply them before defaulting to plan text
     [`11_provisioning.js`](apps-script/src/11_provisioning.js)). Re-measure
     with `gcloud logging read 'textPayload:"dashboard timing"'` before
     deciding on the rollup.
+
+- **"My research" page: project-wide source editing outside the Doc
+  (2026-10-28; ships with extension v0.1.6).** Decided in a grill-me session:
+  the extension stays capture + current-page edits, Docs keeps full editing and
+  is the ONLY place that inserts (bibliography / in-text), and a new web page
+  gives the all-sources view without opening a Doc. Served from the SAME `/exec`
+  at **`?view=research[&projectId=<uuid>]`** (`serveResearchHtml_`,
+  [`60_console_routing.js`](apps-script/src/60_console_routing.js); `doGet`
+  routes it before the console). **No new student permissions:** the web app
+  executes as the owner and identifies the caller with `Session.getActiveUser()`,
+  like the extension's calls. The page needs no add-on install and no `drive`
+  consent. It is **not a third copy of the UI**:
+  [`research.html`](apps-script/src/research.html) puts the Docs sidebar list
+  (`sidebar_js`, **`window.OPS_PAGE` mode**: no insert menu / Open Editor, an
+  "Edit" action per card) beside the source editor (`source_editor_js`,
+  **`OPS_EDITOR_CTX.embedded` mode**, driven via `window.OpsSourceEditor.show/
+  clear/hasFocus`). The markup is shared through
+  [`sidebar_list.html`](apps-script/src/sidebar_list.html) and
+  [`source_editor_body.html`](apps-script/src/source_editor_body.html);
+  `research_css.html` only does layout. `source_editor_js` is now wrapped in an
+  IIFE, because the page loads it next to `sidebar_js` and both have top-level
+  `els`/`render`/`setStatus`. The list and the editor share source/highlight
+  objects. The editor reports edits, deletes and source switches to the page
+  (deferred `onChange`), and after a citation save the page re-fetches just
+  `inlineCitation` so Copy citation isn't stale. **Freshness:** re-fetches on
+  tab focus (throttled 30s) plus a Refresh button. A refresh never re-renders
+  the editor while a field in it has focus. **Online-only:** saves go straight
+  to the server; a failed save keeps the text on screen, says "Not saved", and
+  is re-sent on the browser `online` event (`unsaved` map in `source_editor_js`,
+  which the Docs modal gets too); an offline banner sits at the top. Layout: two
+  columns ≥901px, the editor's citation/evidence panes stack ≤1100px, and below
+  901px it's one column with "‹ All sources". `sidebarGetContext(preferredProjectId)`
+  makes the requested project active when the caller can see it (and now falls
+  back when the stored active project is no longer visible). Entry point: the
+  popup's **"Open my research ↗"** (opens on the extension's active project).
+  Staff get the Docs-sidebar view (all active projects). Group-member delete
+  rights unchanged (revisit after pilot). Fixed along the way: switching
+  projects in the Docs sidebar kept the first project's bundle colors
+  (`activeBundle()` now looks up the viewed project's bundle); the modal revived
+  a deleted highlight after switching sources away and back; the Sort & Filter
+  "0" badge showed (`[hidden]` lost to `display:inline-flex`). **Rollout:** CI
+  makes the page live on merge, but don't share the URL until v0.1.6 clears the
+  Web Store. DOM-side only, so real-surface QA (no `devTest`). Headless check
+  used: built the templates with a mocked `google.script.run` and drove them in
+  Playwright.
 
 ## 5. GAS V8 quirks discovered
 
