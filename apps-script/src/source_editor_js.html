@@ -28,6 +28,8 @@ const editor = {
   editingHighlightId: null,
   confirmingHighlightDeleteId: null,
   confirmingSourceDelete: false,
+  pasteOpen: false,        // the "paste a citation" box is expanded
+  requirements: null,      // project requirements (requireAnnotation drives the label)
   busy: false,             // a blocking server op is in flight (see setBusy_)
 };
 
@@ -89,7 +91,7 @@ function toggleSourceMenu_() {
 
 if (embedded) {
   window.OpsSourceEditor = {
-    // data = {sources, highlights} (the page's own arrays — edits to a source
+    // data = {sources, highlights, requirements} (the page's own arrays — edits to a source
     // or highlight object show up in its list on the next render);
     // opts = {projectId, sourceId, bundle, focusHighlightId, onChange}.
     show(data, opts) {
@@ -102,7 +104,8 @@ if (embedded) {
       editor.editingHighlightId = null;
       editor.confirmingHighlightDeleteId = null;
       editor.confirmingSourceDelete = false;
-      onData({ ok: true, sources: data.sources, highlights: data.highlights });
+      editor.pasteOpen = false;
+      onData({ ok: true, sources: data.sources, highlights: data.highlights, requirements: data.requirements });
     },
     clear(message) {
       editor.source = null;
@@ -134,6 +137,7 @@ function onData(resp) {
   }
   editor.allSources = resp.sources || [];
   editor.allHighlights = resp.highlights || [];
+  editor.requirements = resp.requirements || null;
   editor.source = editor.allSources.find((s) => s.sourceId === ctx.sourceId) || null;
   editor.highlights = editor.allHighlights.filter((h) => h.sourceId === ctx.sourceId);
   if (!editor.source) {
@@ -183,6 +187,7 @@ function loadSourceIntoEditor_(source) {
   editor.editingHighlightId = null;
   editor.confirmingHighlightDeleteId = null;
   editor.confirmingSourceDelete = false;
+  editor.pasteOpen = false;
 }
 
 function sourceLabel_(s) {
@@ -262,7 +267,7 @@ function render() {
   // and primary/secondary changes should ripple into the dropdown.
   syncSourceDropdown_();
 
-  els.evHeader.textContent = 'Evidence (' + editor.highlights.length + ')';
+  els.evHeader.textContent = 'Your highlights (' + editor.highlights.length + ')';
 
   els.citation.innerHTML = '';
   els.citation.appendChild(renderCitationForm());
@@ -334,72 +339,162 @@ function renderCitationForm() {
 
   const form = document.createElement('div');
   form.className = 'sb-source__form';
+  const pasted = pastedOf_(cf);
 
-  // Way back to the original page, so a student can re-read it.
-  if (source.rawUrl) form.appendChild(openSourceLink_(source.rawUrl, 'sb-open-source'));
+  // 1. The citation itself, first and large: it's what the student is making.
+  // Same order, labels and help text as the extension's Source tab
+  // (renderSourceTab_ in extension/content/sidebar.js) — keep the two in sync.
+  const citeSec = section_(form, 'Your citation (MLA)');
+  if (source.rawUrl) citeSec.head.appendChild(openSourceLink_(source.rawUrl, 'sb-open-source'));
+  const preview = document.createElement('div');
+  preview.className = 'sb-source__preview';
+  preview.id = 'ed-preview';
+  preview.innerHTML = '<span class="sb-source__preview-wait">Building your citation…</span>';
+  citeSec.body.appendChild(preview);
+  const missingEl = document.createElement('p');
+  missingEl.className = 'sb-source__missing';
+  citeSec.body.appendChild(missingEl);
+  const paintMissing = () => {
+    const missing = pasted ? [] : missingFields_(fields);
+    missingEl.hidden = missing.length === 0;
+    missingEl.innerHTML = '';
+    const lead = document.createElement('strong');
+    lead.textContent = 'Not filled in yet: ' + missing.join(', ') + '.';
+    missingEl.appendChild(lead);
+    missingEl.appendChild(document.createTextNode(' Add ' + (missing.length === 1 ? 'it' : 'them')
+      + ' if the source shows ' + (missing.length === 1 ? 'it.' : 'them.')));
+  };
+  paintMissing();
+  updatePreview_(form, fields);
 
-  // Source type
-  form.appendChild(formField_('Source type', selectInput_(SRC_TYPES, fields.sourceType, (v) => {
-    fields.sourceType = v;
-    cf.sourceType = v;
-    saveSourcePatch_({ sourceType: v, citationFields: cf });
-    source.sourceType = v;
-    source.citationFieldsParsed = cf;
-    render();   // re-render to swap the field set
-  })));
+  citeSec.body.appendChild(renderPasteBlock_(source, cf));
 
-  form.appendChild(renderPasteBlock_(source, cf));
-
-  // Per-type fields — hidden while a pasted citation is in use (they'd have no
-  // visible effect); "Use the built citation instead" brings them back.
-  if (!pastedOf_(cf)) sourceFieldsFor_(fields.sourceType).forEach((def) => {
-    const onChange = (v) => {
-      fields[def.key] = v;
-      cf[def.key] = v;
-      saveSourcePatch_({ citationFields: cf });
+  // 2. The details the citation is built from — hidden while a pasted
+  // citation is in use (they'd have no visible effect).
+  if (!pasted) {
+    const detSec = section_(form, 'Citation details');
+    detSec.body.appendChild(formField_('What kind of source is it?', selectInput_(SRC_TYPES, fields.sourceType, (v) => {
+      fields.sourceType = v;
+      cf.sourceType = v;
+      saveSourcePatch_({ sourceType: v, citationFields: cf });
+      source.sourceType = v;
       source.citationFieldsParsed = cf;
-      updatePreview_(form, fields);
-    };
-    form.appendChild(formField_(def.label, textInput_(fields[def.key] || '', onChange, def.kind)));
-  });
+      render();   // re-render to swap the field set
+    }, SRC_TYPE_LABELS)));
+    const grid = document.createElement('div');
+    grid.className = 'sb-source__fields';
+    sourceFieldsFor_(fields.sourceType).forEach((def) => {
+      const onChange = (v) => {
+        fields[def.key] = v;
+        cf[def.key] = v;
+        saveSourcePatch_({ citationFields: cf });
+        source.citationFieldsParsed = cf;
+        updatePreview_(form, fields);
+        paintMissing();
+      };
+      const fld = formField_(def.label, textInput_(fields[def.key] || '', onChange), def.optional ? 'optional' : '');
+      if (def.wide) fld.classList.add('sb-field--wide');
+      grid.appendChild(fld);
+    });
+    detSec.body.appendChild(grid);
+  }
 
-  // Primary / secondary / unset — segmented control.
-  form.appendChild(formField_('Tag', psSegmented_(source)));
+  // 3. Primary or secondary.
+  const psSec = section_(form, 'Primary or secondary?');
+  psSec.body.appendChild(psSegmented_(source));
+  const psHelp = document.createElement('p');
+  psHelp.className = 'sb-help';
+  psHelp.textContent = PS_HELP;
+  psSec.body.appendChild(psHelp);
 
-  // Annotation
-  const annWrap = document.createElement('div');
-  annWrap.className = 'sb-source__annotation';
-  const annLabel = document.createElement('label'); annLabel.textContent = 'Annotation';
+  // 4. Annotation — the student's own writing, so it gets room.
+  const annOptional = !!(editor.requirements && editor.requirements.requireAnnotation === false);
+  const annSec = section_(form, 'Annotation', annOptional ? 'optional' : 'required');
+  const annHelp = document.createElement('p');
+  annHelp.className = 'sb-help';
+  annHelp.textContent = ANNOTATION_HELP;
+  annSec.body.appendChild(annHelp);
   const annTa = document.createElement('textarea');
+  annTa.className = 'sb-source__annotation-ta';
   annTa.value = source.annotation || '';
-  annTa.placeholder = '2–3 sentence annotation…';
+  annTa.placeholder = ANNOTATION_PLACEHOLDER;
+  annTa.setAttribute('aria-label', 'Annotation');
+  annSec.body.appendChild(annTa);
+  const annCount = document.createElement('p');
+  annCount.className = 'sb-source__count';
+  const paintCount = () => { annCount.textContent = sentenceCountLabel_(annTa.value); };
+  paintCount();
+  annSec.body.appendChild(annCount);
   let annTimer;
   annTa.addEventListener('input', () => {
+    paintCount();
     clearTimeout(annTimer);
     annTimer = setTimeout(() => {
       saveSourcePatch_({ annotation: annTa.value });
       source.annotation = annTa.value;
     }, 600);
   });
-  annWrap.appendChild(annLabel);
-  annWrap.appendChild(annTa);
-  form.appendChild(annWrap);
 
-  // Live preview
-  const preview = document.createElement('div');
-  preview.className = 'sb-source__preview';
-  preview.id = 'ed-preview';
-  preview.innerHTML = '<em>Loading preview…</em>';
-  form.appendChild(preview);
-  updatePreview_(form, fields);
-
-  // Delete source — at the bottom of the left pane, after preview.
+  // Removing the source is rare and destructive: last, and quiet.
   const dangerWrap = document.createElement('div');
   dangerWrap.className = 'sb-modal__danger';
   dangerWrap.appendChild(renderDeleteSourceUi_());
   form.appendChild(dangerWrap);
 
   return form;
+}
+
+// Student-facing wording, shared with the extension's Source tab
+// (extension/content/sidebar.js) — keep the two in sync.
+const SRC_TYPE_LABELS = {
+  website: 'Website',
+  article: 'Article (newspaper, magazine, journal)',
+  book: 'Book',
+  primary: 'Historical document, photo, or object',
+};
+const PS_HELP = 'Primary: made at the time (a letter, photo, speech, diary). '
+  + 'Secondary: made later by someone studying it (a textbook, article, documentary).';
+const ANNOTATION_HELP = 'In 2–3 sentences: what is this source, and how will it help your project?';
+const ANNOTATION_PLACEHOLDER = 'This source is… It helps my project because…';
+
+// Fields of this source type that are still blank, by label. URL and
+// optional fields don't count; plenty of real sources have no author.
+function missingFields_(fields) {
+  return sourceFieldsFor_(fields.sourceType)
+    .filter((d) => !d.optional && d.key !== 'url' && !String(fields[d.key] || '').trim())
+    .map((d) => d.label);
+}
+
+function sentenceCountLabel_(text) {
+  const t = String(text || '').trim();
+  if (!t) return 'Not started';
+  const n = t.split(/[.!?]+(?:\s+|$)/).filter((s) => s.trim()).length;
+  return n + (n === 1 ? ' sentence' : ' sentences');
+}
+
+// A titled group in the citation pane. `tag` is an optional small label
+// beside the title ('required' / 'optional'). Returns {head, body}.
+function section_(parent, title, tag) {
+  const sec = document.createElement('section');
+  sec.className = 'sb-sec';
+  const head = document.createElement('div');
+  head.className = 'sb-sec__head';
+  const h = document.createElement('h3');
+  h.className = 'sb-sec__title';
+  h.textContent = title;
+  head.appendChild(h);
+  if (tag) {
+    const t = document.createElement('span');
+    t.className = 'sb-sec__tag sb-sec__tag--' + tag;
+    t.textContent = tag === 'required' ? 'Required' : 'Optional';
+    head.appendChild(t);
+  }
+  sec.appendChild(head);
+  const body = document.createElement('div');
+  body.className = 'sb-sec__body';
+  sec.appendChild(body);
+  parent.appendChild(sec);
+  return { head, body };
 }
 
 /** "Open source ↗" link to the page a source came from (new tab). */
@@ -486,32 +581,48 @@ function citationFromClipboard_(html, plain) {
 function renderPasteBlock_(source, cf) {
   const wrap = document.createElement('div');
   wrap.className = 'sb-paste';
-  const lab = document.createElement('label');
-  wrap.appendChild(lab);
   const save = () => {
     saveSourcePatch_({ citationFields: cf });
     source.citationFieldsParsed = cf;
     render();
   };
-  const pasted = pastedOf_(cf);
-  if (pasted) {
-    lab.textContent = 'Your pasted citation';
-    const body = document.createElement('div');
-    body.className = 'sb-paste__cite';
-    body.innerHTML = renderPreviewHtml_(pasted);
-    wrap.appendChild(body);
+  // The preview above already shows a pasted citation, so this only says so
+  // and offers the way back.
+  if (pastedOf_(cf)) {
+    const note = document.createElement('p');
+    note.className = 'sb-paste__note';
+    note.textContent = 'You pasted this citation from the site.';
+    wrap.appendChild(note);
     const back = document.createElement('button');
     back.type = 'button';
     back.className = 'sb-paste__link';
-    back.textContent = 'Use the built citation instead';
+    back.textContent = 'Build it from the details instead';
     back.addEventListener('click', () => { delete cf.pasted; save(); });
     wrap.appendChild(back);
     return wrap;
   }
-  lab.textContent = 'Have a citation from the site? Paste it here';
+  // Collapsed until asked for: most students fill in the details.
+  if (!editor.pasteOpen) {
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'sb-paste__link';
+    open.textContent = 'Does the site give you a citation? Paste it instead';
+    open.addEventListener('click', () => {
+      editor.pasteOpen = true;
+      render();
+      const t = document.querySelector('.sb-paste textarea');
+      if (t) t.focus();
+    });
+    wrap.appendChild(open);
+    return wrap;
+  }
+  wrap.classList.add('sb-paste--open');
+  const lab = document.createElement('label');
+  lab.textContent = 'Paste the citation from the site';
+  wrap.appendChild(lab);
   const ta = document.createElement('textarea');
-  ta.placeholder = 'Copy the MLA citation the site gives you, then paste (Ctrl+V)';
-  wrap.appendChild(ta);
+  ta.placeholder = 'Copy the MLA citation the site gives you, then paste it here (Ctrl+V)';
+  lab.appendChild(ta);
   const confirm = document.createElement('div');
   confirm.className = 'sb-paste__confirm';
   confirm.hidden = true;
@@ -548,76 +659,90 @@ function renderPasteBlock_(source, cf) {
   yes.addEventListener('click', () => {
     if (!pending || !pending.text) return;
     cf.pasted = { text: pending.text, italics: pending.italics };
+    editor.pasteOpen = false;
     save();
   });
-  no.addEventListener('click', () => { pending = null; ta.value = ''; showConfirm(); });
+  no.addEventListener('click', () => { editor.pasteOpen = false; render(); });
   return wrap;
 }
 
+// Field set per source type. `optional` fields never count as missing; `wide`
+// ones span both columns of the details grid. Same keys, labels and order as
+// sourceFieldsFor_ in extension/content/sidebar.js — keep the two in sync.
 function sourceFieldsFor_(sourceType) {
   switch (sourceType) {
     case 'website':
       return [
-        { key: 'title', label: 'Title', kind: 'text' },
-        { key: 'siteName', label: 'Site name', kind: 'text' },
-        { key: 'author', label: 'Author', kind: 'text' },
-        { key: 'publishedDate', label: 'Published date', kind: 'text' },
-        { key: 'url', label: 'URL', kind: 'text' },
+        { key: 'title', label: 'Title', wide: true },
+        { key: 'author', label: 'Author' },
+        { key: 'siteName', label: 'Website name' },
+        { key: 'publishedDate', label: 'Date published' },
+        { key: 'url', label: 'Web address (URL)', wide: true },
       ];
     case 'article':
       return [
-        { key: 'title', label: 'Article title', kind: 'text' },
-        { key: 'publication', label: 'Publication name', kind: 'text' },
-        { key: 'author', label: 'Author', kind: 'text' },
-        { key: 'publishedDate', label: 'Published date', kind: 'text' },
-        { key: 'volume', label: 'Volume (opt.)', kind: 'text' },
-        { key: 'issue', label: 'Issue (opt.)', kind: 'text' },
-        { key: 'pages', label: 'Pages (opt.)', kind: 'text' },
-        { key: 'url', label: 'URL', kind: 'text' },
+        { key: 'title', label: 'Article title', wide: true },
+        { key: 'author', label: 'Author' },
+        { key: 'publication', label: 'Newspaper, magazine, or journal' },
+        { key: 'publishedDate', label: 'Date published' },
+        { key: 'volume', label: 'Volume', optional: true },
+        { key: 'issue', label: 'Issue', optional: true },
+        { key: 'pages', label: 'Pages', optional: true },
+        { key: 'url', label: 'Web address (URL)', wide: true },
       ];
     case 'book':
       return [
-        { key: 'title', label: 'Book title', kind: 'text' },
-        { key: 'author', label: 'Author', kind: 'text' },
-        { key: 'publisher', label: 'Publisher', kind: 'text' },
-        { key: 'publishedDate', label: 'Year', kind: 'text' },
+        { key: 'title', label: 'Book title', wide: true },
+        { key: 'author', label: 'Author' },
+        { key: 'publisher', label: 'Publisher' },
+        { key: 'publishedDate', label: 'Year published' },
       ];
     case 'primary':
       return [
-        { key: 'title', label: 'Title', kind: 'text' },
-        { key: 'author', label: 'Author / creator', kind: 'text' },
-        { key: 'publishedDate', label: 'Date', kind: 'text' },
-        { key: 'archive', label: 'Archive / repository', kind: 'text' },
-        { key: 'url', label: 'URL', kind: 'text' },
+        { key: 'title', label: 'Title or description', wide: true },
+        { key: 'author', label: 'Who made it' },
+        { key: 'publishedDate', label: 'Date made' },
+        { key: 'archive', label: 'Where it is kept (archive, library, museum)', wide: true },
+        { key: 'url', label: 'Web address (URL)', wide: true },
       ];
     default:
       return [];
   }
 }
 
-function formField_(labelText, control) {
-  const wrap = document.createElement('div');
-  const lab = document.createElement('label');
-  lab.textContent = labelText;
-  wrap.appendChild(lab);
+// A labelled control. The <label> wraps the control, so clicking the text
+// focuses it and screen readers get the name. `tag` 'optional' adds a hint.
+function formField_(labelText, control, tag) {
+  const wrap = document.createElement('label');
+  wrap.className = 'sb-field';
+  const name = document.createElement('span');
+  name.className = 'sb-field__label';
+  name.textContent = labelText;
+  if (tag === 'optional') {
+    const opt = document.createElement('span');
+    opt.className = 'sb-field__opt';
+    opt.textContent = ' (optional)';
+    name.appendChild(opt);
+  }
+  wrap.appendChild(name);
   wrap.appendChild(control);
   return wrap;
 }
 
-function textInput_(value, onCommit, kind) {
+function textInput_(value, onCommit) {
   const i = document.createElement('input');
-  i.type = kind === 'date' ? 'date' : 'text';
+  i.type = 'text';
   i.value = value || '';
   i.addEventListener('change', () => onCommit(i.value));
   i.addEventListener('blur', () => onCommit(i.value));
   return i;
 }
 
-function selectInput_(options, value, onChange) {
+function selectInput_(options, value, onChange, labels) {
   const s = document.createElement('select');
   options.forEach((o) => {
     const opt = document.createElement('option');
-    opt.value = o; opt.textContent = o;
+    opt.value = o; opt.textContent = (labels && labels[o]) || o;
     if (o === value) opt.selected = true;
     s.appendChild(opt);
   });
@@ -625,7 +750,7 @@ function selectInput_(options, value, onChange) {
   return s;
 }
 
-const PS_LABELS = { primary: 'Primary', secondary: 'Secondary', unset: 'Unset' };
+const PS_LABELS = { primary: 'Primary', secondary: 'Secondary', unset: 'Not sure yet' };
 
 /**
  * Primary/secondary/unset picker as a full-width segmented control. Re-skins
@@ -724,17 +849,16 @@ function renderEvidenceList_() {
   if (editor.highlights.length === 0 && editor.source) {
     const banner = document.createElement('div');
     banner.className = 'sb-modal__banner';
-    banner.textContent =
-      'This source has no evidence. The source still exists — close the editor, or click "Delete source" below to remove it.';
+    banner.textContent = 'No highlights from this source yet. Open it and highlight the parts you want to use. '
+      + 'You can still finish its citation and annotation here.';
     els.evidence.appendChild(banner);
+    return;
   }
   const visible = editor.highlights.filter(highlightPassesFilter_);
   if (visible.length === 0) {
     const e = document.createElement('div');
     e.className = 'sb-empty';
-    e.textContent = editor.highlights.length === 0
-      ? 'No evidence yet for this source.'
-      : 'No evidence matches the current filter.';
+    e.textContent = 'No highlights in this category.';
     els.evidence.appendChild(e);
     return;
   }
@@ -747,8 +871,8 @@ function highlightPassesFilter_(h) {
 }
 
 function renderEvidenceCard(h) {
-  const card = document.createElement('div');
-  card.className = 'sb-highlight';
+  const card = document.createElement('article');
+  card.className = 'sb-highlight sb-ev';
   card.id = 'hl-' + h.highlightId;
   card.setAttribute('data-highlight-id', h.highlightId);
 
@@ -757,79 +881,82 @@ function renderEvidenceCard(h) {
   // hard to tell apart).
   const color = colorForLabel_(h.primaryCategory);
   if (color) {
-    card.style.backgroundColor = tint_(color, 0.08);
-    card.style.border = '1.5px solid ' + tint_(color, 0.85);
+    card.style.backgroundColor = tint_(color, 0.04);
+    card.style.border = '1.5px solid ' + tint_(color, 0.7);
   }
 
   const cat = document.createElement('div');
-  cat.className = 'sb-highlight__cat';
-  cat.appendChild(document.createTextNode(h.primaryCategory || '(no category)'));
-  if (h.secondaryCategory) {
-    const sec = document.createElement('span');
-    sec.className = 'sb-highlight__secondary';
-    sec.textContent = '+ ' + h.secondaryCategory;
-    cat.appendChild(sec);
-  }
+  cat.className = 'sb-ev__cats';
+  cat.appendChild(catTag_(h.primaryCategory || 'No category', color));
+  if (h.secondaryCategory) cat.appendChild(catTag_(h.secondaryCategory, colorForLabel_(h.secondaryCategory), true));
   card.appendChild(cat);
 
-  // Full text — no truncation in the modal.
-  const t = document.createElement('div');
-  t.className = 'sb-highlight__text';
+  // Full text — no truncation in the editor.
+  const t = document.createElement('blockquote');
+  t.className = 'sb-ev__text';
   t.textContent = h.highlightedText || '';
   card.appendChild(t);
 
-  if (h.note) {
-    const n = document.createElement('div');
-    n.className = 'sb-highlight__note';
-    n.textContent = h.note;
+  if (h.note && editor.editingHighlightId !== h.highlightId) {
+    const n = document.createElement('p');
+    n.className = 'sb-ev__note';
+    const lab = document.createElement('span');
+    lab.className = 'sb-ev__note-label';
+    lab.textContent = 'Your note: ';
+    n.appendChild(lab);
+    n.appendChild(document.createTextNode(h.note));
     card.appendChild(n);
   }
-
-  const actions = document.createElement('div');
-  actions.className = 'sb-highlight__actions';
-  const editBtn = document.createElement('button');
-  editBtn.type = 'button';
-  editBtn.className = 'sb-highlight__btn sb-highlight__btn--edit';
-  editBtn.textContent = editor.editingHighlightId === h.highlightId ? 'Done' : 'Edit';
-  editBtn.addEventListener('click', () => {
-    editor.editingHighlightId = editor.editingHighlightId === h.highlightId ? null : h.highlightId;
-    render();
-  });
-  actions.appendChild(editBtn);
-  if (editor.confirmingHighlightDeleteId === h.highlightId) {
-    const cancelBtn = document.createElement('button');
-    cancelBtn.type = 'button';
-    cancelBtn.className = 'sb-highlight__btn sb-highlight__btn--cancel';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.addEventListener('click', () => {
-      editor.confirmingHighlightDeleteId = null;
-      render();
-    });
-    actions.appendChild(cancelBtn);
-
-    const confirmBtn = document.createElement('button');
-    confirmBtn.type = 'button';
-    confirmBtn.className = 'sb-highlight__btn sb-highlight__btn--confirm';
-    confirmBtn.textContent = 'Confirm delete';
-    confirmBtn.addEventListener('click', () => optimisticallyDeleteHighlight_(h));
-    actions.appendChild(confirmBtn);
-  } else {
-    const delBtn = document.createElement('button');
-    delBtn.type = 'button';
-    delBtn.className = 'sb-highlight__btn sb-highlight__btn--delete';
-    delBtn.textContent = 'Delete';
-    delBtn.addEventListener('click', () => {
-      editor.confirmingHighlightDeleteId = h.highlightId;
-      render();
-    });
-    actions.appendChild(delBtn);
-  }
-  card.appendChild(actions);
 
   if (editor.editingHighlightId === h.highlightId) {
     card.appendChild(renderHighlightMiniEditor_(h));
   }
+
+  const actions = document.createElement('div');
+  actions.className = 'sb-ev__actions';
+  const btn = (label, cls, onClick) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sb-ev__btn ' + cls;
+    b.textContent = label;
+    b.addEventListener('click', onClick);
+    actions.appendChild(b);
+    return b;
+  };
+  if (editor.confirmingHighlightDeleteId === h.highlightId) {
+    const q = document.createElement('span');
+    q.className = 'sb-ev__confirm-q';
+    q.textContent = 'Delete this highlight?';
+    actions.appendChild(q);
+    btn('Keep it', 'sb-ev__btn--quiet', () => { editor.confirmingHighlightDeleteId = null; render(); });
+    btn('Delete', 'sb-ev__btn--danger', () => optimisticallyDeleteHighlight_(h));
+  } else {
+    const editing = editor.editingHighlightId === h.highlightId;
+    btn(editing ? 'Done' : (h.note ? 'Edit category or note' : 'Change category or add a note'),
+      editing ? 'sb-ev__btn--primary' : 'sb-ev__btn--quiet', () => {
+        editor.editingHighlightId = editing ? null : h.highlightId;
+        render();
+      });
+    btn('Delete', 'sb-ev__btn--quiet sb-ev__btn--del', () => {
+      editor.confirmingHighlightDeleteId = h.highlightId;
+      render();
+    });
+  }
+  card.appendChild(actions);
   return card;
+}
+
+// Category tag on a highlight: color dot + name. `secondary` is the lighter
+// "also" form.
+function catTag_(label, color, secondary) {
+  const tag = document.createElement('span');
+  tag.className = 'sb-ev__cat' + (secondary ? ' sb-ev__cat--secondary' : '');
+  const dot = document.createElement('span');
+  dot.className = 'sb-ev__dot';
+  dot.style.backgroundColor = color || '#cccccc';
+  tag.appendChild(dot);
+  tag.appendChild(document.createTextNode((secondary ? 'Also: ' : '') + label));
+  return tag;
 }
 
 function colorForLabel_(label) {
@@ -850,73 +977,67 @@ function tint_(hex, alpha) {
 
 function renderHighlightMiniEditor_(h) {
   const editorEl = document.createElement('div');
-  editorEl.style.marginTop = '8px';
-  editorEl.style.paddingTop = '8px';
-  editorEl.style.borderTop = '1px dashed var(--c-line)';
+  editorEl.className = 'sb-ev__editor';
 
   if (!editor.bundle) {
-    editorEl.textContent = '(bundle not loaded — cannot edit)';
+    editorEl.textContent = 'Categories didn\'t load. Reload the page to edit this highlight.';
     return editorEl;
   }
 
-  // Primary category swatches.
-  const primRow = document.createElement('div');
-  primRow.style.cssText = 'display:flex; gap:4px; align-items:center; margin-bottom:6px; flex-wrap:wrap;';
-  const primLabel = document.createElement('span');
-  primLabel.style.cssText = 'font-size:10px; color:var(--c-muted); min-width:70px; text-transform:uppercase;';
-  primLabel.textContent = 'Category';
-  primRow.appendChild(primLabel);
+  const labels = [];
   for (let i = 1; i <= 5; i++) {
-    const label = editor.bundle['label' + i];
-    const color = editor.bundle['color' + i];
-    if (!label) continue;
-    primRow.appendChild(swatch_(label, color, h.primaryCategory === label, () => {
-      saveHighlightPatch_(h, { primaryCategory: label });
-      h.primaryCategory = label;
-      render();
-    }));
+    if (editor.bundle['label' + i]) labels.push({ label: editor.bundle['label' + i], color: editor.bundle['color' + i] });
   }
-  editorEl.appendChild(primRow);
 
-  // Secondary category swatches.
-  const secRow = document.createElement('div');
-  secRow.style.cssText = 'display:flex; gap:4px; align-items:center; margin-bottom:6px; flex-wrap:wrap;';
-  const secLabel = document.createElement('span');
-  secLabel.style.cssText = 'font-size:10px; color:var(--c-muted); min-width:70px; text-transform:uppercase;';
-  secLabel.textContent = 'Secondary';
-  secRow.appendChild(secLabel);
-  for (let i = 1; i <= 5; i++) {
-    const label = editor.bundle['label' + i];
-    const color = editor.bundle['color' + i];
-    if (!label) continue;
-    secRow.appendChild(swatch_(label, color, h.secondaryCategory === label, () => {
-      const next = h.secondaryCategory === label ? '' : label;
-      saveHighlightPatch_(h, { secondaryCategory: next });
-      h.secondaryCategory = next;
-      render();
-    }));
-  }
-  const noneBtn = document.createElement('button');
-  noneBtn.type = 'button';
-  noneBtn.style.cssText = 'width:22px; height:22px; border-radius:50%; border:2px dashed var(--c-muted); background:#fff; font-size:10px; color:var(--c-muted);';
-  noneBtn.textContent = '∅';
-  noneBtn.title = 'No secondary';
-  noneBtn.addEventListener('click', () => {
-    saveHighlightPatch_(h, { secondaryCategory: '' });
-    h.secondaryCategory = '';
+  // Category picker: named chips, not bare color dots.
+  const chipRow = (title, current, onPick, noneLabel) => {
+    const grp = document.createElement('div');
+    grp.className = 'sb-ev__pick';
+    grp.setAttribute('role', 'radiogroup');
+    grp.setAttribute('aria-label', title);
+    const name = document.createElement('div');
+    name.className = 'sb-field__label';
+    name.textContent = title;
+    grp.appendChild(name);
+    const chips = document.createElement('div');
+    chips.className = 'sb-ev__chips';
+    const opts = noneLabel ? labels.concat([{ label: '', color: null, text: noneLabel }]) : labels;
+    opts.forEach((o) => {
+      const on = (current || '') === o.label;
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sb-chip' + (on ? ' sb-chip--on' : '');
+      b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+      if (o.color) {
+        const dot = document.createElement('span');
+        dot.className = 'sb-ev__dot';
+        dot.style.backgroundColor = o.color;
+        b.appendChild(dot);
+        if (on) { b.style.borderColor = o.color; b.style.backgroundColor = tint_(o.color, 0.14); }
+      }
+      b.appendChild(document.createTextNode(o.text || o.label));
+      b.addEventListener('click', () => { if (!on) onPick(o.label); });
+      chips.appendChild(b);
+    });
+    grp.appendChild(chips);
+    return grp;
+  };
+
+  editorEl.appendChild(chipRow('Category', h.primaryCategory, (label) => {
+    saveHighlightPatch_(h, { primaryCategory: label });
+    h.primaryCategory = label;
     render();
-  });
-  secRow.appendChild(noneBtn);
-  editorEl.appendChild(secRow);
+  }));
+  editorEl.appendChild(chipRow('Also fits (optional)', h.secondaryCategory, (label) => {
+    saveHighlightPatch_(h, { secondaryCategory: label });
+    h.secondaryCategory = label;
+    render();
+  }, 'Nothing else'));
 
-  // Note textarea.
-  const noteWrap = document.createElement('div');
-  const noteLabel = document.createElement('div');
-  noteLabel.style.cssText = 'font-size:10px; color:var(--c-muted); text-transform:uppercase;';
-  noteLabel.textContent = 'Note';
   const ta = document.createElement('textarea');
-  ta.style.cssText = 'width:100%; border:1px solid var(--c-line); border-radius:4px; padding:4px 6px; font-size:12px; resize:vertical; min-height:40px;';
   ta.value = h.note || '';
+  ta.placeholder = 'Why this matters, or how you\'ll use it';
   let timer;
   ta.addEventListener('input', () => {
     clearTimeout(timer);
@@ -925,20 +1046,9 @@ function renderHighlightMiniEditor_(h) {
       h.note = ta.value;
     }, 600);
   });
-  noteWrap.appendChild(noteLabel);
-  noteWrap.appendChild(ta);
-  editorEl.appendChild(noteWrap);
+  editorEl.appendChild(formField_('Your note', ta, 'optional'));
 
   return editorEl;
-}
-
-function swatch_(label, color, active, onClick) {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.title = label;
-  b.style.cssText = 'width:22px; height:22px; border-radius:50%; border:2px solid ' + (active ? '#1d2a5d' : 'transparent') + '; padding:0; background:' + color + '; cursor:pointer; background-clip:padding-box;';
-  b.addEventListener('click', onClick);
-  return b;
 }
 
 function saveHighlightPatch_(highlight, patch) {
@@ -1037,11 +1147,19 @@ function makeFilterChip_(value, label, color, count, active) {
 
 function renderDeleteSourceUi_() {
   const wrap = document.createElement('div');
+  wrap.className = 'sb-del';
   if (editor.confirmingSourceDelete) {
+    const n = editor.highlights.length;
+    const q = document.createElement('p');
+    q.className = 'sb-del__q';
+    q.textContent = n > 0
+      ? 'Remove this source and its ' + n + ' highlight' + (n === 1 ? '' : 's') + '? This can\'t be undone.'
+      : 'Remove this source? This can\'t be undone.';
+    wrap.appendChild(q);
     const cancel = document.createElement('button');
     cancel.type = 'button';
     cancel.className = 'sb-modal__btn sb-modal__btn--cancel';
-    cancel.textContent = 'Cancel';
+    cancel.textContent = 'Keep it';
     cancel.addEventListener('click', () => {
       editor.confirmingSourceDelete = false;
       render();
@@ -1051,17 +1169,14 @@ function renderDeleteSourceUi_() {
     const confirm = document.createElement('button');
     confirm.type = 'button';
     confirm.className = 'sb-modal__btn sb-modal__btn--danger';
-    const n = editor.highlights.length;
-    confirm.textContent = n > 0
-      ? 'Confirm — delete source and ' + n + ' piece' + (n === 1 ? '' : 's') + ' of evidence'
-      : 'Confirm — delete source';
+    confirm.textContent = 'Remove source';
     confirm.addEventListener('click', performDeleteSource_);
     wrap.appendChild(confirm);
   } else {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'sb-modal__btn sb-modal__btn--danger-outline';
-    btn.textContent = '🗑  Delete source';
+    btn.className = 'sb-del__link';
+    btn.textContent = 'Remove this source from my project';
     btn.addEventListener('click', () => {
       editor.confirmingSourceDelete = true;
       render();
