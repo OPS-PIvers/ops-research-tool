@@ -820,28 +820,43 @@ These supersede or refine the spec — apply them before defaulting to plan text
   modal and `research.html` load. Field borders are `#949494` (3:1). The value
   `unset` is unchanged; only its label is new.
 
-- **Gale articles are keyed by `docId`, not the full URL (2026-10-29;
-  extension v0.1.9).** Teacher report: highlights didn't come back on return
-  visits. Cause: Gale In Context (students reach it through the
-  `go-gale-com.content.elibrarymn.org` library proxy) puts per-search state
-  (`retrievalId`, `hitCount`, `currentPosition`, `searchId`, shuffled order)
-  on `retrieve.do`, so the same article reached from a second search never
-  matched its saved source. Students then re-highlighted it, which created a
-  duplicate source (seen in real Sheets). `canonicalDatabaseUrl_` (in BOTH
-  [`url.js`](extension/shared/url.js) and
-  [`03_utils.js`](apps-script/src/03_utils.js), kept identical) reduces Gale
-  `retrieve.do` to `?docId=` (`|` and `%7c` folded to `%7C`) and drops the query
-  on `link.gale.com/apps/doc/…` bookmark links. The host must contain `gale` as
-  a whole label. **No migration:** matching compares `sourcePageUrl(_)`
-  (re-normalized from `rawUrl`), not the stored `normalizedUrl` column, in
+- **Database articles are keyed by their document id, not the full URL
+  (2026-10-29; extension v0.1.9).** Teacher report: highlights didn't come back
+  on return visits. Cause: the databases students reach through the ELM library
+  proxy (`*.content.elibrarymn.org`) put per-search state on article URLs, so
+  the same article reached from a second search never matched its saved
+  source. Students then re-highlighted it, which created a duplicate source.
+  A survey of all 112 History Day Sheets (181 sources) found 130 Gale rows,
+  27 EBSCO, 5 Britannica School (stable URLs) and a long tail; 24 rows were
+  same-article duplicates (Gale + EBSCO only). `canonicalDatabaseUrl_` (in
+  BOTH [`url.js`](extension/shared/url.js) and
+  [`03_utils.js`](apps-script/src/03_utils.js), kept identical; host must
+  contain `gale` / `ebsco` as a whole label) handles:
+  - **Gale:** `retrieve.do?docId=GALE|X` and `i.do?id=GALE|X` →
+    `…/retrieve.do?docId=GALE%7CX` (`|` and `%7c` folded to `%7C`), and
+    `link.gale.com/apps/doc/…` keeps only its path.
+  - **EBSCO Research:** `/c/<cust>/viewer/html/<token>` and
+    `/c/<cust>/search/details/<token>?ctx=&pos=&q=…` →
+    `/c/<cust>/search/details/<token>`.
+
+  Same-title rows with different ids are different documents. Don't match on
+  title.
+
+  **No migration:** matching compares `sourcePageUrl(_)`, re-normalized from
+  `rawUrl`, instead of the stored `normalizedUrl` column. This applies in
   `selectPageData_`, `findSourceByNormalizedUrl_` and `dedupeSourcesByUrl_`.
-  Old rows match the page again, and existing same-article duplicates collapse
-  (same author only) on the next Docs-sidebar / My research load, through the
-  existing `tryPersistDedupe_`. The student's repeated highlights stay as
-  near-identical entries. To add another database, add a branch to
-  `canonicalDatabaseUrl_` on both sides plus cases in
-  `node extension/test/url.node.test.js`, which also asserts the two copies
-  agree.
+  Old rows match the page again. Existing duplicates by the same author
+  collapse on the next Docs-sidebar / My research load, through the existing
+  `tryPersistDedupe_`; repeated highlights stay as near-identical entries.
+
+  `normalizedUrl` is display-only (Docs sidebar card), so rewriting the path is
+  safe. To add a database: add a branch to `canonicalDatabaseUrl_` on both
+  sides, plus cases in `node extension/test/url.node.test.js`, which also
+  asserts the two copies agree.
+
+  The survey also found about 13 non-research "sources" (Gmail, Google search
+  pages, ClassLink, StudentVUE, Blooket, students' own Docs). This is
+  untouched. An extension host blocklist would be its own change.
 
 ## 5. GAS V8 quirks discovered
 

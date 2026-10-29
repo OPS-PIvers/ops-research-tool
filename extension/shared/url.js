@@ -15,22 +15,37 @@ const DROP_QUERY_PARAMS = new Set([
 /**
  * Research-database article URLs carry per-search state, so one article
  * reached from two searches looked like two pages: its saved highlights didn't
- * come back and a duplicate source was made. Gale In Context (direct or through
- * a library proxy like go-gale-com.content.elibrarymn.org) puts retrievalId,
- * hitCount, currentPosition, searchId... on retrieve.do, in a different order
- * each time; only docId names the document. Returns the canonical URL, or null
- * for every other site.
+ * come back and a duplicate source was made. These rules reduce a database
+ * article to the id that names it. Returns the canonical URL, or null for
+ * every other site. Hosts are matched as a whole label so library proxies
+ * (go-gale-com.content.elibrarymn.org) and direct hosts (go.gale.com) both hit.
+ *
+ * - Gale In Context: retrieve.do?docId=GALE|X (from a search: retrievalId,
+ *   hitCount, currentPosition, searchId... in any order) and i.do?id=GALE|X
+ *   (bookmark/proxy entry) are the same document. link.gale.com/apps/doc/X
+ *   links keep their path.
+ * - EBSCO Research: /c/<customer>/viewer/html/<token> and
+ *   /c/<customer>/search/details/<token>?ctx=&pos=&q=... are the same record.
  */
 function canonicalDatabaseUrl_(origin, path, queryStr) {
-  if (!/[\/.-]gale[.-]/i.test(origin)) return null;
-  if (/\/retrieve\.do$/i.test(path)) {
-    const pair = queryStr.slice(1).split('&').find((kv) => /^docid=/i.test(kv));
-    const docId = pair ? pair.slice(pair.indexOf('=') + 1) : '';
+  const param = (name) => {
+    const pair = queryStr.slice(1).split('&').find((kv) => kv.toLowerCase().indexOf(name + '=') === 0);
+    return pair ? pair.slice(name.length + 1) : '';
+  };
+  if (/[\/.-]gale[.-]/i.test(origin)) {
+    const docId = /\/retrieve\.do$/i.test(path) ? param('docid')
+      : /\/i\.do$/i.test(path) ? param('id') : '';
     // GALE|X and GALE%7CX are the same id.
-    if (docId) return origin + path + '?docId=' + docId.replace(/\|/g, '%7C').replace(/%7c/g, '%7C');
+    if (docId) {
+      return origin + path.replace(/[^\/]*$/, 'retrieve.do')
+        + '?docId=' + docId.replace(/\|/g, '%7C').replace(/%7c/g, '%7C');
+    }
+    if (/\/apps\/doc\//i.test(path)) return origin + path;
   }
-  // Gale's citation/bookmark links: link.gale.com/apps/doc/<docId>/<product>?u=&sid=&xid=
-  if (/\/apps\/doc\//i.test(path)) return origin + path;
+  if (/[\/.-]ebsco[.-]/i.test(origin)) {
+    const m = path.match(/^(\/c\/[^\/]+)\/(?:viewer\/html|search\/details)\/([^\/]+)/i);
+    if (m) return origin + m[1] + '/search/details/' + m[2];
+  }
   return null;
 }
 

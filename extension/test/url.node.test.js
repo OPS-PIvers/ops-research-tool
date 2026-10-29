@@ -1,8 +1,8 @@
 /**
  * Node-side tests for URL normalization: the extension's normalizeUrl
  * (shared/url.js) and the backend's normalizeUrl_ (apps-script/src/03_utils.js)
- * must agree, and a Gale article reached from two different searches must be
- * one page. Also checks that legacy rows (saved before the Gale rule) still
+ * must agree, and a Gale or EBSCO article reached from two different searches
+ * must be one page. Also checks that legacy rows (saved before the Gale rule) still
  * match the page and collapse in dedupeSourcesByUrl_.
  *
  *   node extension/test/url.node.test.js
@@ -40,6 +40,7 @@ const galeDay2 = G + '?tabID=Reference&resultListType=RESULT_LIST&searchResultsT
   + '&retrievalId=a3d03848-0edf-41f5-a73f-4d69dcc6f656&hitCount=48&searchType=BasicSearchForm'
   + '&currentPosition=4&docId=GALE%7CUWDXSQ579838739&searchId=R5&inPS=true&aty=ip&u=mnsminitex&p=SUIC#anchor';
 const galeCanon = G + '?docId=GALE%7CUWDXSQ579838739';
+const E = 'https://research-ebsco-com.content.elibrarymn.org/c/n44427/search/details/wkivqoljgb';
 
 const cases = [
   ['strips tracking', 'https://example.com/a?utm_source=x&id=4', 'https://example.com/a?id=4'],
@@ -55,6 +56,14 @@ const cases = [
   ['gale retrieve.do without docId untouched', G + '?searchId=R5&u=x', G + '?searchId=R5&u=x'],
   ['gale bookmark link', 'https://link.gale.com/apps/doc/UWDXSQ579838739/SUIC?u=mnsminitex&sid=bookmark-SUIC&xid=8646c0e5',
     'https://link.gale.com/apps/doc/UWDXSQ579838739/SUIC'],
+  ['gale i.do bookmark entry -> same docId', 'https://go-gale-com.content.elibrarymn.org/ps/i.do?v=2.1&it=r&id=GALE%7CUWDXSQ579838739&retrievalId=x&sid=bookmark-SUIC&u=mnsminitex&p=SUIC&aty=ip', galeCanon],
+  ['gale i.do without id untouched', G.replace('retrieve.do', 'i.do') + '?v=2.1&u=x', G.replace('retrieve.do', 'i.do') + '?v=2.1&u=x'],
+  ['ebsco viewer', 'https://research-ebsco-com.content.elibrarymn.org/c/n44427/viewer/html/wkivqoljgb', E],
+  ['ebsco viewer proxyApplied', 'https://research-ebsco-com.content.elibrarymn.org/c/n44427/viewer/html/wkivqoljgb?proxyApplied=true', E],
+  ['ebsco details with search state', 'https://research-ebsco-com.content.elibrarymn.org/c/n44427/search/details/wkivqoljgb?ctx=abc&db=mih&limiters=FT:Y&pos=1&q=national%20parks&searchMode=enhanced', E],
+  ['ebsco details modal=cite', 'https://research-ebsco-com.content.elibrarymn.org/c/n44427/search/details/wkivqoljgb?modal=cite&q=national+parks', E],
+  ['ebsco search results page untouched', 'https://research-ebsco-com.content.elibrarymn.org/c/n44427/search/results?q=parks', 'https://research-ebsco-com.content.elibrarymn.org/c/n44427/search/results?q=parks'],
+  ['britannica school untouched', 'https://school-eb-com.content.elibrarymn.org/levels/high/article/titanic/72636#toc', 'https://school-eb-com.content.elibrarymn.org/levels/high/article/titanic/72636'],
   ['non-gale retrieve.do untouched', 'https://example.com/ps/retrieve.do?docId=1&x=2', 'https://example.com/ps/retrieve.do?docId=1&x=2'],
   ['"gale" inside a word is not Gale', 'https://nightingale.org/ps/retrieve.do?docId=1&x=2', 'https://nightingale.org/ps/retrieve.do?docId=1&x=2'],
 ];
