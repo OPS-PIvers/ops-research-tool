@@ -820,6 +820,29 @@ These supersede or refine the spec — apply them before defaulting to plan text
   modal and `research.html` load. Field borders are `#949494` (3:1). The value
   `unset` is unchanged; only its label is new.
 
+- **Gale articles are keyed by `docId`, not the full URL (2026-10-29;
+  extension v0.1.9).** Teacher report: highlights didn't come back on return
+  visits. Cause: Gale In Context (students reach it through the
+  `go-gale-com.content.elibrarymn.org` library proxy) puts per-search state
+  (`retrievalId`, `hitCount`, `currentPosition`, `searchId`, shuffled order)
+  on `retrieve.do`, so the same article reached from a second search never
+  matched its saved source. Students then re-highlighted it, which created a
+  duplicate source (seen in real Sheets). `canonicalDatabaseUrl_` (in BOTH
+  [`url.js`](extension/shared/url.js) and
+  [`03_utils.js`](apps-script/src/03_utils.js), kept identical) reduces Gale
+  `retrieve.do` to `?docId=` (`|` and `%7c` folded to `%7C`) and drops the query
+  on `link.gale.com/apps/doc/…` bookmark links. The host must contain `gale` as
+  a whole label. **No migration:** matching compares `sourcePageUrl(_)`
+  (re-normalized from `rawUrl`), not the stored `normalizedUrl` column, in
+  `selectPageData_`, `findSourceByNormalizedUrl_` and `dedupeSourcesByUrl_`.
+  Old rows match the page again, and existing same-article duplicates collapse
+  (same author only) on the next Docs-sidebar / My research load, through the
+  existing `tryPersistDedupe_`. The student's repeated highlights stay as
+  near-identical entries. To add another database, add a branch to
+  `canonicalDatabaseUrl_` on both sides plus cases in
+  `node extension/test/url.node.test.js`, which also asserts the two copies
+  agree.
+
 ## 5. GAS V8 quirks discovered
 
 - `new URL(...)` **throws** in GAS V8. The global is advertised but unusable.
@@ -949,7 +972,7 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   their Sheets + drops their roster rows). The header toggle only hides them;
   this is the full teardown. See the §4 sample-data bullet.
 - `devTestRoundTrip` — full doPost → readback → idempotency cycle
-- `devTestNormalizeUrl` — 8 cases, all should PASS
+- `devTestNormalizeUrl` — 10 cases (incl. Gale docId), all should PASS
 - `devTestSourceDedup` — confirms two URLs differing only in tracking params
   resolve to the same source
 - `devProbeUrlConstructor` — diagnostic for the GAS URL quirk
@@ -1134,7 +1157,7 @@ allowed in manifest") and assigns the published item its own id. So
 **published id is store-assigned and differs from the unpacked-dev id** until you
 make them match (below). *(Earlier this file claimed the `key` made the two ids
 identical — that was wrong; it bit the first upload.)* **Actual published id (first
-published 2026-06-08 as v0.1.2; current v0.1.8): `goglhlpppkhiddkhgcknbiohcppgdggi`** — the match step was
+published 2026-06-08 as v0.1.2; current v0.1.9): `goglhlpppkhiddkhgcknbiohcppgdggi`** — the match step was
 NOT done, so dev (`nmela…`) and published (`goglh…`) remain different ids.
 
 ### Make dev + published ids match (NOT done — the two ids differ)

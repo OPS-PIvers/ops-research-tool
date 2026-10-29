@@ -107,14 +107,16 @@ function readHighlightsForActor_(actorEmail, projectId) {
  * Pure function — unit-testable. Callers either use the result for display or
  * persist it (dedupeSourcesPersist_) to physically remove the dup rows.
  *
- * Sources with a blank normalizedUrl pass through unchanged (we can't prove
- * they're the same page).
+ * Rows are keyed by sourcePageUrl_ (re-derived from rawUrl), so rows saved
+ * under an older normalizer collapse too — e.g. one Gale article saved twice
+ * from two searches before the docId rule. Sources with no URL pass through
+ * unchanged (we can't prove they're the same page).
  */
 function dedupeSourcesByUrl_(sources, highlights) {
   const groups = {};
   const passthrough = [];
   (sources || []).forEach((s) => {
-    const url = s && s.normalizedUrl ? s.normalizedUrl : '';
+    const url = sourcePageUrl_(s);
     if (!url) { passthrough.push(s); return; }
     const key = url + ' | ' + (s.createdByEmail || '');
     (groups[key] = groups[key] || []).push(s);
@@ -174,5 +176,5 @@ function mergeSourceCitationInto_(canonical, dup) {
 function findSourceByNormalizedUrl_(actorEmail, projectId, normalizedUrl) {
   if (!normalizedUrl) return null;
   const sources = readSourcesForActor_(actorEmail, projectId);
-  return sources.find((s) => s.normalizedUrl === normalizedUrl) || null;
+  return sources.find((s) => sourcePageUrl_(s) === normalizedUrl) || null;
 }

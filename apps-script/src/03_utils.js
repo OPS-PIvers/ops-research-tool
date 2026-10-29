@@ -15,6 +15,28 @@ const DROP_QUERY_PARAMS = new Set([
 ]);
 
 /**
+ * Research-database article URLs carry per-search state, so one article
+ * reached from two searches looked like two pages: its saved highlights didn't
+ * come back and a duplicate source was made. Gale In Context (direct or through
+ * a library proxy like go-gale-com.content.elibrarymn.org) puts retrievalId,
+ * hitCount, currentPosition, searchId... on retrieve.do, in a different order
+ * each time; only docId names the document. Returns the canonical URL, or null
+ * for every other site.
+ */
+function canonicalDatabaseUrl_(origin, path, queryStr) {
+  if (!/[\/.-]gale[.-]/i.test(origin)) return null;
+  if (/\/retrieve\.do$/i.test(path)) {
+    const pair = queryStr.slice(1).split('&').find((kv) => /^docid=/i.test(kv));
+    const docId = pair ? pair.slice(pair.indexOf('=') + 1) : '';
+    // GALE|X and GALE%7CX are the same id.
+    if (docId) return origin + path + '?docId=' + docId.replace(/\|/g, '%7C').replace(/%7c/g, '%7C');
+  }
+  // Gale's citation/bookmark links: link.gale.com/apps/doc/<docId>/<product>?u=&sid=&xid=
+  if (/\/apps\/doc\//i.test(path)) return origin + path;
+  return null;
+}
+
+/**
  * Strip tracking params + fragment; preserve path + meaningful query.
  * Pure string parsing — GAS V8 doesn't expose a working `URL` constructor
  * (it throws), and URLSearchParams mutations don't take. Hand-rolling is
@@ -30,6 +52,8 @@ function normalizeUrl_(rawUrl) {
   const path = m[2] || '/';
   const queryStr = m[3] || ''; // includes leading '?'
   // fragment (m[4]) intentionally dropped
+  const canonical = canonicalDatabaseUrl_(origin, path, queryStr);
+  if (canonical) return canonical;
   if (!queryStr) return origin + path;
   const kept = queryStr.slice(1).split('&').filter(Boolean).filter((kv) => {
     const eq = kv.indexOf('=');
@@ -37,6 +61,16 @@ function normalizeUrl_(rawUrl) {
     return !DROP_QUERY_PARAMS.has(key);
   });
   return origin + path + (kept.length ? '?' + kept.join('&') : '');
+}
+
+/**
+ * The page a stored source row belongs to, under the CURRENT normalizer. Rows
+ * saved before a rule change (e.g. the Gale docId rule) keep their old
+ * normalizedUrl, so compare on this — re-derived from rawUrl — not on the
+ * stored column.
+ */
+function sourcePageUrl_(source) {
+  return normalizeUrl_((source && (source.rawUrl || source.normalizedUrl)) || '');
 }
 
 /** Get a Sheet tab; throw if missing. */
