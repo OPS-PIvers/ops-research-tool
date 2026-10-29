@@ -1134,7 +1134,7 @@ allowed in manifest") and assigns the published item its own id. So
 **published id is store-assigned and differs from the unpacked-dev id** until you
 make them match (below). *(Earlier this file claimed the `key` made the two ids
 identical — that was wrong; it bit the first upload.)* **Actual published id (first
-published 2026-06-08 as v0.1.2; current v0.1.5): `goglhlpppkhiddkhgcknbiohcppgdggi`** — the match step was
+published 2026-06-08 as v0.1.2; current v0.1.8): `goglhlpppkhiddkhgcknbiohcppgdggi`** — the match step was
 NOT done, so dev (`nmela…`) and published (`goglh…`) remain different ids.
 
 ### Make dev + published ids match (NOT done — the two ids differ)
@@ -1198,6 +1198,11 @@ panel, `manifest.json`, or `icons/`).
 
 To ship an extension update:
 
+0. **Every permission must be used.** Review enforces "requested but not used".
+   v0.1.7 was rejected for `scripting`, which nothing called (removed in
+   v0.1.8). Before an upload, grep for `chrome.<permission>` for each entry in
+   `permissions`. `unlimitedStorage` has no API call; it backs the offline
+   queue and the `projData:` snapshots.
 1. **Bump + rebuild in one command:**
    `powershell -ExecutionPolicy Bypass -File scripts\build-extension-zip.ps1 -Bump`
    `-Bump` increments the manifest's patch version (e.g. `0.1.0 → 0.1.1`) and
