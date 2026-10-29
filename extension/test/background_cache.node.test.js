@@ -28,6 +28,8 @@ const sandbox = {
 };
 sandbox.self = sandbox;
 vm.createContext(sandbox);
+// importScripts is stubbed, so load the shared helpers background.js uses.
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'shared', 'url.js'), 'utf8'), sandbox);
 vm.runInContext(src, sandbox);
 const { overlayPendingOnData_, selectPageData_ } = sandbox;
 
@@ -86,6 +88,24 @@ console.log('overlayPendingOnData_ deletes:');
   ];
   const out3 = overlayPendingOnData_(snapshot, q3, true);
   check('deleteSource applies once its last highlight is gone', !out3.sources.some((s) => s.sourceId === 's1'));
+}
+
+console.log('selectPageData_ (Gale, rows saved before the docId rule):');
+{
+  const G = 'https://go-gale-com.content.elibrarymn.org/ps/retrieve.do';
+  const day1 = G + '?retrievalId=aaa&hitCount=3&docId=GALE%7CX1&u=mnsminitex';
+  const day2 = G + '?hitCount=48&retrievalId=bbb&docId=GALE%7CX1&searchId=R5';
+  const data = {
+    sources: [
+      { sourceId: 'g1', normalizedUrl: day1, rawUrl: day1, createdAt: '2026-10-28T00:00:00Z' },
+      { sourceId: 'g2', normalizedUrl: day2, rawUrl: day2, createdAt: '2026-10-29T00:00:00Z' },
+    ],
+    highlights: [{ highlightId: 'x1', sourceId: 'g1' }, { highlightId: 'x2', sourceId: 'g2' }],
+  };
+  const page = sandbox.normalizeUrl(G + '?retrievalId=ccc&docId=GALE%7CX1&currentPosition=2');
+  const view = selectPageData_(data, page);
+  check('a third search finds both saved rows', view.sourceCount === 2 && view.highlights.length === 2);
+  check('oldest row is the page source', view.source && view.source.sourceId === 'g1');
 }
 
 console.log('selectPageData_:');

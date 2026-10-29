@@ -415,11 +415,12 @@ function overlayPendingOnData_(data, queueItems, markPending) {
 }
 
 /**
- * Narrow a project snapshot to one page: sources whose normalizedUrl matches
- * (oldest = canonical, so duplicates converge) + their highlights. Pure.
+ * Narrow a project snapshot to one page: sources for this page (oldest =
+ * canonical, so duplicates converge) + their highlights. Pure. Matches on
+ * sourcePageUrl, so rows saved under an older normalizer still match.
  */
 function selectPageData_(data, normalized) {
-  const matching = (data.sources || []).filter((s) => s.normalizedUrl === normalized);
+  const matching = (data.sources || []).filter((s) => sourcePageUrl(s) === normalized);
   const ids = new Set(matching.map((s) => s.sourceId));
   const highlights = (data.highlights || []).filter((h) => ids.has(h.sourceId));
   let source = null;

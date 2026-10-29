@@ -820,6 +820,44 @@ These supersede or refine the spec — apply them before defaulting to plan text
   modal and `research.html` load. Field borders are `#949494` (3:1). The value
   `unset` is unchanged; only its label is new.
 
+- **Database articles are keyed by their document id, not the full URL
+  (2026-10-29; extension v0.1.9).** Teacher report: highlights didn't come back
+  on return visits. Cause: the databases students reach through the ELM library
+  proxy (`*.content.elibrarymn.org`) put per-search state on article URLs, so
+  the same article reached from a second search never matched its saved
+  source. Students then re-highlighted it, which created a duplicate source.
+  A survey of all 112 History Day Sheets (181 sources) found 130 Gale rows,
+  27 EBSCO, 5 Britannica School (stable URLs) and a long tail; 24 rows were
+  same-article duplicates (Gale + EBSCO only). `canonicalDatabaseUrl_` (in
+  BOTH [`url.js`](extension/shared/url.js) and
+  [`03_utils.js`](apps-script/src/03_utils.js), kept identical; host must
+  contain `gale` / `ebsco` as a whole label) handles:
+  - **Gale:** `retrieve.do?docId=GALE|X` and `i.do?id=GALE|X` →
+    `…/retrieve.do?docId=GALE%7CX` (`|` and `%7c` folded to `%7C`), and
+    `link.gale.com/apps/doc/…` keeps only its path.
+  - **EBSCO Research:** `/c/<cust>/viewer/html/<token>` and
+    `/c/<cust>/search/details/<token>?ctx=&pos=&q=…` →
+    `/c/<cust>/search/details/<token>`.
+
+  Same-title rows with different ids are different documents. Don't match on
+  title.
+
+  **No migration:** matching compares `sourcePageUrl(_)`, re-normalized from
+  `rawUrl`, instead of the stored `normalizedUrl` column. This applies in
+  `selectPageData_`, `findSourceByNormalizedUrl_` and `dedupeSourcesByUrl_`.
+  Old rows match the page again. Existing duplicates by the same author
+  collapse on the next Docs-sidebar / My research load, through the existing
+  `tryPersistDedupe_`; repeated highlights stay as near-identical entries.
+
+  `normalizedUrl` is display-only (Docs sidebar card), so rewriting the path is
+  safe. To add a database: add a branch to `canonicalDatabaseUrl_` on both
+  sides, plus cases in `node extension/test/url.node.test.js`, which also
+  asserts the two copies agree.
+
+  The survey also found about 13 non-research "sources" (Gmail, Google search
+  pages, ClassLink, StudentVUE, Blooket, students' own Docs). This is
+  untouched. An extension host blocklist would be its own change.
+
 ## 5. GAS V8 quirks discovered
 
 - `new URL(...)` **throws** in GAS V8. The global is advertised but unusable.
@@ -949,7 +987,7 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   their Sheets + drops their roster rows). The header toggle only hides them;
   this is the full teardown. See the §4 sample-data bullet.
 - `devTestRoundTrip` — full doPost → readback → idempotency cycle
-- `devTestNormalizeUrl` — 8 cases, all should PASS
+- `devTestNormalizeUrl` — 10 cases (incl. Gale docId), all should PASS
 - `devTestSourceDedup` — confirms two URLs differing only in tracking params
   resolve to the same source
 - `devProbeUrlConstructor` — diagnostic for the GAS URL quirk
@@ -1134,7 +1172,7 @@ allowed in manifest") and assigns the published item its own id. So
 **published id is store-assigned and differs from the unpacked-dev id** until you
 make them match (below). *(Earlier this file claimed the `key` made the two ids
 identical — that was wrong; it bit the first upload.)* **Actual published id (first
-published 2026-06-08 as v0.1.2; current v0.1.8): `goglhlpppkhiddkhgcknbiohcppgdggi`** — the match step was
+published 2026-06-08 as v0.1.2; current v0.1.9): `goglhlpppkhiddkhgcknbiohcppgdggi`** — the match step was
 NOT done, so dev (`nmela…`) and published (`goglh…`) remain different ids.
 
 ### Make dev + published ids match (NOT done — the two ids differ)

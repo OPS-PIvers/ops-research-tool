@@ -12,6 +12,43 @@ const DROP_QUERY_PARAMS = new Set([
   'igshid', 'yclid', 'msclkid',
 ]);
 
+/**
+ * Research-database article URLs carry per-search state, so one article
+ * reached from two searches looked like two pages: its saved highlights didn't
+ * come back and a duplicate source was made. These rules reduce a database
+ * article to the id that names it. Returns the canonical URL, or null for
+ * every other site. Hosts are matched as a whole label so library proxies
+ * (go-gale-com.content.elibrarymn.org) and direct hosts (go.gale.com) both hit.
+ *
+ * - Gale In Context: retrieve.do?docId=GALE|X (from a search: retrievalId,
+ *   hitCount, currentPosition, searchId... in any order) and i.do?id=GALE|X
+ *   (bookmark/proxy entry) are the same document. link.gale.com/apps/doc/X
+ *   links keep their path.
+ * - EBSCO Research: /c/<customer>/viewer/html/<token> and
+ *   /c/<customer>/search/details/<token>?ctx=&pos=&q=... are the same record.
+ */
+function canonicalDatabaseUrl_(origin, path, queryStr) {
+  const param = (name) => {
+    const pair = queryStr.slice(1).split('&').find((kv) => kv.toLowerCase().indexOf(name + '=') === 0);
+    return pair ? pair.slice(name.length + 1) : '';
+  };
+  if (/[\/.-]gale[.-]/i.test(origin)) {
+    const docId = /\/retrieve\.do$/i.test(path) ? param('docid')
+      : /\/i\.do$/i.test(path) ? param('id') : '';
+    // GALE|X and GALE%7CX are the same id.
+    if (docId) {
+      return origin + path.replace(/[^\/]*$/, 'retrieve.do')
+        + '?docId=' + docId.replace(/\|/g, '%7C').replace(/%7c/g, '%7C');
+    }
+    if (/\/apps\/doc\//i.test(path)) return origin + path;
+  }
+  if (/[\/.-]ebsco[.-]/i.test(origin)) {
+    const m = path.match(/^(\/c\/[^\/]+)\/(?:viewer\/html|search\/details)\/([^\/]+)/i);
+    if (m) return origin + m[1] + '/search/details/' + m[2];
+  }
+  return null;
+}
+
 function normalizeUrl(rawUrl) {
   if (!rawUrl) return '';
   const s = String(rawUrl).trim();
@@ -20,6 +57,8 @@ function normalizeUrl(rawUrl) {
   const origin = m[1];
   const path = m[2] || '/';
   const queryStr = m[3] || '';
+  const canonical = canonicalDatabaseUrl_(origin, path, queryStr);
+  if (canonical) return canonical;
   if (!queryStr) return origin + path;
   const kept = queryStr.slice(1).split('&').filter(Boolean).filter((kv) => {
     const eq = kv.indexOf('=');
@@ -27,6 +66,16 @@ function normalizeUrl(rawUrl) {
     return !DROP_QUERY_PARAMS.has(key);
   });
   return origin + path + (kept.length ? '?' + kept.join('&') : '');
+}
+
+/**
+ * The page a stored source row belongs to, under the CURRENT normalizer. Rows
+ * saved before a rule change (e.g. the Gale docId rule) keep their old
+ * normalizedUrl, so compare on this — re-derived from rawUrl — not on the
+ * stored column.
+ */
+function sourcePageUrl(source) {
+  return normalizeUrl((source && (source.rawUrl || source.normalizedUrl)) || '');
 }
 
 /**
@@ -45,6 +94,7 @@ function opsPageUrl() {
 
 if (typeof self !== 'undefined') {
   self.normalizeUrl = normalizeUrl;
+  self.sourcePageUrl = sourcePageUrl;
   self.DROP_QUERY_PARAMS = DROP_QUERY_PARAMS;
   self.opsPageUrl = opsPageUrl;
 }

@@ -311,6 +311,11 @@ function devTestNormalizeUrl() {
     ['https://example.com/page', 'https://example.com/page'],
     ['', ''],
     ['not a url', 'not a url'],
+    // Gale: the per-search state drops, only docId is kept (see canonicalDatabaseUrl_).
+    ['https://go-gale-com.content.elibrarymn.org/ps/retrieve.do?retrievalId=a&hitCount=3&docId=GALE%7CX1&u=mnsminitex',
+      'https://go-gale-com.content.elibrarymn.org/ps/retrieve.do?docId=GALE%7CX1'],
+    ['https://link.gale.com/apps/doc/X1/SUIC?u=mnsminitex&sid=bookmark-SUIC&xid=1',
+      'https://link.gale.com/apps/doc/X1/SUIC'],
   ];
   let pass = 0;
   cases.forEach(([input, expected]) => {
