@@ -1248,18 +1248,20 @@ To ship an extension update:
    upload and Chrome won't pull the update. Commit the bumped `manifest.json`.
    (Run it WITHOUT `-Bump` to just refresh the zip at the current version mid-dev
    — handy, but not uploadable as an update until you bump.)
-2. Upload `extension/dist/ops-research-tool-v<version>.zip` to the
-   [dev dashboard](https://chrome.google.com/webstore/devconsole) → submit
-   (private item → fast review).
+2. **Merge to `main`.** [`publish-extension.yml`](.github/workflows/publish-extension.yml)
+   sees the raised version, rebuilds the zip on a Windows runner, uploads it via
+   the Chrome Web Store API v2 and submits it for review (no GitHub approval
+   gate: merging is the approval). Credentials live in the `chrome-web-store`
+   environment; setup is in README "Publishing". Manual fallback: upload
+   `extension/dist/ops-research-tool-v<version>.zip` to the
+   [dev dashboard](https://chrome.google.com/webstore/devconsole) → submit.
 3. **Installed users update themselves.** Chrome auto-updates extensions in the
    background (every few hours, ~5h default, and on browser restart);
    force-installed ones via the Admin console do the same. No reinstall, no
    prompt — they get the new version within hours of the store approving it.
 
-(Deliberately NOT automated via a git hook: a hook can refresh the zip but can't
-make the version-bump decision, which must be per-release; and the zip is a
-gitignored artifact, so there's nothing to commit. The one-command script run at
-release time fits the rare extension-update cadence.)
+(The version bump stays a per-release decision made by hand with `-Bump`; CI
+only publishes once a raised version lands on `main`.)
 
 ### Force-install via Google Admin console
 

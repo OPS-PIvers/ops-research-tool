@@ -1,0 +1,95 @@
+name: Publish Chrome Extension
+
+# A push to the default branch that raises "version" in extension/manifest.json
+# builds the zip, uploads it to the Web Store listing and submits it for review.
+# Merging is the approval; there is no manual gate here. Also runnable by hand
+# (Actions > Publish Chrome Extension > Run workflow). Setup: README, "Publishing".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'extension/manifest.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - id: plan
+        env:
+          BEFORE: ${{ github.event.before }}
+          EVENT: ${{ github.event_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "::error::Publishing runs only from $DEFAULT_BRANCH."
+            exit 1
+          fi
+          version_of() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).version??"")}catch{console.log("")}})'; }
+          version=$(version_of < extension/manifest.json)
+          publish=true
+          if [[ "$EVENT" == push ]]; then
+            previous=""
+            if [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git fetch -q --depth=1 origin "$BEFORE"; then
+              previous=$(git show "$BEFORE:extension/manifest.json" 2>/dev/null | version_of)
+            fi
+            if [[ -z "$previous" ]]; then
+              publish=false
+              echo "::notice::Couldn't read the previous version, so nothing was published. If $version is new, run this workflow by hand."
+            elif ! node -e 'const p=v=>v.split(".").map(Number),[a,b]=[p(process.argv[1]),p(process.argv[2])];for(let i=0;i<4;i++){const d=(a[i]??0)-(b[i]??0);if(d)process.exit(d>0?0:1)}process.exit(1)' "$version" "$previous"; then
+              publish=false
+              echo "The extension version is $version (was $previous); nothing to publish."
+            fi
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
+    name: Publish ${{ needs.plan.outputs.version }}
+    # Windows, so the zip comes from the same PowerShell build that made every
+    # hand-uploaded release.
+    runs-on: windows-latest
+    environment: chrome-web-store
+    concurrency:
+      group: ${{ github.workflow }}
+      cancel-in-progress: false
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build and zip the extension
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts\build-extension-zip.ps1
+
+      - name: Keep the zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ops-research-tool-v${{ needs.plan.outputs.version }}
+          path: extension/dist/ops-research-tool-v${{ needs.plan.outputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload to the Web Store and submit for review
+        env:
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+        run: node scripts/publish-extension.js
