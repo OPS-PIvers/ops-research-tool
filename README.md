@@ -69,6 +69,51 @@ cd extension
 # Load extension/ as an unpacked extension at chrome://extensions
 ```
 
+## Publishing
+
+[`.github/workflows/publish-extension.yml`](.github/workflows/publish-extension.yml)
+publishes the extension whenever a push to `main` raises `version` in
+`extension/manifest.json` (`scripts\build-extension-zip.ps1 -Bump`, then merge):
+
+- It compares the version with the one before the push, so a push that doesn't
+  raise it publishes nothing.
+- It builds the zip with `scripts/build-extension-zip.ps1`, uploads it to the
+  listing in the `CWS_EXTENSION_ID` repository variable and submits it for
+  review. Merging is the approval; there is no manual gate in GitHub.
+- The run keeps the uploaded zip as an artifact for 90 days.
+- Re-run by hand from Actions > Publish Chrome Extension > Run workflow (on
+  `main`). The Web Store refuses a version it already has, so a re-run only
+  helps when the last upload never reached it.
+- Web Store review still comes before Chrome updates installs.
+- `scripts/publish-extension.js` does the upload with the Chrome Web Store API
+  v2 (`scripts/web-store.js`, tests in
+  `node scripts/test/web-store.node.test.js`). If anything is missing it stops
+  with one sentence naming it.
+
+One-time setup:
+
+1. In a Google Cloud project (`ops-research-tool` works), enable the
+   **Chrome Web Store API** and make sure the OAuth consent screen is
+   **Internal**.
+2. Create an OAuth client ID of type **Web application**, with
+   `https://developers.google.com/oauthplayground` as an authorized redirect URI.
+3. Get a refresh token: open the
+   [OAuth 2.0 Playground](https://developers.google.com/oauthplayground), click
+   the gear, tick **Use your own OAuth credentials** and paste the client ID and
+   secret. Authorize the scope `https://www.googleapis.com/auth/chromewebstore`
+   while signed in as the Web Store developer account, then **Exchange
+   authorization code for tokens** and copy the refresh token.
+4. Copy the publisher ID from the
+   [Developer Dashboard](https://chrome.google.com/webstore/devconsole) >
+   Publisher > Settings.
+5. In this repo, Settings > Environments > **New environment**
+   `chrome-web-store`. Under Deployment branches and tags pick **Selected
+   branches and tags** and add `main`. Add the environment secrets
+   `CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`, `CWS_REFRESH_TOKEN` and
+   `CWS_PUBLISHER_ID`.
+6. Settings > Secrets and variables > Actions > Variables: add the repository
+   variable `CWS_EXTENSION_ID` = `goglhlpppkhiddkhgcknbiohcppgdggi`.
+
 ## Ownership & data
 
 - **PoC:** all Sheets and folders may be owned by the developer's personal
