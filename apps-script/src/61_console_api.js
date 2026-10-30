@@ -163,7 +163,7 @@ function projectClassList_(project) {
 
 /**
  * Validate raw requirements form input → a compact object suitable for
- * JSON.stringify into the registry. Unset (blank/undefined) numeric fields are
+ * JSON.stringify into the registry. Unset (blank/undefined/0) numeric fields are
  * OMITTED; requireAnnotation always present (defaults true). Throws on a bad
  * number so the teacher gets a clear message. Pure.
  */
@@ -173,6 +173,7 @@ function validateRequirementsInput_(raw) {
   const intField = (v, label, max) => {
     if (v === '' || v === null || v === undefined) return undefined;  // unset
     const n = Math.floor(Number(v));
+    if (n === 0) return undefined;   // teachers type 0 to remove a minimum
     if (!isFinite(n) || n < 1) throw new Error(label + ' must be a whole number ≥ 1');
     if (max && n > max) throw new Error(label + ' cannot exceed ' + max);
     return n;

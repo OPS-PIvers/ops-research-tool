@@ -338,6 +338,15 @@ select, input, textarea { font: inherit; }
   width: 100%; padding: 8px 10px; border: 1px solid var(--c-line);
   border-radius: 4px; font-size: 14px;
 }
+.req-fieldset__hint { font-size: 12px; color: var(--c-muted); margin-bottom: 8px; }
+.req-num { display: flex; gap: 8px; align-items: center; }
+.req-num input[type="number"] { flex: 1; min-width: 0; }
+.req-num__clear {
+  flex: none; padding: 7px 12px; border: 1px solid var(--c-line); border-radius: 4px;
+  background: #fff; color: var(--c-muted); font: inherit; font-size: 13px; cursor: pointer;
+}
+.req-num__clear:hover { background: var(--c-soft); color: var(--c-text); }
+.req-num__clear[hidden] { display: none; }
 .req-toggle {
   padding: 6px 14px; border-radius: 999px; border: 1px solid var(--c-line);
   background: var(--c-soft); color: var(--c-muted); font-weight: 600; cursor: pointer;
@@ -370,6 +379,22 @@ select, input, textarea { font: inherit; }
   font-size: 13px; color: var(--c-accent);
 }
 .db-refresh:hover:not(:disabled) { background: var(--c-soft); }
+/* "Last, First | First Last" switch inside the Student column header. */
+.db-nameorder {
+  display: inline-flex; margin-left: 10px; vertical-align: middle;
+  border: 1px solid var(--c-line); border-radius: 4px; overflow: hidden;
+}
+.db-nameorder__btn {
+  background: #fff; border: 0; padding: 2px 8px;
+  font: inherit; font-size: 11px; font-weight: 400; text-transform: none;
+  letter-spacing: 0; color: var(--c-muted); cursor: pointer;
+}
+.db-nameorder__btn + .db-nameorder__btn { border-left: 1px solid var(--c-line); }
+.db-nameorder__btn:hover { background: var(--c-soft); color: var(--c-text); }
+.db-nameorder__btn--on,
+.db-nameorder__btn--on:hover {
+  background: var(--c-brand-primary); color: #fff;
+}
 .db-asof {
   font-size: 12px; color: var(--c-muted);
   white-space: nowrap;
@@ -459,8 +484,11 @@ select, input, textarea { font: inherit; }
 }
 .db-table thead th:hover { background: var(--c-brand-primary-dark); }
 .db-table thead th .db-th-arrow {
-  display: inline-block; width: 12px; color: #fff;
+  display: inline-block; width: 12px; margin-left: 4px; color: #fff;
 }
+.db-table thead th .db-th-arrow--idle { opacity: 0.45; }
+.db-table thead th:hover .db-th-arrow--idle { opacity: 0.9; }
+.db-table thead th:focus-visible { outline: 2px solid #fff; outline-offset: -4px; }
 .db-table tbody td {
   padding: 10px 12px;
   border-bottom: 1px solid var(--c-line);

@@ -775,14 +775,35 @@ function buildRequirementsFields_(req) {
   head.textContent = 'Requirements (optional)';
   wrap.appendChild(head);
 
+  const hint = document.createElement('div');
+  hint.className = 'req-fieldset__hint';
+  hint.textContent = 'Leave a box empty (or type 0) for no minimum.';
+  wrap.appendChild(hint);
+
+  // Each number box gets a Remove button: the spinner stops at 1, so without it
+  // the only way to drop a minimum was to know to empty the box.
   const numField = (label, key, max) => {
     const f = makeField_(label, (() => {
+      const row = document.createElement('div');
+      row.className = 'req-num';
       const i = document.createElement('input');
-      i.type = 'number'; i.min = '1'; if (max) i.max = String(max);
-      i.placeholder = 'no minimum';
+      i.type = 'number'; i.min = '0'; if (max) i.max = String(max);
+      i.placeholder = 'No minimum';
       i.value = req[key] === '' || req[key] == null ? '' : String(req[key]);
-      i.addEventListener('input', () => { req[key] = i.value; });
-      return i;
+      const clear = document.createElement('button');
+      clear.type = 'button';
+      clear.className = 'req-num__clear';
+      clear.textContent = 'Remove';
+      clear.setAttribute('aria-label', 'Remove ' + label.toLowerCase());
+      const sync = () => { clear.hidden = i.value === ''; };
+      i.addEventListener('input', () => { req[key] = i.value; sync(); });
+      clear.addEventListener('click', () => {
+        i.value = ''; req[key] = ''; sync(); i.focus();
+      });
+      sync();
+      row.appendChild(i);
+      row.appendChild(clear);
+      return row;
     })());
     wrap.appendChild(f);
   };
@@ -968,6 +989,31 @@ function submitCreate_(fields, btn) {
  * consoleUpdateProjectRequirements and re-fetches the dashboard so the new
  * pills/badges render. Staff-gated server-side.
  */
+/**
+ * Write saved requirements into the dashboard in memory and into every cached
+ * class view of this project. Otherwise a cached view painted on the next
+ * visit seeds this modal with the OLD values, and saving it puts them back.
+ */
+function rememberRequirements_(projectId, requirements) {
+  if (dashboard.data && dashboard.data.project && dashboard.data.project.projectId === projectId) {
+    dashboard.data.project.requirements = requirements;
+  }
+  const actor = state.ctx && state.ctx.actor;
+  if (!actor) return;
+  const prefix = VIEW_CACHE_NS + actor + ':dash:' + projectId + '|';
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || k.indexOf(prefix) !== 0) continue;
+      const v = JSON.parse(localStorage.getItem(k));
+      if (v && v.data && v.data.project) {
+        v.data.project.requirements = requirements;
+        localStorage.setItem(k, JSON.stringify(v));
+      }
+    }
+  } catch (e) { /* best-effort; the server stays authoritative */ }
+}
+
 function openEditRequirementsModal_() {
   if (!dashboard.data || !dashboard.data.project) return;
   closeModal_();
@@ -1020,9 +1066,10 @@ function openEditRequirementsModal_() {
     errMsg.textContent = '';
     const projectId = dashboard.data.project.projectId;
     google.script.run
-      .withSuccessHandler(() => {
+      .withSuccessHandler((resp) => {
         setStatus('Requirements updated', 'good', 2000);
         closeModal_();
+        if (resp && resp.requirements) rememberRequirements_(projectId, resp.requirements);
         fetchDashboard_(projectId, true);
       })
       .withFailureHandler((e) => {
@@ -1745,10 +1792,20 @@ function buildDashboardTable_() {
     const sortable = (h.key !== 'gaps');
     th.textContent = h.label;
     if (sortable) {
+      // Inactive columns show a faint ↕ so teachers can see every column sorts.
+      const active = dashboard.sortKey === h.key;
       const arrow = document.createElement('span');
-      arrow.className = 'db-th-arrow';
-      arrow.textContent = dashboard.sortKey === h.key ? (dashboard.sortDir === 'asc' ? '▲' : '▼') : '';
+      arrow.className = 'db-th-arrow' + (active ? '' : ' db-th-arrow--idle');
+      arrow.setAttribute('aria-hidden', 'true');
+      arrow.textContent = active ? (dashboard.sortDir === 'asc' ? '▲' : '▼') : '↕';
       th.appendChild(arrow);
+      th.title = 'Sort by ' + h.label.toLowerCase();
+      th.tabIndex = 0;
+      th.setAttribute('aria-sort', active ? (dashboard.sortDir === 'asc' ? 'ascending' : 'descending') : 'none');
+      th.addEventListener('keydown', (e) => {
+        if (e.target === th && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); th.click(); }
+      });
+      if (h.key === 'name') th.appendChild(buildNameOrderToggle_());
       th.addEventListener('click', () => {
         if (dashboard.sortKey === h.key) {
           dashboard.sortDir = dashboard.sortDir === 'asc' ? 'desc' : 'asc';
@@ -1814,7 +1871,7 @@ function sortedDashboardRows_() {
       case 'name': {
         const an = (a.name || a.groupName || '').toString();
         const bn = (b.name || b.groupName || '').toString();
-        return cmpDir * an.localeCompare(bn);
+        return cmpDir * an.localeCompare(bn, undefined, { sensitivity: 'base' });
       }
       case 'completion':  return cmpDir * (a._sortCompletion - b._sortCompletion);
       case 'highlights':  return cmpDir * (a._sortHl - b._sortHl);
@@ -1827,7 +1884,7 @@ function sortedDashboardRows_() {
   // Annotate each entry with cmp keys.
   const annotateStudent = (s) => ({
     _sortKind: 'student',
-    name: formatLastFirst_(s.name),
+    name: formatStudentName_(s.name),
     _sortCompletion: s.completion ? s.completion.percent : 0,
     _sortHl: s.highlightCount || 0,
     _sortSrc: s.sourceCount || 0,
@@ -1981,8 +2038,8 @@ function buildStudentRow_(s, parentGroup) {
   const tdName = document.createElement('td');
   const nameWrap = document.createElement('div');
   nameWrap.className = 'db-row__name';
-  if (parentGroup) nameWrap.textContent = '└ ' + formatLastFirst_(s.name);
-  else             nameWrap.textContent = formatLastFirst_(s.name);
+  if (parentGroup) nameWrap.textContent = '└ ' + formatStudentName_(s.name);
+  else             nameWrap.textContent = formatStudentName_(s.name);
   tdName.appendChild(nameWrap);
   if (s.class) {
     const cls = document.createElement('div');
@@ -2222,13 +2279,61 @@ function buildRequirementsCell_(gaps, row, requirements) {
   return wrap;
 }
 
-/** Format roster Name ("Alex Smith") as "Smith, Alex". Falls back to as-is. */
-function formatLastFirst_(name) {
+// Teacher's choice of "Last, First" or "First Last", remembered per browser.
+// The dashboard sorts by the displayed string, so the order picks the sort too.
+const NAME_ORDER_KEY = 'ops:nameOrder';
+function nameOrder_() {
+  try { return localStorage.getItem(NAME_ORDER_KEY) === 'first' ? 'first' : 'last'; }
+  catch (e) { return 'last'; }
+}
+function setNameOrder_(order) {
+  try { localStorage.setItem(NAME_ORDER_KEY, order); } catch (e) { /* sandbox */ }
+}
+
+/**
+ * Format a student name in the teacher's chosen order. The server composes
+ * names as "Last, First" (composeStudentName_); a plain "First Last" splits at
+ * the last space. A bare email (no name on the roster) comes back as-is.
+ */
+function formatStudentName_(name) {
   const s = String(name || '').trim();
   if (!s) return '';
-  const sp = s.lastIndexOf(' ');
-  if (sp < 0) return s;
-  return s.slice(sp + 1) + ', ' + s.slice(0, sp);
+  let first, last;
+  const comma = s.indexOf(', ');
+  if (comma >= 0) {
+    last = s.slice(0, comma); first = s.slice(comma + 2);
+  } else {
+    const sp = s.lastIndexOf(' ');
+    if (sp < 0) return s;
+    first = s.slice(0, sp); last = s.slice(sp + 1);
+  }
+  return nameOrder_() === 'first' ? first + ' ' + last : last + ', ' + first;
+}
+
+/** "Last, First | First Last" switch for the Student column header. */
+function buildNameOrderToggle_() {
+  const wrap = document.createElement('span');
+  wrap.className = 'db-nameorder';
+  wrap.setAttribute('role', 'group');
+  wrap.setAttribute('aria-label', 'Name order');
+  // The header cell sorts on click; the switch must not.
+  wrap.addEventListener('click', (e) => e.stopPropagation());
+  [['last', 'Last, First'], ['first', 'First Last']].forEach(([order, label]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'db-nameorder__btn' + (nameOrder_() === order ? ' db-nameorder__btn--on' : '');
+    b.textContent = label;
+    b.setAttribute('aria-pressed', nameOrder_() === order ? 'true' : 'false');
+    b.addEventListener('click', () => {
+      setNameOrder_(order);
+      // Picking an order is asking for the list in that order.
+      dashboard.sortKey = 'name';
+      dashboard.sortDir = 'asc';
+      paintDashboard_();
+    });
+    wrap.appendChild(b);
+  });
+  return wrap;
 }
 
 // View render functions — placeholders filled in Tasks 10+.
@@ -2469,7 +2574,7 @@ function paintStudentDetail_() {
   const d = studentDetail.data;
   if (!d) return;
   const title = document.getElementById('dd-title');
-  if (title) title.textContent = formatLastFirst_(d.student.name);
+  if (title) title.textContent = formatStudentName_(d.student.name);
 
   const asof = document.getElementById('dd-asof');
   if (asof) asof.textContent = 'Refreshed ' + relativeTime_(d.asOf);
@@ -3112,7 +3217,7 @@ function openMergeModal_() {
   list.className = 'db-merge-list';
   members.forEach((m) => {
     const li = document.createElement('li');
-    li.textContent = formatLastFirst_(m.name) + ' (' + m.email + ')';
+    li.textContent = formatStudentName_(m.name) + ' (' + m.email + ')';
     list.appendChild(li);
   });
   modal.appendChild(list);
@@ -3264,7 +3369,7 @@ function confirmRemoveFromGroup_() {
   const modal = document.createElement('div');
   modal.className = 'console-modal';
   modal.innerHTML =
-    '<h2>Remove ' + esc_(formatLastFirst_(student.name)) + ' from "' + esc_(groupName) + '"?</h2>' +
+    '<h2>Remove ' + esc_(formatStudentName_(student.name)) + ' from "' + esc_(groupName) + '"?</h2>' +
     '<p>They return to a solo Sheet with their own work — everything they authored, including what they did while grouped — rebuilt into it.</p>' +
     (willDisband
       ? '<p><strong>Only one member would remain, so the group disbands</strong> — that member also returns to a solo Sheet.</p>'

@@ -29,6 +29,7 @@ const els = {
   teacherSection: document.getElementById('teacher-section'),
   goToProjects: document.getElementById('go-to-projects'),
   researchSection: document.getElementById('research-section'),
+  version: document.getElementById('version'),
   openResearch: document.getElementById('open-research'),
 };
 
@@ -82,6 +83,8 @@ function reflectEnabled_(on) {
 
 // Cache-first: paint identity + sync status from chrome.storage immediately so
 // the popup feels snappy and doesn't appear to reload on every open.
+els.version.textContent = 'Version ' + chrome.runtime.getManifest().version;
+
 async function bootstrapFromCache_() {
   const cached = await chrome.storage.local.get(['cachedMe', 'syncStatus', 'lastSyncAt']);
   hadIdentity = !!(cached.cachedMe && cached.cachedMe.ok);

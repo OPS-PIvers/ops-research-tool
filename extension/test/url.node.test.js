@@ -92,5 +92,20 @@ console.log('dedupeSourcesByUrl_ collapses the two Gale rows:');
   eq('different group members stay separate', other.sources.length, 2);
 }
 
+console.log('driveFileId:');
+{
+  const id = '1AbC-dEf_GhIjKlMnOpQrStUvWxYz0123';
+  eq('viewer', ext.driveFileId('https://drive.google.com/file/d/' + id + '/view?usp=sharing'), id);
+  eq('preview', ext.driveFileId('https://drive.google.com/file/d/' + id + '/preview'), id);
+  eq('signed-in account path', ext.driveFileId('https://drive.google.com/u/1/file/d/' + id + '/view'), id);
+  eq('docs host', ext.driveFileId('https://docs.google.com/file/d/' + id + '/edit'), id);
+  eq('open?id=', ext.driveFileId('https://drive.google.com/open?id=' + id), id);
+  eq('open?…&id=', ext.driveFileId('https://drive.google.com/open?authuser=0&id=' + id), id);
+  eq('folder listing is not a file', ext.driveFileId('https://drive.google.com/drive/folders/' + id), null);
+  eq('a Doc is not a Drive file', ext.driveFileId('https://docs.google.com/document/d/' + id + '/edit'), null);
+  eq('other site', ext.driveFileId('https://example.com/file/d/' + id + '/view'), null);
+  eq('view URL', ext.driveViewUrl(id), 'https://drive.google.com/file/d/' + id + '/view');
+}
+
 if (failures) { console.error('\n' + failures + ' FAILED'); process.exit(1); }
 console.log('\nALL GREEN');

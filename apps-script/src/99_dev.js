@@ -2469,7 +2469,8 @@ function devTestRequirementsValidation() {
   check('blank minSources omitted',     blank.minSources === undefined);
   check('default requireAnnotation true', blank.requireAnnotation === true);
 
-  check('rejects minSources 0',         throws(() => validateRequirementsInput_({ minSources: 0 })));
+  check('minSources 0 = no minimum',    validateRequirementsInput_({ minSources: 0 }).minSources === undefined);
+  check('"0" = no minimum',             validateRequirementsInput_({ minHighlightsPerSource: '0' }).minHighlightsPerSource === undefined);
   check('rejects negative',             throws(() => validateRequirementsInput_({ minHighlightsPerSource: -1 })));
   check('rejects minDistinct 6',        throws(() => validateRequirementsInput_({ minDistinctCategories: 6 })));
   check('rejects non-numeric',          throws(() => validateRequirementsInput_({ minSources: 'lots' })));
