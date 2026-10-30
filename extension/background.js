@@ -197,7 +197,7 @@ async function handleMessage(msg, sender) {
     case 'fetchPdf':
       return fetchPdfAsBase64_(msg.url);
     case 'openPdfPanel':
-      return openPdfPanel_(msg.url);
+      return openPdfPanel_(msg.url, msg.title);
     case 'loadPageHighlights':
       return loadPageHighlights_(msg.rawUrl, sender && sender.tab ? sender.tab.id : null);
     case 'previewCitation':
@@ -218,14 +218,38 @@ async function handleMessage(msg, sender) {
  */
 async function fetchPdfAsBase64_(url) {
   if (!url) return { ok: false, error: 'url required' };
+  // A Drive viewer URL is an HTML page; the bytes come from Drive's download
+  // URL, sent with the student's own Drive cookies, so it reaches exactly the
+  // files they can open.
+  const driveId = driveFileId(url);
   try {
-    const resp = await fetch(url, { credentials: 'include' });
-    if (!resp.ok) return { ok: false, error: 'HTTP ' + resp.status };
+    const resp = await fetch(driveId ? driveDownloadUrl(driveId) : url, { credentials: 'include' });
+    if (!resp.ok) {
+      if (driveId) return { ok: false, error: DRIVE_PDF_ERROR_ };
+      return { ok: false, error: 'HTTP ' + resp.status };
+    }
     const buf = await resp.arrayBuffer();
+    // Drive answers a file you can't download (owner turned downloads off, or
+    // a sign-in page) with HTML, not an error status.
+    if (driveId && !startsWithPdfMagic_(buf)) return { ok: false, error: DRIVE_PDF_ERROR_ };
     return { ok: true, base64: arrayBufferToBase64_(buf), byteLength: buf.byteLength };
   } catch (e) {
     return { ok: false, error: e.message || String(e) };
   }
+}
+
+const DRIVE_PDF_ERROR_ =
+  'Google Drive would not hand over this file. It may not be a PDF, or its owner ' +
+  'turned off downloading. Ask your teacher for a copy you can download, or use ' +
+  '"Save as source" to cite it.';
+
+function startsWithPdfMagic_(buf) {
+  const b = new Uint8Array(buf, 0, Math.min(1024, buf.byteLength));
+  // "%PDF" may follow a little leading junk; the spec allows it in the first 1KB.
+  for (let i = 0; i + 3 < b.length; i++) {
+    if (b[i] === 0x25 && b[i + 1] === 0x50 && b[i + 2] === 0x44 && b[i + 3] === 0x46) return true;
+  }
+  return false;
 }
 
 function arrayBufferToBase64_(buf) {
@@ -480,9 +504,15 @@ async function previewCitation_(fields, style) {
   }
 }
 
-async function openPdfPanel_(url) {
+async function openPdfPanel_(url, title) {
   if (!url) return { ok: false, error: 'url required' };
-  const panelUrl = chrome.runtime.getURL('pdf/panel.html') + '?src=' + encodeURIComponent(url);
+  // Every Drive share-link variant of one file saves as one source.
+  const driveId = driveFileId(url);
+  const src = driveId ? driveViewUrl(driveId) : url;
+  // A Drive URL ends in "/view", so the panel can't take a name from it; the
+  // banner sends the file name from the Drive tab's title instead.
+  const panelUrl = chrome.runtime.getURL('pdf/panel.html') + '?src=' + encodeURIComponent(src) +
+    (title ? '&title=' + encodeURIComponent(title) : '');
   const tab = await chrome.tabs.create({ url: panelUrl });
   return { ok: true, tabId: tab.id };
 }

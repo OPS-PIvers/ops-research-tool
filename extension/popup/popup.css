@@ -283,3 +283,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   font-size: 11px;
   color: var(--color-muted);
 }
+
+.version {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--color-muted);
+  text-align: right;
+}

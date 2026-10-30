@@ -69,6 +69,28 @@ function normalizeUrl(rawUrl) {
 }
 
 /**
+ * Google Drive file links → the file id, else null. Covers the viewer
+ * (drive.google.com/file/d/<id>/view, also under /u/<n>/ or docs.google.com)
+ * and open?id=<id> share links. A file previewed over a folder listing has no
+ * id in the URL; "Open in new window" gives the /file/d/ form.
+ */
+function driveFileId(url) {
+  const m = /^https:\/\/(?:drive|docs)\.google\.com\/(?:u\/\d+\/)?(?:file\/d\/([\w-]{10,})|open\?(?:[^#]*&)?id=([\w-]{10,}))/
+    .exec(String(url || ''));
+  return m ? (m[1] || m[2]) : null;
+}
+
+/** The one URL a Drive file is saved under, so every share-link variant is one source. */
+function driveViewUrl(id) {
+  return 'https://drive.google.com/file/d/' + id + '/view';
+}
+
+/** Where the file's bytes come from (the student's own Drive session). */
+function driveDownloadUrl(id) {
+  return 'https://drive.google.com/uc?export=download&id=' + encodeURIComponent(id);
+}
+
+/**
  * The page a stored source row belongs to, under the CURRENT normalizer. Rows
  * saved before a rule change (e.g. the Gale docId rule) keep their old
  * normalizedUrl, so compare on this — re-derived from rawUrl — not on the
@@ -97,4 +119,7 @@ if (typeof self !== 'undefined') {
   self.sourcePageUrl = sourcePageUrl;
   self.DROP_QUERY_PARAMS = DROP_QUERY_PARAMS;
   self.opsPageUrl = opsPageUrl;
+  self.driveFileId = driveFileId;
+  self.driveViewUrl = driveViewUrl;
+  self.driveDownloadUrl = driveDownloadUrl;
 }

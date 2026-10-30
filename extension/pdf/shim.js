@@ -41,11 +41,13 @@
   var origScrape = self.scrapePageMeta;
   self.scrapePageMeta = function () {
     var base = origScrape ? origScrape() : {};
-    var name;
-    try {
-      var u = new URL(realUrl);
-      name = decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() || u.hostname);
-    } catch (e) { name = realUrl; }
+    var name = params.get('title');   // Drive files: the name from the Drive tab
+    if (!name) {
+      try {
+        var u = new URL(realUrl);
+        name = decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() || u.hostname);
+      } catch (e) { name = realUrl; }
+    }
     var host;
     try { host = new URL(realUrl).hostname.replace(/^www\./, ''); }
     catch (e) { host = ''; }

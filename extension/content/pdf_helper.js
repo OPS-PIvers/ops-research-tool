@@ -13,25 +13,65 @@
  *   - a top-level <embed type="application/pdf"> in the outer DOM
  *   - URL path that looks like a PDF (fallback for cases where Chrome strips
  *     the contentType signal — kept narrow to avoid false positives)
+ *   - a Google Drive file viewer whose tab title names a .pdf (watchDrive_)
  */
 
 (function () {
   // Guard: don't double-inject on history-pushstate spas etc.
   if (window.__OPS_RESEARCH_PDF_BANNER__) return;
-
-  if (!looksLikePdfTab_()) return;
   window.__OPS_RESEARCH_PDF_BANNER__ = true;
+
+  if (looksLikePdfTab_()) {
+    show_(buildBanner_(location.href, null));
+  } else if (/^(drive|docs)\.google\.com$/.test(location.hostname)) {
+    watchDrive_();
+  }
 
   // The outer DOM of a PDF tab may not have a <body> ready at document_idle
   // on all Chrome versions — be defensive.
-  const inject = () => {
+  function show_(banner) {
     if (!document.body) {
-      requestAnimationFrame(inject);
+      requestAnimationFrame(() => show_(banner));
       return;
     }
-    document.body.appendChild(buildBanner_());
-  };
-  inject();
+    document.body.appendChild(banner);
+  }
+
+  /**
+   * Google Drive shows a PDF in its own viewer, which our toolbar can't hook,
+   * and the URL doesn't say the file is a PDF. The tab title does
+   * ("Report.pdf - Google Drive"), and it changes as Drive moves between files
+   * without a page load, so watch it.
+   */
+  function watchDrive_() {
+    let shownFor = null;
+    const check = () => {
+      const id = driveFileId(location.href);
+      const name = drivePdfName_();
+      if (id && name && shownFor !== id) {
+        const old = document.getElementById('__ops_research_pdf_banner__');
+        if (old) old.remove();
+        shownFor = id;
+        show_(buildBanner_(location.href, name));
+      } else if (!id && shownFor) {
+        const old = document.getElementById('__ops_research_pdf_banner__');
+        if (old) old.remove();
+        shownFor = null;
+      }
+    };
+    check();
+    const watchTitle = () => {
+      if (!document.head) { requestAnimationFrame(watchTitle); return; }
+      new MutationObserver(check).observe(document.head, { subtree: true, childList: true, characterData: true });
+    };
+    watchTitle();
+  }
+
+  /** "Report.pdf - Google Drive" → "Report.pdf"; null when the file isn't a PDF. */
+  function drivePdfName_() {
+    const name = String(document.title || '').replace(/\s+-\s+Google Drive\s*$/i, '').trim();
+    return /\.pdf$/i.test(name) ? name : null;
+  }
 
   function looksLikePdfTab_() {
     try {
@@ -43,7 +83,9 @@
     return /^\/pdf\//.test(path) || /^\/doi\/pdf\//.test(path) || /^\/stable\/pdf\//.test(path);
   }
 
-  function buildBanner_() {
+  // fileName is set for a Drive file: the panel can't read a name off a
+  // "/view" URL, and the advice is about Drive's viewer, not Chrome's.
+  function buildBanner_(pageUrl, fileName) {
     const host = document.createElement('div');
     host.id = '__ops_research_pdf_banner__';
     host.setAttribute('role', 'region');
@@ -71,7 +113,9 @@
     host.appendChild(title);
 
     const msg = document.createElement('div');
-    msg.textContent = "Chrome's PDF viewer blocks in-place highlighting. Open this PDF in the research panel to capture passages.";
+    msg.textContent = fileName
+      ? "Google Drive's viewer blocks highlighting. Open this PDF in the research panel to capture passages."
+      : "Chrome's PDF viewer blocks in-place highlighting. Open this PDF in the research panel to capture passages.";
     Object.assign(msg.style, { color: '#5f6368', marginBottom: '8px', fontSize: '12px' });
     host.appendChild(msg);
 
@@ -98,7 +142,8 @@
       try {
         const resp = await chrome.runtime.sendMessage({
           type: 'openPdfPanel',
-          url: location.href,
+          url: pageUrl,
+          title: fileName || undefined,
         });
         if (!resp || !resp.ok) throw new Error((resp && resp.error) || 'open failed');
         // Banner gets torn down when this tab navigates (it won't — the

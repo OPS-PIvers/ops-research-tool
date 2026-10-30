@@ -47,7 +47,8 @@ if (!pdfUrl) {
   // sidebar.js fires its initial loadForCurrentPage(), which is earlier
   // than this ES module can execute. See panel.html for the shim body.
   els.openOriginal.href = pdfUrl;
-  els.title.textContent = filenameFromUrl_(pdfUrl);
+  // Drive URLs end in "/view"; the banner passes the file's real name.
+  els.title.textContent = params.get('title') || filenameFromUrl_(pdfUrl);
   document.title = 'OPS Research Tool — ' + els.title.textContent;
   loadAndRender(pdfUrl);
 }
