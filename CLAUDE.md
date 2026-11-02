@@ -510,7 +510,13 @@ These supersede or refine the spec — apply them before defaulting to plan text
   cell → defaults): **`minSources`** (project-level), **`minHighlightsPerSource`**
   + **`minDistinctCategories`** (per-source; distinct counts primary category
   only), and **`requireAnnotation`** (defaults **true**, so existing projects are
-  unchanged). Set at project creation AND editable afterward via
+  unchanged). **2026-11-02:** `requireCitation` + `requireClassification` join
+  it (also default true) so a teacher can remove Cite or Tag the same way:
+  "Not required" hides the chip from the Requirements column + drill-down and
+  drops it from the completion % (all three off → Completion shows "—",
+  `completion.tracked:false`). Student surfaces and the bibliography rule are
+  untouched (an untagged source is still left out of the bibliography).
+  Headless: `node apps-script/test/requirements.node.test.js`. Set at project creation AND editable afterward via
   **`consoleUpdateProjectRequirements`** (staff-gated like archive). The single
   parser is **`parseProjectRequirements_`** ([`62_aggregator.js`](apps-script/src/62_aggregator.js),
   pure, normalizes each numeric to a positive int or `null`, caps

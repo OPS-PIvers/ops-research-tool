@@ -500,7 +500,8 @@ function openCreateProjectModal_() {
     schoolYear: defaultSchoolYear_(),
     bundleId: '',
     memberClasses: [],
-    requirements: { minSources: '', minHighlightsPerSource: '', minDistinctCategories: '', requireAnnotation: true },
+    requirements: { minSources: '', minHighlightsPerSource: '', minDistinctCategories: '',
+                    requireCitation: true, requireClassification: true, requireAnnotation: true },
   };
 
   // Need the bundle list + the class list. Bundles come from one fetch;
@@ -764,7 +765,8 @@ function makeField_(labelText, control) {
 
 /**
  * Builds the optional-requirements fieldset bound to a `req` object
- * ({minSources, minHighlightsPerSource, minDistinctCategories, requireAnnotation}).
+ * ({minSources, minHighlightsPerSource, minDistinctCategories, requireCitation,
+ * requireClassification, requireAnnotation}).
  * Shared by the create modal and the edit modal. Blank number input = unset.
  */
 function buildRequirementsFields_(req) {
@@ -811,19 +813,28 @@ function buildRequirementsFields_(req) {
   numField('Min highlights per source', 'minHighlightsPerSource');
   numField('Min distinct categories per source', 'minDistinctCategories', 5);
 
-  const tgl = makeField_('Annotations required', (() => {
+  // Cite / Tag / Note: "Not required" removes the dimension from the
+  // dashboard (Requirements column, drill-down) and from the completion %.
+  const dimHint = document.createElement('div');
+  dimHint.className = 'req-fieldset__hint';
+  dimHint.textContent = 'Not required = hidden from the Requirements column and left out of the completion %.';
+  wrap.appendChild(dimHint);
+  const toggle = (label, key) => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'req-toggle' + (req.requireAnnotation ? ' req-toggle--on' : '');
-    btn.textContent = req.requireAnnotation ? 'Required' : 'Optional';
-    btn.addEventListener('click', () => {
-      req.requireAnnotation = !req.requireAnnotation;
-      btn.className = 'req-toggle' + (req.requireAnnotation ? ' req-toggle--on' : '');
-      btn.textContent = req.requireAnnotation ? 'Required' : 'Optional';
-    });
-    return btn;
-  })());
-  wrap.appendChild(tgl);
+    btn.setAttribute('aria-label', label);
+    const paint = () => {
+      btn.className = 'req-toggle' + (req[key] ? ' req-toggle--on' : '');
+      btn.textContent = req[key] ? 'Required' : 'Not required';
+      btn.setAttribute('aria-pressed', req[key] ? 'true' : 'false');
+    };
+    btn.addEventListener('click', () => { req[key] = !req[key]; paint(); });
+    paint();
+    wrap.appendChild(makeField_(label, btn));
+  };
+  toggle('Citation (Cite)', 'requireCitation');
+  toggle('Primary / secondary tag (Tag)', 'requireClassification');
+  toggle('Annotation (Note)', 'requireAnnotation');
   return wrap;
 }
 
@@ -1023,6 +1034,8 @@ function openEditRequirementsModal_() {
     minSources: r.minSources == null ? '' : r.minSources,
     minHighlightsPerSource: r.minHighlightsPerSource == null ? '' : r.minHighlightsPerSource,
     minDistinctCategories: r.minDistinctCategories == null ? '' : r.minDistinctCategories,
+    requireCitation: r.requireCitation !== false,
+    requireClassification: r.requireClassification !== false,
     requireAnnotation: r.requireAnnotation !== false,
   };
 
@@ -1972,7 +1985,7 @@ function buildGroupHeaderRow_(group, members) {
   tdMix.appendChild(buildMixBar_(group.categoryMix));
   tr.appendChild(tdMix);
   const tdComp = document.createElement('td');
-  tdComp.appendChild(buildCompletionCell_(group.completion));
+  tdComp.appendChild(buildCompletionCell_(group.completion, reqs));
   tr.appendChild(tdComp);
   const tdGaps = document.createElement('td');
   tdGaps.appendChild(buildRequirementsCell_(group.gaps, group, reqs));
@@ -2054,7 +2067,7 @@ function buildStudentRow_(s, parentGroup) {
   tdMix.appendChild(buildMixBar_(s.categoryMix));
   tr.appendChild(tdMix);
   const tdComp = document.createElement('td');
-  tdComp.appendChild(buildCompletionCell_(s.completion));
+  tdComp.appendChild(buildCompletionCell_(s.completion, reqs));
   tr.appendChild(tdComp);
   const tdGaps = document.createElement('td');
   tdGaps.appendChild(buildRequirementsCell_(s.gaps, s, reqs));
@@ -2189,9 +2202,18 @@ function buildMixBar_(mix) {
   return wrap;
 }
 
-function buildCompletionCell_(comp) {
+function buildCompletionCell_(comp, requirements) {
   const wrap = document.createElement('div');
   wrap.className = 'db-completion-wrap';
+  // Every Cite/Tag/Note dimension removed → nothing to complete.
+  if (!requiredDims_(requirements).length) {
+    const none = document.createElement('div');
+    none.className = 'db-completion-pct';
+    none.textContent = '—';
+    none.title = 'No completion requirements for this project';
+    wrap.appendChild(none);
+    return wrap;
+  }
   const bar = document.createElement('div');
   bar.className = 'db-completion-bar';
   const fill = document.createElement('div');
@@ -2212,8 +2234,8 @@ function buildCompletionCell_(comp) {
 /**
  * Status-signals cell for a dashboard row: cite/tag/note gap pills plus (when
  * the project sets requirements) the evidence-depth badge. The Note pill is
- * suppressed when the project marks annotations optional (requireAnnotation
- * === false); Cite and Tag are always shown. `row` carries evidenceDepth;
+ * suppressed when the project removes it (requireCitation /
+ * requireClassification / requireAnnotation === false). `row` carries evidenceDepth;
  * `requirements` is the project's requirements object (may be null/empty).
  */
 /**
@@ -2223,6 +2245,19 @@ function buildCompletionCell_(comp) {
  * "—"; one who has met everything shows a single green "✓ complete". Works for
  * both student and group rows (both carry sourcesProgress + evidenceDepth).
  */
+/**
+ * The Cite / Tag / Note dimensions a project still requires, in display order.
+ * Each defaults on; a teacher can remove any of them in Edit requirements.
+ */
+function requiredDims_(requirements) {
+  const r = requirements || {};
+  return [
+    { key: 'citation',       label: 'Cite', long: 'Citation',   verb: 'cited',     on: r.requireCitation !== false },
+    { key: 'classification', label: 'Tag',  long: 'Tag',        verb: 'tagged',    on: r.requireClassification !== false },
+    { key: 'annotation',     label: 'Note', long: 'Annotation', verb: 'annotated', on: r.requireAnnotation !== false },
+  ].filter((d) => d.on);
+}
+
 function buildRequirementsCell_(gaps, row, requirements) {
   const wrap = document.createElement('div');
   wrap.className = 'db-reqcell';
@@ -2255,16 +2290,9 @@ function buildRequirementsCell_(gaps, row, requirements) {
       d.sourcesMeeting + ' of ' + d.total + ' sources meet the evidence target'));
   }
 
-  // Per-source completion dimensions — always shown as done/total. Note drops
-  // out only when the project marks annotations optional.
-  const dims = [
-    { key: 'citation',       label: 'Cite', verb: 'cited' },
-    { key: 'classification', label: 'Tag',  verb: 'tagged' },
-    { key: 'annotation',     label: 'Note', verb: 'annotated' },
-  ];
-  const annotationRequired = reqs.requireAnnotation !== false;
-  dims.forEach((dim) => {
-    if (dim.key === 'annotation' && !annotationRequired) return;
+  // Per-source completion dimensions — shown as done/total unless the teacher
+  // removed that dimension from the project.
+  requiredDims_(reqs).forEach((dim) => {
     const missing = gaps[dim.key] || 0;
     const done = Math.max(0, total - missing);
     const status = total === 0 ? 'neutral'
@@ -2657,7 +2685,6 @@ function buildSourceCard_(s) {
   // detail, and whether annotations are required. Read off the module-level
   // studentDetail.data (same pattern as colorForCategoryInDrill_).
   const agg = (studentDetail.data && studentDetail.data.aggregates) || {};
-  const annotationRequired = agg.requireAnnotation !== false;
 
   // Title — on its own line, linked back to the page the student saved.
   const titleText = (s.citationFieldsParsed && s.citationFieldsParsed.title) || s.scrapedTitle || '(untitled)';
@@ -2690,9 +2717,9 @@ function buildSourceCard_(s) {
   meta.appendChild(cnt);
   const flags = document.createElement('span');
   flags.className = 'dd-source-card__flags';
-  flags.appendChild(makeFlagChip_('Cite', s.completionFlags.citation));
-  flags.appendChild(makeFlagChip_('Tag', s.completionFlags.classification));
-  if (annotationRequired) flags.appendChild(makeFlagChip_('Note', s.completionFlags.annotation));
+  requiredDims_(agg).forEach((dim) => {
+    flags.appendChild(makeFlagChip_(dim.label, s.completionFlags[dim.key]));
+  });
   meta.appendChild(flags);
   card.appendChild(meta);
 
@@ -2867,7 +2894,7 @@ function buildDrillGrid_() {
   compTitle.className = 'dd-block__title';
   compTitle.textContent = 'Completion';
   compBlock.appendChild(compTitle);
-  compBlock.appendChild(buildDrillCompletion_(d.aggregates.completion));
+  compBlock.appendChild(buildDrillCompletion_(d.aggregates.completion, d.aggregates));
   grid.appendChild(compBlock);
 
   // 4. Activity over time
@@ -2915,17 +2942,25 @@ function buildDrillCountsTiles_(c) {
   return outer;
 }
 
-function buildDrillCompletion_(comp) {
+function buildDrillCompletion_(comp, requirements) {
   const wrap = document.createElement('div');
-  const labels = { citation: 'Citation', classification: 'Tag', annotation: 'Annotation' };
-  ['citation', 'classification', 'annotation'].forEach((kind) => {
+  const dims = requiredDims_(requirements);
+  if (!dims.length) {
+    const none = document.createElement('div');
+    none.className = 'dd-unclassified';
+    none.textContent = 'No completion requirements for this project.';
+    wrap.appendChild(none);
+    return wrap;
+  }
+  dims.forEach((dim) => {
+    const kind = dim.key;
     const c = comp[kind];
     const pct = c.total === 0 ? 0 : Math.round((c.complete / c.total) * 100);
     const row = document.createElement('div');
     row.className = 'dd-comp-row';
     const lab = document.createElement('div');
     lab.className = 'dd-comp-label';
-    lab.textContent = labels[kind];
+    lab.textContent = dim.long;
     row.appendChild(lab);
     const bar = document.createElement('div');
     bar.className = 'dd-comp-bar';
