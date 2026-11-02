@@ -10,8 +10,11 @@
 
 /**
  * Parse + normalize a project's `requirements` JSON. Every key is present in
- * the output: null = "no requirement". `requireAnnotation` defaults TRUE —
- * existing projects (empty cell) must keep requiring annotation, today's behavior.
+ * the output: null = "no requirement". `requireCitation`,
+ * `requireClassification` and `requireAnnotation` default TRUE — existing
+ * projects (empty cell) keep today's behavior. A false one is removed from the
+ * dashboard: hidden from the Requirements column + drill-down and left out of
+ * the completion %.
  * Pure. Single definition (grep before adding a same-named helper — §5 shadow trap).
  */
 function parseProjectRequirements_(project) {
@@ -25,6 +28,8 @@ function parseProjectRequirements_(project) {
     minSources:             posInt(raw.minSources),
     minHighlightsPerSource: posInt(raw.minHighlightsPerSource),
     minDistinctCategories:  cats === null ? null : Math.min(cats, 5),
+    requireCitation:        raw.requireCitation === false ? false : true,
+    requireClassification:  raw.requireClassification === false ? false : true,
     requireAnnotation:      raw.requireAnnotation === false ? false : true,
   };
 }
@@ -73,6 +78,8 @@ function aggregateStudentDetail_(sources, highlights, bundle, projectCreatedAt, 
     sourcesProgress: computeSourcesProgress_(sources, req),
     // Drill-down: full per-source list so the viewer can annotate each source.
     evidenceDepth: computeEvidenceDepth_(sources, highlights, req),
+    requireCitation: req.requireCitation,
+    requireClassification: req.requireClassification,
     requireAnnotation: req.requireAnnotation,
     activityByDay: computeActivityByDay_(sources, highlights, projectCreatedAt),
   };
@@ -134,18 +141,24 @@ function computeCompletion_(sources) {
 
 /**
  * Headline completion for the dashboard row:
- *   percent = sources where ALL of (citation, classification, AND — only when
- *   the project requires it — annotation) / total. Zero sources → 0%.
+ *   percent = sources where ALL of the dimensions the project requires
+ *   (citation, classification, annotation — each on by default) are done /
+ *   total. Zero sources → 0%. With every dimension removed there is nothing
+ *   to complete: `tracked` is false and percent is 0 (the console shows "—").
  * `requirements` is the normalized object from parseProjectRequirements_ (or
  * undefined for the legacy no-requirements behavior, which requires annotation).
  */
 function computeCompletionSummary_(sources, requirements) {
-  if (sources.length === 0) return { percent: 0, complete: 0, total: 0 };
-  const needAnn = !requirements || requirements.requireAnnotation !== false;
+  const req = requirements || {};
+  const needCit = req.requireCitation !== false;
+  const needCls = req.requireClassification !== false;
+  const needAnn = req.requireAnnotation !== false;
+  const tracked = needCit || needCls || needAnn;
+  if (sources.length === 0 || !tracked) return { percent: 0, complete: 0, total: sources.length, tracked };
   let complete = 0;
   sources.forEach((s) => {
-    const citationOk = isCitationComplete_(parseCitationFields_(s));
-    const classOk = s.primarySecondary && s.primarySecondary !== 'unset';
+    const citationOk = !needCit || isCitationComplete_(parseCitationFields_(s));
+    const classOk = !needCls || (s.primarySecondary && s.primarySecondary !== 'unset');
     const annOk = !needAnn || (s.annotation && String(s.annotation).trim().length > 0);
     if (citationOk && classOk && annOk) complete++;
   });
@@ -153,6 +166,7 @@ function computeCompletionSummary_(sources, requirements) {
     percent: Math.round((complete / sources.length) * 100),
     complete,
     total: sources.length,
+    tracked,
   };
 }
 

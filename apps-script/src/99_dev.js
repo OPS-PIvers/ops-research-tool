@@ -537,6 +537,12 @@ function devTestCompletionRespectsAnnotationToggle() {
   const off = computeCompletionSummary_(sources, parseProjectRequirements_({ requirements: JSON.stringify({ requireAnnotation: false }) }));
   check('annotations optional → 2 complete', off.complete === 2);
   check('annotations optional → 100%',       off.percent === 100);
+  const tagOff = computeCompletionSummary_(sources, parseProjectRequirements_({ requirements: JSON.stringify({ requireAnnotation: false, requireClassification: false }) }));
+  check('tag removed too → still 2 complete', tagOff.complete === 2);
+  const citeOnlyOff = computeCompletionSummary_(sources, parseProjectRequirements_({ requirements: JSON.stringify({ requireCitation: false }) }));
+  check('cite removed, note on → 0 complete',  citeOnlyOff.complete === 0);
+  const none = computeCompletionSummary_(sources, parseProjectRequirements_({ requirements: JSON.stringify({ requireCitation: false, requireClassification: false, requireAnnotation: false }) }));
+  check('all removed → untracked',             none.tracked === false);
   console.log(pass + '/' + (pass + fail) + ' passed');
 }
 

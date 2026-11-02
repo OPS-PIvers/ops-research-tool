@@ -164,7 +164,8 @@ function projectClassList_(project) {
 /**
  * Validate raw requirements form input → a compact object suitable for
  * JSON.stringify into the registry. Unset (blank/undefined/0) numeric fields are
- * OMITTED; requireAnnotation always present (defaults true). Throws on a bad
+ * OMITTED; requireCitation / requireClassification / requireAnnotation always
+ * present (default true). Throws on a bad
  * number so the teacher gets a clear message. Pure.
  */
 function validateRequirementsInput_(raw) {
@@ -181,6 +182,8 @@ function validateRequirementsInput_(raw) {
   const ms = intField(raw.minSources, 'Min sources');                          if (ms !== undefined) out.minSources = ms;
   const mh = intField(raw.minHighlightsPerSource, 'Min highlights per source'); if (mh !== undefined) out.minHighlightsPerSource = mh;
   const mc = intField(raw.minDistinctCategories, 'Min distinct categories', 5); if (mc !== undefined) out.minDistinctCategories = mc;
+  out.requireCitation = raw.requireCitation === false ? false : true;
+  out.requireClassification = raw.requireClassification === false ? false : true;
   out.requireAnnotation = raw.requireAnnotation === false ? false : true;
   return out;
 }
