@@ -63,6 +63,15 @@
 .sb-source--selected .sb-source__title { color: var(--c-accent-strong); }
 .sb-source__action--edit { font-weight: 600; }
 .sb-source__action--edit[aria-pressed="true"] { color: var(--c-muted); cursor: default; text-decoration: none; }
+.rp-list .sb-source__meta { gap: 2px 4px; }
+.sb-source__action--delete { color: var(--c-bad); }
+.sb-source__action--delete:disabled { color: var(--c-muted); cursor: default; text-decoration: none; }
+.sb-source__del {
+  margin-top: 8px; padding: 10px 12px;
+  border: 1px solid var(--c-bad); border-radius: 6px; background: #fff;
+}
+.sb-source__del .sb-modal__btn { min-height: 32px; padding: 5px 12px; font-size: 13px; }
+.sb-source__del .sb-modal__btn:disabled { opacity: .6; cursor: default; }
 
 /* Same flex column the Docs modal gets from .sb-body--modal. */
 .rp-editor {

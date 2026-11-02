@@ -783,6 +783,11 @@ These supersede or refine the spec — apply them before defaulting to plan text
   makes the requested project active when the caller can see it (and now falls
   back when the stored active project is no longer visible). Entry point: the
   popup's **"Open my research ↗"** (opens on the extension's active project).
+  In the **By source** view each list card also has a red **Delete** action
+  with an inline Keep it / Remove source confirm (`deleteSourceFromList_` in
+  `sidebar_js`, same `sidebarDeleteSource` call as the editor's bottom link,
+  non-optimistic); the editor pane is re-shown afterward so its source
+  switcher drops the deleted source.
   Staff get the Docs-sidebar view (all active projects). Group-member delete
   rights unchanged (revisit after pilot). Fixed along the way: switching
   projects in the Docs sidebar kept the first project's bundle colors

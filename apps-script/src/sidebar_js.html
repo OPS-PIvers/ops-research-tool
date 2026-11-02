@@ -31,6 +31,8 @@ const state = {
   pollUnchangedTicks: 0,        // bounded fallback stop counter
   selectedSourceId: null,       // page only: source open in the editor pane
   lastLoadAt: 0,                // page only: throttles the on-focus refresh
+  confirmDeleteSourceId: null,  // page only: source card showing the "Remove?" confirm
+  deletingSourceId: null,       // page only: source whose delete is in flight
 };
 
 const els = {
@@ -726,8 +728,27 @@ function renderSource(source) {
     editBtn.setAttribute('aria-pressed', state.selectedSourceId === source.sourceId ? 'true' : 'false');
     editBtn.addEventListener('click', (e) => { e.stopPropagation(); openSourceEditor_(source.sourceId, null); });
     meta.appendChild(editBtn);
+    // "By source" view: deleting is a per-source action, so offer it on the
+    // card itself instead of only at the bottom of the editor pane.
+    if (sourceMode && state.confirmDeleteSourceId !== source.sourceId) {
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'sb-source__action sb-source__action--delete';
+      delBtn.textContent = 'Delete';
+      delBtn.title = 'Remove this source and its highlights from your project';
+      delBtn.disabled = !!state.deletingSourceId;
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        state.confirmDeleteSourceId = source.sourceId;
+        render();
+      });
+      meta.appendChild(delBtn);
+    }
   }
   card.appendChild(meta);
+  if (PAGE && sourceMode && state.confirmDeleteSourceId === source.sourceId) {
+    card.appendChild(renderListDeleteConfirm_(source));
+  }
 
   if (sourceExpanded) {
     // Per-source filter chips in source mode only.
@@ -1024,6 +1045,69 @@ function syncEditorPane_() {
   const keep = state.sources.some((s) => s.sourceId === state.selectedSourceId);
   const first = pickFirstVisibleSource_();
   showInPane_(keep ? state.selectedSourceId : first.sourceId, null);
+}
+
+// Inline "Remove this source?" confirm on a list card (By source view).
+function renderListDeleteConfirm_(source) {
+  const wrap = document.createElement('div');
+  wrap.className = 'sb-del sb-source__del';
+  wrap.addEventListener('click', (e) => e.stopPropagation());
+  const busy = state.deletingSourceId === source.sourceId;
+  const n = state.highlights.filter((h) => h.sourceId === source.sourceId).length;
+  const q = document.createElement('p');
+  q.className = 'sb-del__q';
+  q.textContent = busy ? 'Removing…' : (n > 0
+    ? 'Remove this source and its ' + n + ' highlight' + (n === 1 ? '' : 's') + '? This can\'t be undone.'
+    : 'Remove this source? This can\'t be undone.');
+  wrap.appendChild(q);
+  const keep = document.createElement('button');
+  keep.type = 'button';
+  keep.className = 'sb-modal__btn sb-modal__btn--cancel';
+  keep.textContent = 'Keep it';
+  keep.disabled = busy;
+  keep.addEventListener('click', () => { state.confirmDeleteSourceId = null; render(); });
+  wrap.appendChild(keep);
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'sb-modal__btn sb-modal__btn--danger';
+  del.textContent = 'Remove source';
+  del.disabled = busy;
+  del.addEventListener('click', () => deleteSourceFromList_(source.sourceId));
+  wrap.appendChild(del);
+  return wrap;
+}
+
+// Non-optimistic, like the editor's delete: the card stays until the server
+// confirms. Then drop it locally and re-open the editor pane so its source
+// switcher doesn't still list the deleted source.
+function deleteSourceFromList_(sourceId) {
+  if (state.deletingSourceId) return;
+  state.deletingSourceId = sourceId;
+  render();
+  const projectId = state.projectId;
+  google.script.run
+    .withSuccessHandler(() => {
+      state.deletingSourceId = null;
+      state.confirmDeleteSourceId = null;
+      if (projectId !== state.projectId) return;
+      state.sources = state.sources.filter((s) => s.sourceId !== sourceId);
+      state.highlights = state.highlights.filter((h) => h.sourceId !== sourceId);
+      delete state.expandedSourceIds[sourceId];
+      delete state.collapsedSourceIds[sourceId];
+      delete state.sourceFilters[sourceId];
+      if (state.selectedSourceId === sourceId) state.selectedSourceId = null;
+      renderFilter();
+      syncEditorPane_();
+      render();
+      setStatus('Source removed.', 'good', 2000);
+    })
+    .withFailureHandler((e) => {
+      state.deletingSourceId = null;
+      state.confirmDeleteSourceId = null;
+      render();
+      setStatus('Delete failed: ' + (e && e.message || e), 'bad');
+    })
+    .sidebarDeleteSource(projectId, sourceId);
 }
 
 // The editor edits the same source/highlight objects the list renders, so most
