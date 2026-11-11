@@ -573,8 +573,11 @@ These supersede or refine the spec — apply them before defaulting to plan text
   evidence-depth** per-source pass (`computeEvidenceDepth_`) + a **sources-progress**
   count (`computeSourcesProgress_`), surfaced as their own indicators. Reflected
   in the dashboard's **Requirements column** (renamed from "Gaps"): a single
-  wrapping row of uniform `reqChip_` chips in a FIXED order — Sources · Depth ·
-  Cite · Tag · Note — every applicable chip ALWAYS rendered as `done/total` and
+  wrapping row of uniform `reqChip_` chips in a FIXED order — "3 of 5 sources" ·
+  Evidence · Citation · Primary/Secondary · Annotation (renamed 2026-11-11 from
+  Sources/Depth/Cite/Tag/Note, which teachers misread; "Source type" was
+  rejected because the editor uses it for website/article/book/primary) —
+  every applicable chip ALWAYS rendered as `done/total` and
   color-coded (green met / amber partial / red behind / gray nothing-yet) so the
   slots line up when scanning down the table; built by `buildRequirementsCell_`
   ([`console_js.html`](apps-script/src/console_js.html), `.db-req` styles). Sources/
@@ -780,7 +783,7 @@ These supersede or refine the spec — apply them before defaulting to plan text
     and the drill-down builds through it instead of its own inline `||`
     fallback.
   - **Drill-down source cards** are a reading layout: title (linked) · one meta
-    line (classification, count, Cite/Tag/Note) · citation with an MLA hanging
+    line (classification, count, Citation/Primary/Secondary/Annotation flags) · citation with an MLA hanging
     indent and no box · labelled annotation · highlights collapsed in a native
     `<details>` with a "Main event 3 · Cause 2" summary (`highlightSummary_`).
     The `<details>` toggles in place and its nodes exist up front, which keeps
