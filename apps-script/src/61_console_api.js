@@ -437,8 +437,48 @@ function dashboardEnrolled_(scopedClasses) {
   const inScope = excludeSampleIfDisabled_(studentsInClasses_(scopedClasses));
   return inScope.map((s) => ({
     ID: s.ID, First: s.First, Last: s.Last, Email: s.Email,
-    Class: (s.classes && s.classes.length) ? s.classes.slice().sort()[0] : '',
+    Class: dashboardClassFor_(s.classes, scopedClasses),
   }));
+}
+
+/** Pure: the class to show for a student: first in-scope class, else first class. */
+function dashboardClassFor_(classes, scopedClasses) {
+  const sorted = (classes || []).slice().sort();
+  return sorted.find((c) => (scopedClasses || []).indexOf(c) >= 0) || sorted[0] || '';
+}
+
+/**
+ * The dashboard's student list: everyone enrolled in scope, plus the members
+ * of in-scope groups who are only in OTHER classes (a cross-period group
+ * shown on the P1 tab still lists its P9 member). Those extra rows carry
+ * otherClass: true so the client can label them and leave them out of the
+ * class's student count. `groupsInScope` comes from listGroupsForProject_.
+ */
+function dashboardRoster_(project, scopedClasses, groupsInScope) {
+  const enrolled = dashboardEnrolled_(scopedClasses);
+  const have = {};
+  enrolled.forEach((r) => { have[String(r.Email).toLowerCase()] = true; });
+  (groupsInScope || []).forEach((g) => {
+    (g.memberEmails || []).forEach((e) => {
+      const em = String(e).toLowerCase();
+      if (have[em]) return;
+      const r = getStudentRosterEntry_(em);
+      if (!r) return;
+      have[em] = true;
+      enrolled.push({
+        ID: r.ID, First: r.First, Last: r.Last, Email: r.Email,
+        Class: dashboardClassFor_((g.memberClassMap && g.memberClassMap[em]) || r.classes, []),
+        otherClass: true,
+      });
+    });
+  });
+  return enrolled;
+}
+
+/** Pure: does a group (with memberClasses) belong on a dashboard scoped to these classes? */
+function groupInDashboardScope_(group, scopedClasses) {
+  return ((group && group.memberClasses) || [group && group.className])
+    .some((c) => (scopedClasses || []).indexOf(c) >= 0);
 }
 
 /**
@@ -449,13 +489,13 @@ function dashboardEnrolled_(scopedClasses) {
  * (devTestDashboardParityParallelVsSerial) and an emergency fallback.
  */
 function computeDashboardParallel_(project, scopedClasses, bundle) {
-  const enrolled = dashboardEnrolled_(scopedClasses);
   const requirements = parseProjectRequirements_(project);
 
-  // Groups in scope — opens each group Sheet once (O(groups)) for membership +
-  // tab gids.
+  // Groups in scope (any member in a scoped class) — opens each group Sheet
+  // once (O(groups)) for membership + tab gids.
   const groupsInProject = listGroupsForProject_(project)
-    .filter((g) => scopedClasses.indexOf(g.className) >= 0);
+    .filter((g) => groupInDashboardScope_(g, scopedClasses));
+  const enrolled = dashboardRoster_(project, scopedClasses, groupsInProject);
   const emailToGroupSheet = {};   // emailLower → group sheetId
   const groupSheetToId = {};      // group sheetId → groupId
   const descById = {};            // sheetId → { id, sourcesGid, highlightsGid } for the CSV reader
@@ -530,6 +570,7 @@ function computeDashboardParallel_(project, scopedClasses, bundle) {
       email: r.Email,
       name:  composeStudentName_(r),
       class: String(r.Class || ''),
+      otherClass: !!r.otherClass,
       groupId: isGroup ? (groupSheetToId[studentSheetId[r.Email]] || null) : null,
       categoryMix:    agg.categoryMix,
       sourceCount:    agg.sourceCount,
@@ -549,6 +590,7 @@ function computeDashboardParallel_(project, scopedClasses, bundle) {
       groupId: g.groupId,
       name: g.name,
       className: g.className,
+      memberClasses: g.memberClasses,
       memberEmails: g.memberEmails,
       memberCount: g.memberCount,
       categoryMix:    agg.categoryMix,
@@ -574,8 +616,10 @@ function computeDashboardParallel_(project, scopedClasses, bundle) {
  * path produces identical aggregates, and as a hand-pull fallback.
  */
 function computeDashboardSerial_(project, scopedClasses, bundle) {
-  const enrolled = dashboardEnrolled_(scopedClasses);
   const requirements = parseProjectRequirements_(project);
+  const groupsInScope = listGroupsForProject_(project)
+    .filter((g) => groupInDashboardScope_(g, scopedClasses));
+  const enrolled = dashboardRoster_(project, scopedClasses, groupsInScope);
 
   const sheetCache = {};  // sheetId → { sources, highlights }
   function readForActor_(email) {
@@ -602,6 +646,7 @@ function computeDashboardSerial_(project, scopedClasses, bundle) {
       email: r.Email,
       name:  composeStudentName_(r),
       class: String(r.Class || ''),
+      otherClass: !!r.otherClass,
       groupId: fetched.isGroup ? fetched.meta.groupId : null,
       categoryMix:    agg.categoryMix,
       sourceCount:    agg.sourceCount,
@@ -614,9 +659,7 @@ function computeDashboardSerial_(project, scopedClasses, bundle) {
     };
   });
 
-  const groupsInProject = listGroupsForProject_(project);
-  const groups = groupsInProject
-    .filter((g) => scopedClasses.indexOf(g.className) >= 0)
+  const groups = groupsInScope
     .map((g) => {
       const ss = SpreadsheetApp.openById(g.sheetId);
       const sheetId = ss.getId();
@@ -631,6 +674,7 @@ function computeDashboardSerial_(project, scopedClasses, bundle) {
         groupId: g.groupId,
         name: g.name,
         className: g.className,
+        memberClasses: g.memberClasses,
         memberEmails: g.memberEmails,
         memberCount: g.memberCount,
         categoryMix:    agg.categoryMix,
@@ -775,7 +819,13 @@ function consoleGetStudentDetail(projectId, studentEmail) {
   const studentClass = sharedClasses[0] || '';
   if (!isAdmin_(staff)) {
     const teacherClasses = listClassesTaughtBy_(actorEmail);
-    if (!sharedClasses.some((c) => teacherClasses.indexOf(c) >= 0)) {
+    // Also allowed: a teammate in a cross-period group the teacher can see
+    // (an admin-made group spanning two teachers' sections).
+    const em = String(studentEmail).toLowerCase();
+    if (!sharedClasses.some((c) => teacherClasses.indexOf(c) >= 0) &&
+        !listGroupsForProject_(project).some((g) =>
+          (g.memberEmails || []).some((m) => String(m).toLowerCase() === em) &&
+          teacherCanSeeGroup_(teacherClasses, g))) {
       throw new Error('Not authorized for student ' + studentEmail);
     }
   }
@@ -852,7 +902,7 @@ function consoleListGroupsForProject(projectId) {
   let groups = listGroupsForProject_(project);
   if (!isAdmin_(staff)) {
     const taught = listClassesTaughtBy_(actorEmail);
-    groups = groups.filter((g) => taught.indexOf(g.className) >= 0);
+    groups = groups.filter((g) => teacherCanSeeGroup_(taught, g));
   }
   return { ok: true, groups };
 }
@@ -888,20 +938,20 @@ function consoleGroupCreate(projectId, name, memberEmails, mode) {
   const v = validateGroupCreate_(project, name, memberEmails);
   const joinMode = normalizeGroupJoinMode_(mode);
 
-  // Teacher scope: must teach the shared class.
-  if (!isAdmin_(staff)) {
-    const taught = listClassesTaughtBy_(actorEmail);
-    if (taught.indexOf(v.sharedClass) < 0) {
-      throw new Error('Class not in your scope');
-    }
+  // Teacher scope: a teacher must teach a class of EVERY member (members may
+  // come from different periods). Admins may group anyone in the project.
+  const taught = isAdmin_(staff) ? null : listClassesTaughtBy_(actorEmail);
+  if (taught && !teacherCanGroupMembers_(taught, v.memberClassLists)) {
+    throw new Error('You can only group students in sections you teach');
   }
+  const homeClass = chooseGroupHomeClass_(v.memberClassLists, taught);
 
   return withGroupLock_(() => {
-    // Stage: mint groupId + create the group Sheet.
+    // Stage: mint groupId + create the group Sheet in its home class folder.
     const groupId = uuid_();
     const projectFolder = DriveApp.getFolderById(project.rootFolderId);
-    const classFolder = findChildFolder_(projectFolder, v.sharedClass) ||
-                        projectFolder.createFolder(v.sharedClass);
+    const classFolder = findChildFolder_(projectFolder, homeClass) ||
+                        projectFolder.createFolder(homeClass);
     const created = createGroupSheet_(project, classFolder, v.trimmedName, groupId, v.rosters);
 
     // Phase A — find each member's solo Sheet and (combine) copy its rows in.
@@ -969,7 +1019,8 @@ function consoleGroupCreate(projectId, name, memberEmails, mode) {
       groupId,
       groupSheetId: created.spreadsheet.getId(),
       name: v.trimmedName,
-      className: v.sharedClass,
+      className: homeClass,
+      memberClasses: unionMemberClasses_(v.memberClassLists.reduce((m, l, i) => { m[i] = l; return m; }, {}), homeClass),
       mode: joinMode,
       sourcesCopied,
       highlightsCopied,
@@ -1006,20 +1057,14 @@ function consoleGroupMoveStudent(projectId, email, fromGroupId, toGroupId) {
   fromGroup.groupId = fromGroupId;
   toGroup.groupId   = toGroupId;
 
-  // Same-class invariant.
-  if (fromGroup.classFolder.getId() !== toGroup.classFolder.getId()) {
-    throw new Error('Cannot move across classes');
-  }
-
-  // Teacher scope.
-  if (!isAdmin_(staff)) {
-    const taught = listClassesTaughtBy_(actorEmail);
-    if (taught.indexOf(fromGroup.classFolder.getName()) < 0) {
-      throw new Error('Class not in your scope');
-    }
-  }
-
   const target = String(email).toLowerCase();
+
+  // Teacher scope: must see the source group and teach a class of every
+  // member of the target group as it will be (groups may span periods).
+  assertTeacherSeesGroup_(staff, actorEmail, project, fromGroup);
+  assertTeacherCanGroup_(staff, actorEmail, project,
+    currentMembers_(toGroup.spreadsheet).map((m) => String(m.email).toLowerCase()).concat([target]));
+
   if (!currentMembers_(fromGroup.spreadsheet).find((m) => String(m.email).toLowerCase() === target)) {
     throw new Error(email + ' is not a current member of the source group');
   }
@@ -1071,12 +1116,7 @@ function consoleGroupDisband(projectId, groupId) {
   if (!group) throw new Error('Group not found: ' + groupId);
   group.groupId = groupId;
 
-  if (!isAdmin_(staff)) {
-    const taught = listClassesTaughtBy_(actorEmail);
-    if (taught.indexOf(group.classFolder.getName()) < 0) {
-      throw new Error('Class not in your scope');
-    }
-  }
+  assertTeacherSeesGroup_(staff, actorEmail, project, group);
 
   return withGroupLock_(() => {
     const result = disbandGroupCore_(project, group, actorEmail);
@@ -1107,14 +1147,10 @@ function consoleGroupRemoveStudent(projectId, groupId, email) {
   if (!group) throw new Error('Group not found: ' + groupId);
   group.groupId = groupId;
 
-  if (!isAdmin_(staff)) {
-    const taught = listClassesTaughtBy_(actorEmail);
-    if (taught.indexOf(group.classFolder.getName()) < 0) {
-      throw new Error('Class not in your scope');
-    }
-  }
-
   const target = String(email).toLowerCase();
+  // Teacher scope: must teach the student being removed.
+  assertTeacherCanGroup_(staff, actorEmail, project, [target]);
+
   if (!currentMembers_(group.spreadsheet).find((m) => String(m.email).toLowerCase() === target)) {
     throw new Error(email + ' is not a current member of this group');
   }
@@ -1149,16 +1185,14 @@ function consoleAddToGroup(projectId, groupId, email) {
 
   const roster = getStudentRosterEntry_(email);
   if (!roster) throw new Error('Not on roster: ' + email);
-  if (String(roster.Class || '').trim() !== group.classFolder.getName()) {
-    throw new Error('Member must be in class ' + group.classFolder.getName());
-  }
-  if (!isAdmin_(staff)) {
-    const taught = listClassesTaughtBy_(actorEmail);
-    if (taught.indexOf(group.classFolder.getName()) < 0) {
-      throw new Error('Class not in your scope');
-    }
-  }
   const target = String(email).toLowerCase();
+  if (!projectClassesForStudent_(target, project).length) {
+    throw new Error(email + ' is not in a class enrolled in this project');
+  }
+  // Teacher scope: must teach a class of every member of the group as it
+  // will be, the new student included (groups may span periods).
+  assertTeacherCanGroup_(staff, actorEmail, project,
+    currentMembers_(group.spreadsheet).map((m) => String(m.email).toLowerCase()).concat([target]));
   if (findGroupSheetForStudent_(target, project)) {
     throw new Error(email + ' is already in a group — move them instead');
   }
@@ -1274,12 +1308,7 @@ function consoleGetGroupDashboard(projectId, groupId) {
   const located = findGroupFileByGroupId_(project, groupId);
   if (!located) throw new Error('Group not found: ' + groupId);
 
-  if (!isAdmin_(staff)) {
-    const taught = listClassesTaughtBy_(actorEmail);
-    if (taught.indexOf(located.classFolder.getName()) < 0) {
-      throw new Error('Class not in your scope');
-    }
-  }
+  assertTeacherSeesGroup_(staff, actorEmail, project, located);
 
   const ss = located.spreadsheet;
   const sources    = readAllAsObjects_(getTab_(ss, TABS.SOURCES),    HEADERS.SOURCES);

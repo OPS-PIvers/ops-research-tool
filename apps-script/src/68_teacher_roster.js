@@ -58,15 +58,28 @@ function normalizeRosterEmail_(raw) {
 
 /**
  * Pure: which of a project's groups the student must leave when unenrolled from
- * classKey. A group is filed under one class folder (g.className); leave it if
- * it's this class, or if the student shares no other class with the project.
+ * classKey. They stay only while they still share a project class with one of
+ * their teammates. Leave when they share no other class with the project, or
+ * none of their remaining project classes is a teammate's class. Groups may
+ * span periods, so this uses the members' classes (g.memberClassMap), not the
+ * folder the group Sheet sits in. A group without a memberClassMap (legacy
+ * caller) falls back to its home class.
  */
 function groupsToLeaveOnUnenroll_(groups, email, classKey, remainingProjectClasses) {
   const e = String(email || '').toLowerCase();
-  const orphaned = !(remainingProjectClasses || []).length;
-  return (groups || []).filter((g) =>
-    (g.memberEmails || []).some((m) => String(m).toLowerCase() === e) &&
-    (orphaned || g.className === classKey));
+  const remaining = remainingProjectClasses || [];
+  const orphaned = !remaining.length;
+  return (groups || []).filter((g) => {
+    if (!(g.memberEmails || []).some((m) => String(m).toLowerCase() === e)) return false;
+    if (orphaned) return true;
+    if (!g.memberClassMap) return g.className === classKey;
+    const teammateClasses = {};
+    Object.keys(g.memberClassMap).forEach((m) => {
+      if (m === e) return;
+      (g.memberClassMap[m] || []).forEach((c) => { teammateClasses[c] = true; });
+    });
+    return !remaining.some((c) => teammateClasses[c]);
+  });
 }
 
 /** Pure: roster rows → client rows sorted Last, First (nameless rows last, by email). No Dates. */

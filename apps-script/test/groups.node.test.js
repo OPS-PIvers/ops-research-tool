@@ -9,7 +9,7 @@ const path = require('path');
 const vm = require('vm');
 
 const srcDir = path.join(__dirname, '..', 'src');
-const src = ['02_constants.js', '11_provisioning.js', '66_groups.js']
+const src = ['02_constants.js', '11_provisioning.js', '61_console_api.js', '66_groups.js']
   .map((f) => fs.readFileSync(path.join(srcDir, f), 'utf8')).join('\n');
 
 const sandbox = {};
@@ -18,6 +18,8 @@ vm.runInContext(src, sandbox);
 const {
   normalizeGroupJoinMode_, rowsNotYetIn_, fillBlankSourceFields_,
   soloSheetName_, soloSheetNameMatches_,
+  unionMemberClasses_, teacherCanGroupMembers_, teacherCanSeeGroup_, chooseGroupHomeClass_,
+  dashboardClassFor_, groupInDashboardScope_,
 } = sandbox;
 
 let failures = 0;
@@ -65,6 +67,26 @@ console.log('solo-Sheet name matching (the merge-lookup bug):');
   check('legacy bare-email name matches', soloSheetNameMatches_(email, email));
   check('longer local part does not match', !soloSheetNameMatches_(soloSheetName_('P', 'jann.lee@student.example.org'), email));
   check('group sheet does not match', !soloSheetNameMatches_('[grp] Group 1', email));
+}
+
+console.log('cross-period groups:');
+{
+  eq('union of member classes, sorted + deduped',
+    unionMemberClasses_({ a: ['P9'], b: ['P1', 'P9'] }, 'P1'), ['P1', 'P9']);
+  eq('no enrolled members -> home class', unionMemberClasses_({ a: [] }, 'P1'), ['P1']);
+  eq('teacher of P1 + P9 can group P1 with P9', teacherCanGroupMembers_(['P1', 'P9'], [['P1'], ['P9']]), true);
+  eq('teacher of P1 only cannot pull in P9', teacherCanGroupMembers_(['P1'], [['P1'], ['P9']]), false);
+  eq('multi-class student counts if any class is taught', teacherCanGroupMembers_(['P1'], [['P1'], ['P1', 'P9']]), true);
+  eq('student in no project class -> no', teacherCanGroupMembers_(['P1'], [['P1'], []]), false);
+  eq('sees a group with one taught member class', teacherCanSeeGroup_(['P9'], { memberClasses: ['P1', 'P9'] }), true);
+  eq('does not see an untaught group', teacherCanSeeGroup_(['P3'], { memberClasses: ['P1', 'P9'] }), false);
+  eq('home = first class the teacher teaches', chooseGroupHomeClass_([['P9'], ['P3']], ['P9']), 'P9');
+  eq('admin home = first member class', chooseGroupHomeClass_([['P9'], ['P3']], null), 'P3');
+  eq('row class = first in-scope class', dashboardClassFor_(['P1', 'P9'], ['P9']), 'P9');
+  eq('row class falls back to first class', dashboardClassFor_(['P9', 'P1'], []), 'P1');
+  eq('group in scope via any member class', groupInDashboardScope_({ className: 'P1', memberClasses: ['P1', 'P9'] }, ['P9']), true);
+  eq('group out of scope', groupInDashboardScope_({ className: 'P1', memberClasses: ['P1', 'P9'] }, ['P3']), false);
+  eq('legacy group without memberClasses uses home', groupInDashboardScope_({ className: 'P1' }, ['P1']), true);
 }
 
 if (failures) { console.error('\n' + failures + ' FAILED'); process.exit(1); }
