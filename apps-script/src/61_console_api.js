@@ -800,7 +800,7 @@ function consoleGetStudentDetail(projectId, studentEmail) {
       annotation: s.annotation || '',
       formattedCitation: formatted,
       completionFlags: {
-        citation:       isCitationComplete_(parsed),
+        citation:       isSourceCited_(s),
         classification: s.primarySecondary && s.primarySecondary !== 'unset',
         annotation:     !!(s.annotation && String(s.annotation).trim().length > 0),
       },
@@ -1302,7 +1302,7 @@ function consoleGetGroupDashboard(projectId, groupId) {
       annotation: s.annotation || '',
       formattedCitation: formatted,
       completionFlags: {
-        citation:       isCitationComplete_(parsed),
+        citation:       isSourceCited_(s),
         classification: s.primarySecondary && s.primarySecondary !== 'unset',
         annotation:     !!(s.annotation && String(s.annotation).trim().length > 0),
       },

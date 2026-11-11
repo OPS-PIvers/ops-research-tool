@@ -489,9 +489,9 @@ These supersede or refine the spec — apply them before defaulting to plan text
   sample students vanish from the dashboard, project-card counts, and admin
   roster (real students you add always show). State is a ScriptProperty
   (`OPS_SAMPLE_ENABLED`) returned in `consoleGetContext.sampleDataEnabled` and
-  folded into the dashboard cache key (`:s0`/`:s1`). The completion metric uses
-  the raw `parseCitationFields_` (see §5), so a "cited" sample source writes
-  `title`+`url` into `citationFields`. **No groups seeded** (solo students only)
+  folded into the dashboard cache key (`:s0`/`:s1`). A "cited" sample source
+  writes every required field for its type into `citationFields`
+  (`isSourceCited_`, below). **No groups seeded** (solo students only)
   — demo group drill-down by merging samples live, or add a sample group later.
   Hard teardown (trash Sheets + drop roster rows): `devClearSampleData()` /
   `consoleClearSampleData()`. Toggle is brand-styled (blue on / gray off, no
@@ -729,9 +729,17 @@ These supersede or refine the spec — apply them before defaulting to plan text
     write paths (`upsertSource_`, `sidebarUpdateSource`), so a giant paste
     can't hit the 50k cell limit and wedge the source's queue. "Copy citation"
     (`formatInlineCitation`) follows a paste too (`pastedInlineCitation_`:
-    quoted title, italic title, or the leading author name). It **counts as cited** via `isCitationComplete_`
+    quoted title, italic title, or the leading author name). It **counts as cited** via `isSourceCited_`
     ([`62_aggregator.js`](apps-script/src/62_aggregator.js)), the single
     "citation done" rule used by the dashboard metric and the drill-down flags.
+    **Cited = pasted, OR the student edited at least one citation field AND
+    every required field for the type has a value, scraped values included
+    (2026-11-11).** Required = the editors' "Not filled in yet" fields
+    (`CITATION_REQUIRED_FIELDS`, which must match `sourceFieldsFor_` in
+    `source_editor_js.html` + `extension/content/sidebar.js`); URL is never
+    required. The old rule (student-typed title AND url) read near 0% because
+    students never retype the prefilled scraped title/URL, and books have no
+    URL field.
     The bibliography sorts it by its own first word. UI: a paste box on the
     extension Source tab AND the Docs source editor (`renderPasteBlock_` +
     `citationFromClipboard_` in both, which keeps `<i>`/`<em>`/inline-italic

@@ -42,7 +42,7 @@ console.log('validateRequirementsInput_:');
 
 console.log('computeCompletionSummary_:');
 {
-  const cited = JSON.stringify({ title: 'A', url: 'u' });
+  const cited = JSON.stringify({ title: 'A', author: 'B', siteName: 'C', publishedDate: '2020' });   // every required website field
   const sources = [
     { sourceId: 's1', primarySecondary: 'unset',   annotation: 'n', citationFields: cited },  // cited + noted, untagged
     { sourceId: 's2', primarySecondary: 'primary', annotation: '',  citationFields: '{}' },   // tagged only
