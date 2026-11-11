@@ -1964,6 +1964,68 @@ function devTestGroupsAll() {
 // ============================================================
 
 /**
+ * Move a student DEV → DEVP1 (both in the Dev Project, both taught by the
+ * runner): enrolled only in DEVP1 afterward, the SAME solo Sheet with their
+ * source still resolves, the dashboard lists them under DEVP1, and the move
+ * targets list DEVP1. Temporarily adds DEVP1 to the Dev Project's classes;
+ * restores them in finally.
+ */
+function devTestTeacherRosterMove() {
+  const project = devSeedDevProject();
+  const me = Session.getEffectiveUser().getEmail();
+  const emails = devGroupsSeedRoster_(1);
+  const em = emails[0];
+  if (!getClassRecord_('DEVP1')) createClass_('DEVP1', me, '');
+  const projTab = getTab_(SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID), TABS.PROJECTS);
+  const pRow = findRowByKey_(projTab, HEADERS.PROJECTS, 'projectId', project.projectId);
+  const mcCol = HEADERS.PROJECTS.indexOf('memberClasses') + 1;
+  const origClasses = projTab.getRange(pRow, mcCol).getValue();
+  projTab.getRange(pRow, mcCol).setValue(origClasses ? origClasses + ',DEVP1' : 'DEV,DEVP1');
+  invalidateProjectsCache_(); invalidateRosterCache_(); bumpSheetRefVersion_();
+
+  const { check, state } = devGroupsChecker_();
+  try {
+    const proj = getProject_(project.projectId);
+    const ss = findOrCreateStudentSheet_(em, proj);
+    const sheetId = ss.getId();
+    upsertSource_(ss, { sourceId: 'mv-src-' + em, projectId: proj.projectId,
+      rawUrl: 'https://devg.example.com/move-class/' + em, createdByEmail: em });
+
+    const targets = consoleGetMoveTargets('DEV', em);
+    check('DEVP1 offered as a target', (targets.targets || []).some((t) => t.classKey === 'DEVP1'));
+    check('no project lost moving DEV -> DEVP1',
+      ((targets.targets || []).find((t) => t.classKey === 'DEVP1') || {}).lostProjects.length === 0);
+
+    const r = consoleMoveStudentToClass('DEV', 'DEVP1', em);
+    check('move ok', r && r.ok === true && r.toClass === 'DEVP1');
+    check('gone from the DEV roster', !(r.students || []).some((s) => s.email === em));
+    const classes = getStudentClasses_(em);
+    check('enrolled only in DEVP1', JSON.stringify(classes) === JSON.stringify(['DEVP1']));
+
+    bumpSheetRefVersion_();
+    const after = getSoloSheetIfExists_(em, proj);
+    check('same Sheet after the move', !!after && after.getId() === sheetId);
+    check('source still there', !!after &&
+      readAllAsObjects_(getTab_(after, TABS.SOURCES), HEADERS.SOURCES).some((s) => s.sourceId === 'mv-src-' + em));
+    const dash = consoleGetProjectDashboard(proj.projectId, 'DEVP1', true);
+    const row = (dash.students || []).find((s) => s.email === em);
+    check('dashboard lists them under DEVP1 with their source', !!row && row.class === 'DEVP1' && row.sourceCount === 1);
+
+    let same = false;
+    try { consoleMoveStudentToClass('DEVP1', 'DEVP1', em); } catch (e) { same = true; }
+    check('moving to the same section is refused', same);
+  } finally {
+    try { unenroll_(em, 'DEVP1'); } catch (e) {}
+    projTab.getRange(pRow, mcCol).setValue(origClasses);
+    invalidateProjectsCache_();
+    try { deleteClass_('DEVP1'); } catch (e) {}
+    devGroupsTestCleanup_(emails);
+  }
+  console.log(state.pass + '/' + (state.pass + state.fail) + ' passed');
+  return state;
+}
+
+/**
  * Pure auth/normalization checks + a live DEV round trip: unenroll a grouped
  * student (group exit runs first → solo Sheet rebuilt, 2-member group
  * auto-disbands), re-enroll by a messy-cased email, and confirm the SAME solo

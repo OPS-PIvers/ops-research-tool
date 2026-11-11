@@ -3680,6 +3680,13 @@ function openManageRosterModal_(classKey) {
         who.appendChild(em);
       }
       row.appendChild(who);
+      const mv = document.createElement('button');
+      mv.className = 'roster-modal__remove roster-modal__move';
+      mv.textContent = 'Move…';
+      mv.disabled = st.busy;
+      mv.setAttribute('aria-label', 'Move ' + s.name + ' to another section');
+      mv.addEventListener('click', () => openMove(s));
+      row.appendChild(mv);
       const rm = document.createElement('button');
       rm.className = 'roster-modal__remove';
       rm.textContent = 'Remove';
@@ -3789,6 +3796,134 @@ function openManageRosterModal_(classKey) {
     cb.appendChild(m);
     document.body.appendChild(cb);
     ok.focus();
+  };
+
+  // Move to another section: enroll there + leave here in one step. Work is
+  // stored per student, so it comes along. Stacked over the roster modal.
+  const openMove = (s) => {
+    const display = [s.first, s.last].filter(Boolean).join(' ') || s.email;
+    const cb = document.createElement('div');
+    cb.className = 'modal-backdrop';
+    cb.id = 'roster-confirm-backdrop';
+    cb.addEventListener('click', (e) => { if (e.target === cb) cb.remove(); });
+    const m = document.createElement('div');
+    m.className = 'modal roster-move';
+    const h = document.createElement('div');
+    h.className = 'modal__header';
+    h.textContent = 'Move ' + display + ' to another section';
+    m.appendChild(h);
+    const b = document.createElement('div');
+    b.className = 'modal__body';
+    const msg = document.createElement('p');
+    msg.className = 'roster-move__text';
+    msg.textContent = 'Loading sections…';
+    b.appendChild(msg);
+    m.appendChild(b);
+    const f = document.createElement('div');
+    f.className = 'modal__footer';
+    const cancel = document.createElement('button');
+    cancel.className = 'modal__btn';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', () => cb.remove());
+    f.appendChild(cancel);
+    const ok = document.createElement('button');
+    ok.className = 'modal__btn modal__btn--primary';
+    ok.textContent = 'Move';
+    ok.disabled = true;
+    f.appendChild(ok);
+    m.appendChild(f);
+    cb.appendChild(m);
+    document.body.appendChild(cb);
+    cancel.focus();
+
+    const showTargets = (resp) => {
+      const targets = (resp && resp.targets) || [];
+      b.innerHTML = '';
+      if (!targets.length) {
+        const p = document.createElement('p');
+        p.className = 'roster-move__text';
+        p.textContent = 'There\'s no other section you can move ' + display +
+          ' into. To move them to another teacher\'s section, ask an admin.';
+        b.appendChild(p);
+        return;
+      }
+      const lab = document.createElement('label');
+      lab.className = 'roster-move__label';
+      lab.textContent = 'Move from ' + st.label + ' to';
+      const sel = document.createElement('select');
+      sel.className = 'roster-move__select';
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = 'Choose a section…';
+      sel.appendChild(blank);
+      targets.forEach((t) => {
+        const o = document.createElement('option');
+        o.value = t.classKey;
+        o.textContent = t.label;
+        sel.appendChild(o);
+      });
+      lab.appendChild(sel);
+      b.appendChild(lab);
+      const keep = document.createElement('p');
+      keep.className = 'roster-move__text';
+      keep.textContent = 'Their sources, highlights and annotations come with them. Group members ' +
+        'stay in their group while they still share a section with a teammate.';
+      b.appendChild(keep);
+      const warn = document.createElement('div');
+      warn.className = 'roster-move__warn';
+      warn.setAttribute('role', 'status');
+      warn.hidden = true;
+      b.appendChild(warn);
+      const ferr = document.createElement('div');
+      ferr.className = 'modal__error';
+      ferr.setAttribute('role', 'alert');
+      b.appendChild(ferr);
+      sel.addEventListener('change', () => {
+        const t = targets.find((x) => x.classKey === sel.value);
+        ok.disabled = !t;
+        const lost = (t && t.lostProjects) || [];
+        warn.hidden = !lost.length;
+        warn.textContent = lost.length
+          ? t.label + ' isn\'t in ' + lost.join(', ') + ', so ' + display +
+            ' will drop out of ' + (lost.length === 1 ? 'that project' : 'those projects') +
+            '. Their work there is kept and comes back if they rejoin a section in it.'
+          : '';
+      });
+      ok.onclick = () => {
+        const t = targets.find((x) => x.classKey === sel.value);
+        if (!t) return;
+        ok.disabled = true; cancel.disabled = true; sel.disabled = true;
+        ok.textContent = 'Moving…';
+        ferr.textContent = '';
+        setBusy(true);
+        google.script.run
+          .withSuccessHandler((r) => {
+            setBusy(false);
+            if (!r || !r.ok) {
+              ok.textContent = 'Move'; ok.disabled = false; cancel.disabled = false; sel.disabled = false;
+              ferr.textContent = (r && r.message) || 'Could not move that student.';
+              return;
+            }
+            cb.remove();
+            apply(r);
+            st.changed = true;
+            setStatus('Moved ' + display + ' to ' + (r.toLabel || t.label) + '.', 'good', 4000);
+          })
+          .withFailureHandler((e2) => {
+            setBusy(false);
+            ok.textContent = 'Move'; ok.disabled = false; cancel.disabled = false; sel.disabled = false;
+            ferr.textContent = 'Move failed: ' + String(e2 && e2.message || e2);
+          })
+          .consoleMoveStudentToClass(classKey, t.classKey, s.email);
+      };
+      sel.focus();
+    };
+    google.script.run
+      .withSuccessHandler(showTargets)
+      .withFailureHandler((e2) => {
+        msg.textContent = 'Could not load sections: ' + String(e2 && e2.message || e2);
+      })
+      .consoleGetMoveTargets(classKey, s.email);
   };
 
   google.script.run

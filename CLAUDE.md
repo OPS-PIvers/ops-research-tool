@@ -739,6 +739,18 @@ These supersede or refine the spec — apply them before defaulting to plan text
   blank projectId, `class=…;email=…`). After a change the modal refetches the
   current dashboard view with bypassCache. Other dashboard scopes age out
   within the 45s TTL.
+  **Move… (2026-11-11)** sits beside Remove on each row:
+  `consoleGetMoveTargets(classKey, email)` lists sections the actor may move
+  them into (teacher: active classes they teach; admin: any active class), each
+  with `lostProjects` (active projects the student would drop out of because
+  the new section isn't in them; pure `projectsLostOnMove_`), and the dialog
+  warns before such a move. `consoleMoveStudentToClass(from, to, email)` needs
+  roster rights on BOTH classes, applies the same other-teacher guard as Add
+  (ignoring the class being left), enrolls in `to`, then runs `leaveClass_`
+  (the unenroll core, shared with Remove) on `from`. Nothing moves on disk:
+  work is per (student, project) and found by email in any class folder. Audit
+  rows carry `move;from=` / `move;to=`. Tests: `devTestTeacherRosterMove`
+  (temporarily adds DEVP1 to the Dev Project) + node.
 - **Pasted citations, source links, drill-down cleanup (2026-10-27 teacher
   feedback batch; ships with extension v0.1.5).**
   - **Pasted citation.** A student can paste the citation a database or

@@ -1351,6 +1351,27 @@ a.dd-source-card__title:hover { color: var(--c-accent); text-decoration: underli
 .roster-modal__remove:hover:not(:disabled) { background: var(--c-brand-secondary-tint); }
 .roster-modal__remove:disabled { opacity: 0.5; cursor: not-allowed; }
 .roster-modal__empty { padding: 12px 10px; font-size: 13px; color: var(--c-muted); }
+/* Move is the everyday action; Remove keeps the red. */
+.roster-modal__move {
+  color: var(--c-brand-primary);
+  border-color: var(--c-brand-primary-200);
+}
+.roster-modal__move:hover:not(:disabled) { background: var(--c-brand-primary-tint); }
+.roster-move { max-width: 460px; }
+.roster-move__label {
+  display: block; font-size: 13px; font-weight: 600; color: var(--c-heading);
+}
+.roster-move__select {
+  display: block; width: 100%; margin-top: 6px; padding: 7px 8px;
+  border: 1px solid #949494; border-radius: 4px; font: inherit; font-size: 14px;
+  background: var(--c-bg); color: var(--c-text);
+}
+.roster-move__text { margin: 12px 0 0 0; font-size: 13px; line-height: 1.5; color: var(--c-muted); }
+.roster-move__text:first-child { margin-top: 0; }
+.roster-move__warn {
+  margin-top: 12px; padding: 10px 12px; border-radius: 4px; font-size: 13px; line-height: 1.5;
+  background: var(--stop-warn-bg); color: var(--stop-warn);
+}
 .db-manage--on {
   background: var(--c-brand-primary-tint);
   border-color: var(--c-brand-primary);
