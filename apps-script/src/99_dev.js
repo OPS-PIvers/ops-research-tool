@@ -1374,7 +1374,7 @@ function devTestGroupRoutingProvisioning() {
     const projectFolder = DriveApp.getFolderById(project.rootFolderId);
     const classFolder = findChildFolder_(projectFolder, 'DEV');
     check('no solo Sheets remain at class root',
-      emails.every((e) => findChildFile_(classFolder, e) === null));
+      emails.every((e) => findSoloSheetFile_(classFolder, e) === null));
 
     resetGroupSheetCache_(); bumpSheetRefVersion_();
     emails.forEach((e) => {
@@ -1456,7 +1456,7 @@ function devTestGroupMergeMigrationFidelity() {
 
     const projectFolder = DriveApp.getFolderById(project.rootFolderId);
     const classFolder = findChildFolder_(projectFolder, 'DEV');
-    check('solo Sheets trashed post-merge', emails.every((e) => findChildFile_(classFolder, e) === null));
+    check('solo Sheets trashed post-merge', emails.every((e) => findSoloSheetFile_(classFolder, e) === null));
   } finally {
     try {
       resetGroupSheetCache_(); bumpSheetRefVersion_();
@@ -1511,7 +1511,7 @@ function devTestGroupDisbandRoundTrip() {
     const projectFolder = DriveApp.getFolderById(project.rootFolderId);
     const classFolder = findChildFolder_(projectFolder, 'DEV');
     emails.forEach((e) => {
-      const f = findChildFile_(classFolder, e);
+      const f = findSoloSheetFile_(classFolder, e);
       check('solo Sheet reconstructed for ' + e, !!f);
       if (f) {
         const ss = SpreadsheetApp.openById(f.getId());
@@ -1585,7 +1585,7 @@ function devTestGroupMoveSemantics() {
     check('G2 auto-disbanded', getGroupById_(project, g2.groupId) === null);
     const projectFolder = DriveApp.getFolderById(project.rootFolderId);
     const classFolder = findChildFolder_(projectFolder, 'DEV');
-    const cFile = findChildFile_(classFolder, emails[2]);
+    const cFile = findSoloSheetFile_(classFolder, emails[2]);
     check('C reconstructed to solo', !!cFile);
     if (cFile) {
       const cHls = readAllAsObjects_(getTab_(SpreadsheetApp.openById(cFile.getId()), TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS);
@@ -1651,7 +1651,7 @@ function devTestGroupAddToGroup() {
     // C's solo Sheet was trashed.
     const projectFolder = DriveApp.getFolderById(project.rootFolderId);
     const classFolder = findChildFolder_(projectFolder, 'DEV');
-    check('C solo Sheet trashed', findChildFile_(classFolder, emails[2]) === null);
+    check('C solo Sheet trashed', findSoloSheetFile_(classFolder, emails[2]) === null);
   } finally {
     try {
       resetGroupSheetCache_(); bumpSheetRefVersion_();
@@ -1733,6 +1733,87 @@ function devTestGroupAuthorizationGate() {
 }
 
 /**
+ * "Start fresh" merge: the group starts empty, each member's solo Sheet is set
+ * aside in DEV/Archived-students/ stamped with the groupId, writes route to the
+ * group, and disbanding brings the pre-group Sheet back with the group-period
+ * work on top. Also locks the merge lookup against the friendly solo-Sheet name
+ * (the 2026-11 bug: an exact-email filename match found nothing).
+ */
+function devTestGroupStartFresh() {
+  const project = devSeedDevProject();
+  const emails = devGroupsSeedRoster_(2);
+  const { check, state } = devGroupsChecker_();
+  try {
+    const bundle = listBundles_().find((b) => b.bundleId === project.bundleId);
+    emails.forEach((email) => {
+      const ss = findOrCreateStudentSheet_(email, project);
+      upsertSource_(ss, {
+        sourceId: 'fresh-src-' + email, projectId: project.projectId,
+        rawUrl: 'https://devg.example.com/fresh/' + email, scrapedTitle: 'fresh ' + email,
+        primarySecondary: 'primary', annotation: 'a', createdByEmail: email,
+      });
+      upsertHighlight_(ss, {
+        highlightId: 'fresh-hl-' + email, sourceId: 'fresh-src-' + email, projectId: project.projectId,
+        primaryCategory: bundle.label1, highlightedText: 'hl ' + email, createdByEmail: email,
+      });
+    });
+    const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+    const classFolder = findChildFolder_(projectFolder, 'DEV');
+    check('seeded solo uses the friendly name',
+      emails.every((e) => { const f = findSoloSheetFile_(classFolder, e); return f && f.getName() !== e; }));
+
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
+    const merge = consoleGroupCreate(project.projectId, 'FreshProbe', emails, 'fresh');
+    check('merge ok + mode fresh', merge && merge.ok === true && merge.mode === 'fresh');
+    check('nothing copied', merge.sourcesCopied === 0 && merge.highlightsCopied === 0);
+    check('setAsideCount = 2', merge.setAsideCount === 2);
+    const grpSs = SpreadsheetApp.openById(merge.groupSheetId);
+    check('group starts empty',
+      readAllAsObjects_(getTab_(grpSs, TABS.SOURCES), HEADERS.SOURCES).length === 0 &&
+      readAllAsObjects_(getTab_(grpSs, TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS).length === 0);
+    check('no live solo at class root', emails.every((e) => findSoloSheetFile_(classFolder, e) === null));
+    const archived = findChildFolder_(classFolder, NAMES.ARCHIVED_STUDENTS_FOLDER);
+    check('solo set aside + stamped', !!archived && emails.every((e) => {
+      const f = findSoloSheetFile_(archived, e);
+      return f && String(readGroupMeta_(SpreadsheetApp.openById(f.getId())).groupId) === merge.groupId;
+    }));
+
+    // Group-period write by member 0 routes to the group.
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
+    const routed = findOrCreateStudentSheet_(emails[0], project);
+    check('write routes to group', routed.getId() === merge.groupSheetId);
+    upsertSource_(routed, {
+      sourceId: 'fresh-src-grp-' + emails[0], projectId: project.projectId,
+      rawUrl: 'https://devg.example.com/fresh-grp/' + emails[0], createdByEmail: emails[0],
+    });
+
+    consoleGroupDisband(project.projectId, merge.groupId);
+    const solo0 = findSoloSheetFile_(classFolder, emails[0]);
+    const solo1 = findSoloSheetFile_(classFolder, emails[1]);
+    check('set-aside Sheets restored on disband', !!solo0 && !!solo1);
+    if (solo0) {
+      const ss0 = SpreadsheetApp.openById(solo0.getId());
+      const ids = readAllAsObjects_(getTab_(ss0, TABS.SOURCES), HEADERS.SOURCES).map((r) => r.sourceId).sort();
+      check('member 0 has pre-group + group-period source',
+        JSON.stringify(ids) === JSON.stringify(['fresh-src-' + emails[0], 'fresh-src-grp-' + emails[0]].sort()));
+      check('stamp cleared on restore', !readGroupMeta_(ss0).groupId);
+    }
+    if (solo1) {
+      const n = readAllAsObjects_(getTab_(SpreadsheetApp.openById(solo1.getId()), TABS.HIGHLIGHTS), HEADERS.HIGHLIGHTS).length;
+      check('member 1 keeps pre-group highlight', n === 1);
+    }
+  } finally {
+    try {
+      resetGroupSheetCache_(); bumpSheetRefVersion_();
+      listGroupsForProject_(project, 'DEV').forEach((g) => { try { consoleGroupDisband(project.projectId, g.groupId); } catch (e) {} });
+    } catch (e) {}
+    devGroupsTestCleanup_(emails);
+  }
+  console.log(state.pass + '/' + (state.pass + state.fail) + ' passed');
+  return state;
+}
+
+/**
  * Run every sub-project-D group test in sequence and print ONE summary, so
  * you don't have to Run each from the editor dropdown. Each test seeds its own
  * fixture and cleans up in a finally block, so back-to-back runs are safe.
@@ -1746,6 +1827,7 @@ function devTestGroupsAll() {
     ['devTestGroupMoveSemantics',          devTestGroupMoveSemantics],
     ['devTestGroupAddToGroup',             devTestGroupAddToGroup],
     ['devTestGroupAuthorizationGate',      devTestGroupAuthorizationGate],
+    ['devTestGroupStartFresh',             devTestGroupStartFresh],
   ];
   let pass = 0, fail = 0, threw = 0;
   const lines = [];

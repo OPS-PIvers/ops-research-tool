@@ -858,20 +858,26 @@ function consoleListGroupsForProject(projectId) {
 }
 
 /**
- * Create a group containing the listed members and migrate their existing
- * sources + highlights into the new group Sheet.
+ * Create a group containing the listed members. `mode` (GROUP_JOIN_MODES)
+ * decides what happens to their existing solo work:
+ *   'combine' (default) — sources + highlights are copied into the group Sheet
+ *                         and the solo Sheets trashed.
+ *   'fresh'             — the group starts empty; each solo Sheet is set aside
+ *                         in Archived-students/ and comes back if they leave.
  *
- * Atomic order (spec §7.1):
+ * Order:
  *   1. Validate inputs + preconditions (validateGroupCreate_).
  *   2. Mint groupId; create group Sheet + tabs + Meta + Members.
- *   3. For each member: copy rows from solo Sheet → group Sheet, stamp
- *      Meta.groupId on the solo Sheet, move it to Archived-students/.
- *   4. Audit one row per member.
+ *   3. Find every member's solo Sheet (any class folder, either name format)
+ *      and, for combine, copy its rows in. Any failure here trashes the new
+ *      group Sheet and leaves every solo Sheet untouched.
+ *   4. Only then trash (combine) or set aside (fresh) the solo Sheets.
+ *   5. Audit one row per member.
  *
- * Returns { ok, groupId, groupSheetId, name, classFolder,
- *           sourcesCopied, highlightsCopied, errors }.
+ * Returns { ok, groupId, groupSheetId, name, className, mode,
+ *           sourcesCopied, highlightsCopied, setAsideCount, errors }.
  */
-function consoleGroupCreate(projectId, name, memberEmails) {
+function consoleGroupCreate(projectId, name, memberEmails, mode) {
   const actorEmail = getActorEmail_();
   const staff = assertStaff_(actorEmail);
   if (!projectId) throw new Error('projectId required');
@@ -880,6 +886,7 @@ function consoleGroupCreate(projectId, name, memberEmails) {
   resetGroupSheetCache_();
 
   const v = validateGroupCreate_(project, name, memberEmails);
+  const joinMode = normalizeGroupJoinMode_(mode);
 
   // Teacher scope: must teach the shared class.
   if (!isAdmin_(staff)) {
@@ -897,29 +904,26 @@ function consoleGroupCreate(projectId, name, memberEmails) {
                         projectFolder.createFolder(v.sharedClass);
     const created = createGroupSheet_(project, classFolder, v.trimmedName, groupId, v.rosters);
 
-    // Copy each member's rows into the group, then trash their solo Sheet.
-    // ATOMIC: if any member fails, trash the new group Sheet and throw —
-    // otherwise the failed member would have writes routed to a group Sheet
-    // that never received their existing work (a data-loss surface). The
-    // group Sheet is the sole store from here; un-merge reconstructs solos
-    // from it by createdByEmail, so there's no archived snapshot to keep.
-    let sourcesCopied = 0, highlightsCopied = 0;
+    // Phase A — find each member's solo Sheet and (combine) copy its rows in.
+    // ATOMIC: if anything fails, trash the new group Sheet and throw with every
+    // solo Sheet still live and untouched. Otherwise a failed member would have
+    // writes routed to a group Sheet that never received their existing work.
+    // The lookup must be name-format-agnostic and class-agnostic: solo Sheets
+    // are named "<project> — Research — <email>", so an exact-email filename
+    // match finds nothing and silently skipped every member's work.
+    let sourcesCopied = 0, highlightsCopied = 0, setAsideCount = 0;
+    const found = [];   // [{ email, file, ss }]
     try {
       v.lowered.forEach((email) => {
-        // Locate the solo Sheet directly via Drive (don't go through the
-        // group routing hook — that would recurse now the group exists).
-        const soloFile = findChildFile_(classFolder, email);
-        if (!soloFile) {
-          // Never highlighted — no rows to migrate. The Members row from
-          // createGroupSheet_ already routes their future writes here.
-          return;
+        const soloFile = findSoloSheetFileInProject_(email, project);
+        if (!soloFile) return;   // never highlighted — nothing to bring in or set aside
+        const soloSs = SpreadsheetApp.openById(soloFile.getId());
+        if (joinMode === GROUP_JOIN_MODES.COMBINE) {
+          const copied = copyMemberRowsIntoGroup_(created.spreadsheet, soloSs);
+          sourcesCopied    += copied.sourcesCopied;
+          highlightsCopied += copied.highlightsCopied;
         }
-        const soloSpreadsheet = SpreadsheetApp.openById(soloFile.getId());
-        const copied = copyMemberRowsIntoGroup_(created.spreadsheet, soloSpreadsheet);
-        sourcesCopied    += copied.sourcesCopied;
-        highlightsCopied += copied.highlightsCopied;
-        DriveApp.getFileById(soloFile.getId()).setTrashed(true);
-        forgetSoloSheetId_(project.projectId, email);   // solo Sheet trashed — drop its dashboard-manifest entry
+        found.push({ email, file: soloFile, ss: soloSs });
       });
     } catch (e) {
       // Roll back the group Sheet so future writes don't route here.
@@ -928,6 +932,18 @@ function consoleGroupCreate(projectId, name, memberEmails) {
       resetGroupSheetCache_();
       throw new Error('Failed to create group and migrate members: ' + (e && e.message || e));
     }
+
+    // Phase B — the group now holds everything it should. Trash / set aside
+    // the solo Sheets. A failure here is not data loss (the rows are already
+    // in the group, and the copy is idempotent), so report it, don't roll back.
+    const finalizeErrors = [];
+    found.forEach((m) => {
+      try {
+        if (finalizeJoinedSoloSheet_(project, m.file, m.ss, groupId, m.email, joinMode)) setAsideCount++;
+      } catch (e) {
+        finalizeErrors.push({ email: m.email, error: 'solo sheet: ' + String(e && e.message || e) });
+      }
+    });
 
     // Audit. Non-fatal — the migration succeeded; a missing audit row is a
     // recoverable nuisance, not data loss.
@@ -938,7 +954,7 @@ function consoleGroupCreate(projectId, name, memberEmails) {
           projectId,
           action: AUDIT_ACTIONS.GROUP_MERGE,
           actor:  actorEmail,
-          detail: 'groupId=' + groupId + ';memberEmail=' + email,
+          detail: 'groupId=' + groupId + ';memberEmail=' + email + ';mode=' + joinMode,
         });
       } catch (e) {
         auditErrors.push({ email, error: 'audit: ' + String(e && e.message || e) });
@@ -954,9 +970,11 @@ function consoleGroupCreate(projectId, name, memberEmails) {
       groupSheetId: created.spreadsheet.getId(),
       name: v.trimmedName,
       className: v.sharedClass,
+      mode: joinMode,
       sourcesCopied,
       highlightsCopied,
-      errors: auditErrors,
+      setAsideCount,
+      errors: finalizeErrors.concat(auditErrors),
     };
   });
 }
@@ -1204,14 +1222,15 @@ function consoleGroupCheckIntegrity(projectId) {
       if (f.isTrashed()) continue;  // a trashed solo is gone — not drift
       const name = f.getName();
       if (name.indexOf(NAMES.GROUP_SHEET_PREFIX) === 0) continue;  // group Sheets handled separately
-      if (name.indexOf('@') < 0) continue;
+      const soloEmail = soloSheetEmailFromName_(name);   // bare-email OR "<project> — Research — <email>"
+      if (!soloEmail) continue;
 
       // A current group member should have NO live solo Sheet at class root.
-      const gid = memberToGroup[name.toLowerCase()];
+      const gid = memberToGroup[soloEmail];
       if (gid) {
         issues.push({
           kind: 'group_member_solo_sheet_present',
-          email: name,
+          email: soloEmail,
           className: cf.getName(),
           groupId: gid,
         });
@@ -1224,7 +1243,7 @@ function consoleGroupCheckIntegrity(projectId) {
         if (metaGid && !groupIds[metaGid]) {
           issues.push({
             kind: 'orphan_meta_groupId',
-            email: name,
+            email: soloEmail,
             className: cf.getName(),
             groupIdPointer: metaGid,
           });
