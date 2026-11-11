@@ -1527,6 +1527,36 @@ a.dd-source-card__title:hover { color: var(--c-accent); text-decoration: underli
   border-radius: 4px;
   font: inherit;
 }
+.db-merge-work {
+  display: block;
+  color: var(--c-muted);
+  font-size: 12px;
+}
+.db-merge-mode {
+  border: 0;
+  margin: 16px 0 0 0;
+  padding: 0;
+  min-width: 0;
+}
+.db-merge-mode__opt {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  margin-top: 8px;
+  border: 1px solid var(--c-line);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.db-merge-mode__opt:hover { border-color: var(--c-brand-primary-200); }
+.db-merge-mode__opt:has(input:checked) {
+  border-color: var(--c-brand-primary);
+  background: var(--c-brand-primary-50);
+}
+.db-merge-mode__opt input { margin: 2px 0 0 0; accent-color: var(--c-brand-primary); }
+.db-merge-mode__opt strong { display: block; color: var(--c-heading); }
+.db-merge-mode__help { display: block; color: var(--c-muted); margin-top: 2px; }
 .db-merge-note {
   font-size: 12px;
   color: var(--c-muted);

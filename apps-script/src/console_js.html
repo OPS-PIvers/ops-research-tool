@@ -3250,12 +3250,19 @@ function openMergeModal_() {
 
   const list = document.createElement('ul');
   list.className = 'db-merge-list';
+  const plural_ = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
   members.forEach((m) => {
     const li = document.createElement('li');
     li.textContent = formatStudentName_(m.name) + ' (' + m.email + ')';
+    const work = document.createElement('span');
+    work.className = 'db-merge-work';
+    const src = m.sourceCount || 0, hl = m.highlightCount || 0;
+    work.textContent = (src || hl) ? plural_(src, 'source') + ' · ' + plural_(hl, 'highlight') : 'No work yet';
+    li.appendChild(work);
     list.appendChild(li);
   });
   modal.appendChild(list);
+  const anyWork = members.some((m) => (m.sourceCount || 0) + (m.highlightCount || 0) > 0);
 
   const labelEl = document.createElement('label');
   labelEl.className = 'db-merge-label';
@@ -3268,9 +3275,48 @@ function openMergeModal_() {
   input.maxLength = 60;
   modal.appendChild(input);
 
+  // What happens to the students' existing work. No default when there is
+  // work to decide about: the teacher picks. With nothing saved yet the
+  // choice is moot, so it's skipped (combine).
+  let mode = anyWork ? '' : 'combine';
+  if (anyWork) {
+    const fs = document.createElement('fieldset');
+    fs.className = 'db-merge-mode';
+    const legend = document.createElement('legend');
+    legend.className = 'db-merge-label';
+    legend.textContent = 'Their existing work';
+    fs.appendChild(legend);
+    [
+      { value: 'combine', title: 'Combine their work',
+        help: 'Everyone\'s sources and highlights move into the group.' },
+      { value: 'fresh', title: 'Start fresh',
+        help: 'The group starts empty. Each student\'s own work is set aside and comes back to them if they leave the group.' },
+    ].forEach((opt) => {
+      const lab = document.createElement('label');
+      lab.className = 'db-merge-mode__opt';
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'db-merge-mode';
+      radio.value = opt.value;
+      radio.addEventListener('change', () => { mode = opt.value; submit.disabled = false; });
+      const text = document.createElement('span');
+      const t = document.createElement('strong');
+      t.textContent = opt.title;
+      const h = document.createElement('span');
+      h.className = 'db-merge-mode__help';
+      h.textContent = opt.help;
+      text.appendChild(t);
+      text.appendChild(h);
+      lab.appendChild(radio);
+      lab.appendChild(text);
+      fs.appendChild(lab);
+    });
+    modal.appendChild(fs);
+  }
+
   const note = document.createElement('p');
   note.className = 'db-merge-note';
-  note.textContent = 'Each selected student\'s existing sources and highlights move into the new group Sheet. Reversible: disbanding the group — or removing a member — rebuilds their solo Sheet with their own work, including anything they added while grouped.';
+  note.textContent = 'Reversible: disbanding the group or removing a member gives each student back their own work, including anything they added while grouped.';
   modal.appendChild(note);
 
   const actions = document.createElement('div');
@@ -3283,13 +3329,21 @@ function openMergeModal_() {
   const submit = document.createElement('button');
   submit.className = 'console-modal__submit';
   submit.textContent = 'Merge';
+  submit.disabled = !mode;
   submit.addEventListener('click', () => {
+    if (!mode) return;
     submit.disabled = true;
     submit.textContent = 'Merging…';
     const name = (input.value || '').trim() || placeholder;
     google.script.run
       .withSuccessHandler((resp) => {
-        setStatus('Merged ' + members.length + ' students into "' + name + '".', 'good', 4000);
+        let msg = 'Merged ' + members.length + ' students into "' + name + '"';
+        if (resp && resp.mode === 'fresh') msg += ', starting fresh.';
+        else if (resp && (resp.sourcesCopied || resp.highlightsCopied)) {
+          msg += ' with ' + plural_(resp.sourcesCopied || 0, 'source') + ' and ' +
+                 plural_(resp.highlightsCopied || 0, 'highlight') + '.';
+        } else msg += '.';
+        setStatus(msg, 'good', 5000);
         overlay.remove();
         state.dashboardSelection = {};
         fetchDashboard_(state.projectId, true);
@@ -3299,7 +3353,7 @@ function openMergeModal_() {
         submit.textContent = 'Merge';
         setStatus('Merge failed: ' + (e && e.message || e), 'bad', 5000);
       })
-      .consoleGroupCreate(state.projectId, name, studentEmails);
+      .consoleGroupCreate(state.projectId, name, studentEmails, mode);
   });
   actions.appendChild(submit);
   modal.appendChild(actions);

@@ -147,6 +147,18 @@ function resolveProjectClassForStudent_(actorEmail, project) {
  * group sheets, which carry no @-token name and never match by email).
  */
 function findSoloSheetInProject_(actorEmail, project) {
+  const file = findSoloSheetFileInProject_(actorEmail, project);
+  return file ? SpreadsheetApp.openById(file.getId()) : null;
+}
+
+/**
+ * Same lookup as findSoloSheetInProject_, but returns the Drive File (or null).
+ * Group merge/add use this to find a member's solo Sheet: it matches BOTH the
+ * legacy bare-email name and the "<project> — Research — <email>" name, and it
+ * searches every class folder (a multi-class student's Sheet may sit in a class
+ * other than the group's). Files set aside in Archived-students/ are not found.
+ */
+function findSoloSheetFileInProject_(actorEmail, project) {
   // Fast path: the dashboard manifest already maps (project,email) → sheet id.
   // Verify it's a live, non-trashed file before trusting it (a merge trashes the
   // solo Sheet; forgetSoloSheetId_ usually drops the entry, but be defensive).
@@ -154,7 +166,7 @@ function findSoloSheetInProject_(actorEmail, project) {
   if (entry && entry.id) {
     try {
       const f = DriveApp.getFileById(entry.id);
-      if (f && !f.isTrashed()) return SpreadsheetApp.openById(entry.id);
+      if (f && !f.isTrashed() && soloSheetNameMatches_(f.getName(), actorEmail)) return f;
     } catch (e) { /* stale manifest id — fall through to the Drive walk */ }
   }
   const projectFolder = DriveApp.getFolderById(project.rootFolderId);
@@ -164,7 +176,7 @@ function findSoloSheetInProject_(actorEmail, project) {
     const nm = cf.getName();
     if (nm === NAMES.ARCHIVED_FOLDER || nm === NAMES.ARCHIVED_STUDENTS_FOLDER) continue;
     const file = findSoloSheetFile_(cf, actorEmail);
-    if (file) return SpreadsheetApp.openById(file.getId());
+    if (file) return file;
   }
   return null;
 }

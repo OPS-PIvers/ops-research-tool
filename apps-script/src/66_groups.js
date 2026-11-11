@@ -358,22 +358,105 @@ function createGroupSheet_(project, classFolder, name, groupId, rosterEntries) {
 }
 
 /**
+ * How a joining student's existing solo work is handled when they join a group.
+ *   combine — their sources + highlights are copied into the group Sheet and
+ *             the solo Sheet is trashed (the group Sheet is the sole store).
+ *   fresh   — the group starts without their work. The solo Sheet is set aside
+ *             in <class>/Archived-students/ with Meta.groupId stamped, and is
+ *             restored to them if they later leave the group.
+ */
+var GROUP_JOIN_MODES = { COMBINE: 'combine', FRESH: 'fresh' };
+
+/** Anything other than an explicit 'fresh' combines (the historical behavior). */
+function normalizeGroupJoinMode_(mode) {
+  return String(mode || '').trim().toLowerCase() === GROUP_JOIN_MODES.FRESH
+    ? GROUP_JOIN_MODES.FRESH : GROUP_JOIN_MODES.COMBINE;
+}
+
+/**
+ * Pure: the rows whose `keyCol` value is not already in `existingKeys`
+ * (an array of key values), also dropping repeats within `rows`. Makes a
+ * solo → group copy safe to run twice.
+ */
+function rowsNotYetIn_(rows, keyCol, existingKeys) {
+  const seen = {};
+  (existingKeys || []).forEach((k) => { seen[String(k)] = true; });
+  return (rows || []).filter((r) => {
+    const k = String(r[keyCol] === undefined ? '' : r[keyCol]);
+    if (!k || seen[k]) return false;
+    seen[k] = true;
+    return true;
+  });
+}
+
+/** Student-edited Source fields — the work a scrape-only re-assert lacks. */
+var SOURCE_STUDENT_FIELDS = ['sourceType', 'citationFields', 'primarySecondary', 'annotation', 'annotationLastEdited'];
+
+function isBlankSourceField_(field, value) {
+  const v = String(value === undefined || value === null ? '' : value).trim();
+  if (!v) return true;
+  if (field === 'citationFields') return v === '{}';
+  if (field === 'primarySecondary') return v === 'unset';
+  return false;
+}
+
+/**
+ * Pure: when the group already holds a Source with the solo row's sourceId
+ * (the extension re-asserted a cached source id into the group after the
+ * merge, carrying only scraped fields), fill each blank student-edited field
+ * from the solo row. Never overwrites a non-blank group value. Returns the
+ * merged row, or null when nothing would change.
+ */
+function fillBlankSourceFields_(groupRow, soloRow) {
+  const merged = Object.assign({}, groupRow);
+  let changed = false;
+  SOURCE_STUDENT_FIELDS.forEach((f) => {
+    if (isBlankSourceField_(f, groupRow[f]) && !isBlankSourceField_(f, soloRow[f])) {
+      merged[f] = soloRow[f];
+      changed = true;
+    }
+  });
+  return changed ? merged : null;
+}
+
+/**
  * Bulk copy all Sources + Highlights rows from a per-student Sheet into a
  * group Sheet. Rows are inserted as-is — sourceId, highlightId,
- * createdByEmail, createdAt, projectId all preserved.
+ * createdByEmail, createdAt, projectId all preserved. Rows whose id is already
+ * in the group are skipped, so re-running (e.g. the stranded-work repair) never
+ * duplicates. A Source already in the group (same id) gets its blank
+ * student-edited fields filled from the solo row (fillBlankSourceFields_).
  *
- * Returns { sourcesCopied, highlightsCopied }.
+ * Returns { sourcesCopied, highlightsCopied, sourcesMerged? }.
  */
 function copyMemberRowsIntoGroup_(groupSpreadsheet, studentSpreadsheet) {
   const out = { sourcesCopied: 0, highlightsCopied: 0 };
 
   [TABS.SOURCES, TABS.HIGHLIGHTS].forEach((tabName) => {
     const headers = (tabName === TABS.SOURCES) ? HEADERS.SOURCES : HEADERS.HIGHLIGHTS;
+    const keyCol  = (tabName === TABS.SOURCES) ? 'sourceId' : 'highlightId';
     const fromTab = studentSpreadsheet.getSheetByName(tabName);
     if (!fromTab) return;
-    const rows = readAllAsObjects_(fromTab, headers);
-    if (rows.length === 0) return;
     const toTab = getTab_(groupSpreadsheet, tabName);
+    const existingRows = readAllAsObjects_(toTab, headers);
+    const fromRows = readAllAsObjects_(fromTab, headers);
+    if (tabName === TABS.SOURCES && existingRows.length) {
+      // Same sourceId already in the group: keep the group row, but fill its
+      // blank citation / annotation / classification from the solo copy.
+      const at = {};
+      existingRows.forEach((r, i) => { at[String(r.sourceId)] = i; });
+      fromRows.forEach((r) => {
+        const i = at[String(r.sourceId)];
+        if (i === undefined) return;
+        const merged = fillBlankSourceFields_(existingRows[i], r);
+        if (!merged) return;
+        toTab.getRange(i + 2, 1, 1, headers.length)
+          .setValues([headers.map((h) => merged[h] === undefined ? '' : merged[h])]);
+        out.sourcesMerged = (out.sourcesMerged || 0) + 1;
+      });
+    }
+    const rows = rowsNotYetIn_(fromRows, keyCol, existingRows.map((r) => r[keyCol]));
+    if (rows.length === 0) return;
     const matrix = rows.map((row) => headers.map((h) => row[h] === undefined ? '' : row[h]));
     toTab.getRange(toTab.getLastRow() + 1, 1, matrix.length, headers.length).setValues(matrix);
     if (tabName === TABS.SOURCES) out.sourcesCopied += rows.length;
@@ -381,6 +464,94 @@ function copyMemberRowsIntoGroup_(groupSpreadsheet, studentSpreadsheet) {
   });
 
   return out;
+}
+
+/** Write Meta.groupId on a Sheet's single Meta row (solo or group). */
+function setSheetMetaGroupId_(ss, groupId) {
+  const tab = ss.getSheetByName(TABS.META);
+  if (!tab || tab.getLastRow() < 2) return;
+  tab.getRange(2, HEADERS.META.indexOf('groupId') + 1).setValue(groupId || '');
+}
+
+/**
+ * Handle a joining member's solo Sheet per `mode` (see GROUP_JOIN_MODES).
+ * Call AFTER the member's Members row exists, so their writes already route to
+ * the group: a failure partway leaves the solo Sheet live and untouched
+ * (recoverable with devRepairStrandedGroupWork), never trashed with its rows
+ * missing from the group. Caller holds the group lock.
+ *
+ * Returns { soloFound, sourcesCopied, highlightsCopied, setAside }.
+ */
+function absorbSoloIntoGroup_(project, groupSpreadsheet, groupId, email, mode) {
+  const e = String(email).toLowerCase();
+  const out = { soloFound: false, sourcesCopied: 0, highlightsCopied: 0, setAside: false };
+  const soloFile = findSoloSheetFileInProject_(e, project);
+  if (!soloFile) return out;   // never highlighted — nothing to bring in or set aside
+  out.soloFound = true;
+  const soloSs = SpreadsheetApp.openById(soloFile.getId());
+  if (normalizeGroupJoinMode_(mode) === GROUP_JOIN_MODES.COMBINE) {
+    const copied = copyMemberRowsIntoGroup_(groupSpreadsheet, soloSs);
+    out.sourcesCopied = copied.sourcesCopied;
+    out.highlightsCopied = copied.highlightsCopied;
+  }
+  out.setAside = finalizeJoinedSoloSheet_(project, soloFile, soloSs, groupId, e, mode);
+  return out;
+}
+
+/**
+ * Second half of a join, run only once the member's rows are safely in the
+ * group (combine) or nothing needs copying (fresh): combine trashes the solo
+ * Sheet; fresh stamps Meta.groupId and moves it into <class>/Archived-students/.
+ * Either way it leaves the class root, so its manifest entry is dropped.
+ * Returns true when the Sheet was set aside (fresh).
+ */
+function finalizeJoinedSoloSheet_(project, soloFile, soloSs, groupId, email, mode) {
+  let setAside = false;
+  if (normalizeGroupJoinMode_(mode) === GROUP_JOIN_MODES.FRESH) {
+    // Stamp which group set it aside, so only leaving THIS group restores it.
+    setSheetMetaGroupId_(soloSs, groupId);
+    const parents = soloFile.getParents();
+    const classFolder = parents.hasNext() ? parents.next() : null;
+    if (classFolder) archiveStudentSheetForGroup_(soloFile, classFolder);
+    setAside = true;
+  } else {
+    soloFile.setTrashed(true);
+  }
+  forgetSoloSheetId_(project.projectId, String(email).toLowerCase());
+  return setAside;
+}
+
+/**
+ * If `email` joined `groupId` with "Start fresh", move their set-aside solo
+ * Sheet from Archived-students/ back into its class folder and clear the
+ * stamp, so leaving the group gives them back their pre-group work. Only a
+ * Sheet stamped with THIS groupId is restored. Returns true if one was.
+ */
+function restoreSetAsideSoloSheet_(project, email, groupId) {
+  if (!groupId) return false;
+  const projectFolder = DriveApp.getFolderById(project.rootFolderId);
+  const folders = projectFolder.getFolders();
+  while (folders.hasNext()) {
+    const cf = folders.next();
+    const nm = cf.getName();
+    if (nm === NAMES.ARCHIVED_FOLDER || nm === NAMES.ARCHIVED_STUDENTS_FOLDER) continue;
+    const archived = findChildFolder_(cf, NAMES.ARCHIVED_STUDENTS_FOLDER);
+    if (!archived) continue;
+    const files = archived.getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      if (f.isTrashed() || !soloSheetNameMatches_(f.getName(), email)) continue;
+      const ss = SpreadsheetApp.openById(f.getId());
+      const meta = readGroupMeta_(ss);
+      if (!meta || String(meta.groupId || '') !== String(groupId)) continue;
+      // Don't create a second live solo if one already exists.
+      if (findSoloSheetFileInProject_(email, project)) return false;
+      f.moveTo(cf);
+      setSheetMetaGroupId_(ss, '');
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -513,6 +684,11 @@ function reconstructSoloFromGroup_(project, groupSpreadsheet, email) {
   const allSrc = readAllAsObjects_(getTab_(groupSpreadsheet, TABS.SOURCES), HEADERS.SOURCES);
   const mySrc = allSrc.filter((s) => String(s.createdByEmail).toLowerCase() === e || needSrc[s.sourceId]);
 
+  // A member who joined with "Start fresh" gets their set-aside pre-group
+  // Sheet back; their group-period rows are then upserted on top of it.
+  const groupMeta = readGroupMeta_(groupSpreadsheet);
+  restoreSetAsideSoloSheet_(project, e, groupMeta && groupMeta.groupId);
+
   const solo = findOrCreateSoloSheet_(e, project);  // SOLO core — bypasses group routing
   const srcTab = getTab_(solo, TABS.SOURCES);
   const hlTab  = getTab_(solo, TABS.HIGHLIGHTS);
@@ -589,12 +765,13 @@ function removeMemberFromGroupCore_(project, group, email, actorEmail) {
 }
 
 /**
- * Add an ungrouped member to an existing group: copy their solo rows in
- * verbatim, trash the solo Sheet, append the Members row. Caller holds the
+ * Add an ungrouped member to an existing group: append the Members row, then
+ * handle their solo Sheet per `mode` (default combine: copy rows in, trash the
+ * solo; see absorbSoloIntoGroup_). Caller holds the
  * lock and has validated class / capacity / not-already-grouped. Returns
  * { ok, added, copiedSources, copiedHighlights }.
  */
-function addMemberToGroupCore_(project, group, rosterEntry, actorEmail) {
+function addMemberToGroupCore_(project, group, rosterEntry, actorEmail, mode) {
   const e = String(rosterEntry.Email || '').toLowerCase();
   const groupSs = group.spreadsheet;
   // Capacity guard re-checked here, inside the lock — the endpoint's pre-lock
@@ -603,25 +780,86 @@ function addMemberToGroupCore_(project, group, rosterEntry, actorEmail) {
   if (currentMembers_(groupSs).length >= 4) {
     throw new Error('Group already has 4 members');
   }
-  const soloFile = findChildFile_(group.classFolder, e);
-  let copiedSources = 0, copiedHighlights = 0;
-  if (soloFile) {
-    const soloSs = SpreadsheetApp.openById(soloFile.getId());
-    const copied = copyMemberRowsIntoGroup_(groupSs, soloSs);
-    copiedSources = copied.sourcesCopied;
-    copiedHighlights = copied.highlightsCopied;
-  }
-  // Establish membership BEFORE trashing the solo. If a later step throws, the
-  // member's data still lives in their (un-trashed) solo Sheet rather than
-  // only in a trashed one with no group row pointing at it.
+  // Establish membership BEFORE touching the solo Sheet. If a later step
+  // throws, the member's data still lives in their (un-trashed) solo Sheet
+  // rather than only in a trashed one with no group row pointing at it.
   appendMemberToGroup_(groupSs, rosterEntry);
-  if (soloFile) {
-    DriveApp.getFileById(soloFile.getId()).setTrashed(true);
-    forgetSoloSheetId_(project.projectId, e);   // solo Sheet is gone — drop its dashboard-manifest entry
-  }
+  const absorbed = absorbSoloIntoGroup_(project, groupSs, group.groupId, e, mode);
+  const copiedSources = absorbed.sourcesCopied;
+  const copiedHighlights = absorbed.highlightsCopied;
   appendAuditEvent_({
     projectId: project.projectId, action: AUDIT_ACTIONS.GROUP_MERGE,
-    actor: actorEmail, detail: 'add;groupId=' + group.groupId + ';email=' + e,
+    actor: actorEmail,
+    detail: 'add;groupId=' + group.groupId + ';email=' + e + ';mode=' + normalizeGroupJoinMode_(mode),
   });
   return { ok: true, added: e, copiedSources, copiedHighlights };
+}
+
+// ============================================================
+// Stranded-work repair (editor-run)
+// ------------------------------------------------------------
+// Until 2026-11-11 merge/add looked up each member's solo Sheet by an exact
+// filename equal to their email. Solo Sheets are named
+// "<project> — Research — <email>", so the lookup missed: the member joined
+// the group, but their pre-merge work stayed behind in a live solo Sheet the
+// group never saw. These find (dry run) and fix (copy in + trash the solo)
+// every such member across active projects. Safe to re-run: the copy skips
+// ids already in the group.
+// ============================================================
+
+/** Dry run — logs every group member who still has a live solo Sheet. */
+function devFindStrandedGroupWork() {
+  return strandedGroupWork_(false);
+}
+
+/** Copies stranded solo work into each member's group and trashes the solo Sheet. */
+function devRepairStrandedGroupWork() {
+  return strandedGroupWork_(true);
+}
+
+function strandedGroupWork_(apply) {
+  const actor = getActorEmail_();
+  assertAdmin_(actor);
+  const found = [];
+  listActiveProjects_().forEach((project) => {
+    listGroupsForProjectLive_(project).forEach((g) => {
+      (g.memberEmails || []).forEach((email) => {
+        const e = String(email).toLowerCase();
+        const soloFile = findSoloSheetFileInProject_(e, project);
+        if (!soloFile) return;
+        const soloSs = SpreadsheetApp.openById(soloFile.getId());
+        const groupSs = SpreadsheetApp.openById(g.sheetId);
+        const count = (ss, tab, headers) => readAllAsObjects_(getTab_(ss, tab), headers);
+        const soloSrc = count(soloSs, TABS.SOURCES, HEADERS.SOURCES);
+        const soloHl  = count(soloSs, TABS.HIGHLIGHTS, HEADERS.HIGHLIGHTS);
+        const grpSrcIds = count(groupSs, TABS.SOURCES, HEADERS.SOURCES).map((r) => r.sourceId);
+        const grpHlIds  = count(groupSs, TABS.HIGHLIGHTS, HEADERS.HIGHLIGHTS).map((r) => r.highlightId);
+        const item = {
+          project: project.name, projectId: project.projectId,
+          group: g.name, groupId: g.groupId, className: g.className, email: e,
+          soloSheetUrl: soloFile.getUrl(),
+          soloSources: soloSrc.length, soloHighlights: soloHl.length,
+          newSources: rowsNotYetIn_(soloSrc, 'sourceId', grpSrcIds).length,
+          newHighlights: rowsNotYetIn_(soloHl, 'highlightId', grpHlIds).length,
+        };
+        if (apply) {
+          withGroupLock_(() => {
+            const r = absorbSoloIntoGroup_(project, groupSs, g.groupId, e, GROUP_JOIN_MODES.COMBINE);
+            item.copiedSources = r.sourcesCopied;
+            item.copiedHighlights = r.highlightsCopied;
+            appendAuditEvent_({
+              projectId: project.projectId, action: AUDIT_ACTIONS.GROUP_MERGE, actor: actor,
+              detail: 'repair;groupId=' + g.groupId + ';email=' + e +
+                ';sources=' + r.sourcesCopied + ';highlights=' + r.highlightsCopied,
+            });
+          });
+        }
+        found.push(item);
+      });
+    });
+  });
+  if (apply) resetGroupSheetCache_();
+  Logger.log((apply ? 'REPAIRED ' : 'FOUND ') + found.length + ' stranded member(s)');
+  found.forEach((f) => Logger.log(JSON.stringify(f)));
+  return found;
 }

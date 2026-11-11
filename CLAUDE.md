@@ -199,6 +199,28 @@ Moving the project = edit that one file, `clasp push`, redeploy.
       to group ▾" when the selected student is solo; "Remove from group"
       removes a selected grouped student.
     - All group mutations are serialized with `LockService` (`withGroupLock_`).
+    - **Merge offers Combine or Start fresh (2026-11-11).** When any selected
+      student has saved work, the merge modal requires a choice (no default):
+      **Combine** copies their rows in and trashes the solo Sheets (the old
+      behavior). **Start fresh** leaves the group empty, stamps each solo
+      Sheet's `Meta.groupId`, and moves it to `<class>/Archived-students/`.
+      `reconstructSoloFromGroup_` restores a Sheet stamped with the group being
+      left (`restoreSetAsideSoloSheet_`), so leaving the group returns their
+      pre-group work plus their group-period rows. `consoleGroupCreate(…, mode)`.
+      Add-to-group and move always combine. Merge is two-phase: find + copy
+      every member first (a failure trashes only the new group Sheet), then
+      trash or set aside the solos.
+    - **Solo Sheets are found by `findSoloSheetFileInProject_`, never by exact
+      filename.** Until 2026-11-11 merge and add used
+      `findChildFile_(classFolder, email)`. Solo Sheets are named
+      `"<project> — Research — <email>"`, so the lookup found nothing: members
+      joined with their work left behind in a live solo Sheet (the group
+      started empty). The copy is now idempotent (skips ids already in the
+      group, and fills blank citation/annotation/classification on a source
+      the extension re-asserted into the group). Run
+      **`devFindStrandedGroupWork`** (dry run) /
+      **`devRepairStrandedGroupWork`** from the editor to pull stranded work
+      into every affected group across active projects.
   - **Known follow-ups:**
     - `consoleGroupCheckIntegrity` is admin-only and editor-callable; no
       client UI yet — surface if pilot reveals it's needed.
@@ -1050,8 +1072,11 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   cleans up after itself: `devTestGroupRoutingProvisioning`,
   `devTestGroupMergeMigrationFidelity`, `devTestGroupDisbandRoundTrip`,
   `devTestGroupMoveSemantics`, `devTestGroupAddToGroup`,
-  `devTestGroupAuthorizationGate`. **Run `devTestGroupsAll` to run all six in
-  one shot** — it prints a single `ALL GREEN` / `NOT GREEN` summary.
+  `devTestGroupAuthorizationGate`, `devTestGroupStartFresh`. **Run
+  `devTestGroupsAll` to run all seven in one shot** — it prints a single
+  `ALL GREEN` / `NOT GREEN` summary. Headless:
+  `node apps-script/test/groups.node.test.js` (join mode, idempotent copy,
+  source-field fill, solo-Sheet name matching).
 - Dashboard performance — **`devTestDashboardPerfAll`** runs both:
   `devTestSheetManifestRoundTrip` (manifest record/load/forget + gid storage +
   self-heal) and `devTestDashboardParityParallelVsSerial` (the keystone — builds
