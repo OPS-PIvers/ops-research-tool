@@ -219,10 +219,11 @@ function buildSampleStudentData_(ss, projectId, email, idx, profile, labels) {
     if (spec.ps) source.primarySecondary = spec.ps;      // else upsert defaults to 'unset'
     if (spec.a) source.annotation = SAMPLE_ANNOTATIONS[(idx + si) % SAMPLE_ANNOTATIONS.length];
     if (spec.c) {
-      // citationFields needs title + url for the completion metric to count it.
+      // A cited source has every required field for its type (isSourceCited_).
       source.citationFields = {
         sourceType: spec.t, title: title, url: rawUrl, siteName: site,
         author: author, publishedDate: date,
+        publication: site, publisher: 'Sample Press', archive: 'Minnesota Historical Society',
       };
     }
     upsertSource_(ss, source);

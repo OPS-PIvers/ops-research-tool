@@ -265,12 +265,16 @@ function devTestCitationOverrides() {
   check('pasted citation wins', f.pasted === true && f.text === pastedText);
   check('pasted italics kept', JSON.stringify(f.italics) === '[[34,57]]');
   check('URL in pasted citation is linked', f.links.length === 1 && f.links[0][2] === 'https://www.britannica.com/event/Vietnam-War');
-  check('pasted counts as cited', isCitationComplete_(parseCitationFields_(src)) === true);
+  check('pasted counts as cited', isSourceCited_(src) === true);
 
   const built = formatCitation({ sourceType: 'website', title: 'Agent Orange', url: 'https://www.history.com/x' }, 'mla');
   const l = built.links[0];
   check('built citation links its URL', !!l && built.text.slice(l[0], l[1]) === 'https://www.history.com/x');
-  check('title alone is not cited', isCitationComplete_({ title: 'T' }) === false);
+  check('title alone is not cited', isSourceCited_({ citationFields: JSON.stringify({ title: 'T' }) }) === false);
+  check('scraped title/url + edited author/site/date is cited', isSourceCited_({
+    citationFields: JSON.stringify({ author: 'Smith, Jo', siteName: 'History', publishedDate: '2020' }),
+    scrapedTitle: 'Agent Orange', rawUrl: 'https://www.history.com/x', sourceType: 'website',
+  }) === true);
 
   out.push(pass ? 'ALL GREEN' : 'NOT GREEN');
   const report = out.join('\n');
@@ -436,12 +440,12 @@ function devTestAggregateStudent() {
   const sources = [
     {
       sourceId: 's1', primarySecondary: 'primary', annotation: 'Good source.',
-      citationFields: JSON.stringify({ title: 'A', url: 'https://a' }),
+      citationFields: JSON.stringify({ title: 'A', url: 'https://a', author: 'Au', siteName: 'Site', publishedDate: '2020' }),
       createdAt: '2026-05-20T10:00:00Z',
     },
     {
       sourceId: 's2', primarySecondary: 'secondary', annotation: '',
-      citationFields: JSON.stringify({ title: 'B', url: 'https://b' }),
+      citationFields: JSON.stringify({ title: 'B', url: 'https://b', author: 'Au', siteName: 'Site', publishedDate: '2020' }),
       createdAt: '2026-05-21T10:00:00Z',
     },
     {
@@ -483,7 +487,7 @@ function devTestAggregateStudent() {
   check('completion.total = 3',             agg.completion.total === 3);
   check('completion.percent = 33',          agg.completion.percent === 33);
 
-  // gaps: citation missing on s3 only (s1, s2 have title+url) → 1
+  // gaps: citation missing on s3 only (s1, s2 have every required field) → 1
   //       classification missing on s3 only → 1
   //       annotation missing on s2 only (empty string) → 1
   check('gaps.citation = 1',                agg.gaps.citation === 1);
@@ -529,8 +533,8 @@ function devTestCompletionRespectsAnnotationToggle() {
   let pass = 0, fail = 0;
   const check = (l, c) => { if (c) { pass++; console.log('PASS ' + l); } else { fail++; console.log('FAIL ' + l); } };
   const sources = [
-    { sourceId: 's1', primarySecondary: 'primary',   annotation: '', citationFields: JSON.stringify({ title: 'A', url: 'u' }) },
-    { sourceId: 's2', primarySecondary: 'secondary', annotation: '', citationFields: JSON.stringify({ title: 'B', url: 'u' }) },
+    { sourceId: 's1', primarySecondary: 'primary',   annotation: '', citationFields: JSON.stringify({ title: 'A', url: 'u', author: 'Au', siteName: 'Site', publishedDate: '2020' }) },
+    { sourceId: 's2', primarySecondary: 'secondary', annotation: '', citationFields: JSON.stringify({ title: 'B', url: 'u', author: 'Au', siteName: 'Site', publishedDate: '2020' }) },
   ];
   const on  = computeCompletionSummary_(sources, parseProjectRequirements_({}));
   check('annotations required → 0 complete', on.complete === 0);
@@ -595,8 +599,8 @@ function devTestRequirementsBackCompat() {
     label1: 'Background', color1: '#1', label2: 'Build-Up', color2: '#2',
     label3: 'Main Event', color3: '#3', label4: 'Short', color4: '#4', label5: 'Long', color5: '#5' };
   const sources = [
-    { sourceId: 's1', primarySecondary: 'primary',   annotation: 'Good.', citationFields: JSON.stringify({ title: 'A', url: 'https://a' }), createdAt: '2026-05-20T10:00:00Z' },
-    { sourceId: 's2', primarySecondary: 'secondary', annotation: '',      citationFields: JSON.stringify({ title: 'B', url: 'https://b' }), createdAt: '2026-05-21T10:00:00Z' },
+    { sourceId: 's1', primarySecondary: 'primary',   annotation: 'Good.', citationFields: JSON.stringify({ title: 'A', url: 'https://a', author: 'Au', siteName: 'Site', publishedDate: '2020' }), createdAt: '2026-05-20T10:00:00Z' },
+    { sourceId: 's2', primarySecondary: 'secondary', annotation: '',      citationFields: JSON.stringify({ title: 'B', url: 'https://b', author: 'Au', siteName: 'Site', publishedDate: '2020' }), createdAt: '2026-05-21T10:00:00Z' },
     { sourceId: 's3', primarySecondary: 'unset',     annotation: 'N.',    citationFields: JSON.stringify({ title: '', url: '' }),          createdAt: '2026-05-22T10:00:00Z' },
   ];
   const highlights = [{ sourceId: 's1', primaryCategory: 'Background', createdAt: '2026-05-20T11:00:00Z' }];

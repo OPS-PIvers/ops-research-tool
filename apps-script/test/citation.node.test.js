@@ -96,13 +96,32 @@ console.log('bibSortKey_:');
   eq('author last name', S.bibSortKey_({ author: 'Ronald Spector' }, ''), 'spector');
 }
 
-console.log('isCitationComplete_:');
+console.log('isSourceCited_:');
 {
-  eq('title+url', S.isCitationComplete_({ title: 'a', url: 'b' }), true);
-  eq('title only', S.isCitationComplete_({ title: 'a' }), false);
-  eq('pasted', S.isCitationComplete_({ pasted: { text: 'Smith. Thing.' } }), true);
-  eq('blank pasted', S.isCitationComplete_({ pasted: { text: ' ' } }), false);
-  eq('metric uses it', S.computeCompletion_([{ citationFields: JSON.stringify({ pasted: { text: 'x' } }), primarySecondary: 'unset' }]).citation.complete, 1);
+  const cf = (o) => JSON.stringify(o);
+  // A web page as the extension saves it: title + URL scraped, the rest blank.
+  const web = { sourceType: 'website', scrapedTitle: 'Agent Orange', rawUrl: 'https://www.history.com/x' };
+  eq('untouched scrape is not cited', S.isSourceCited_(Object.assign({}, web, { scrapedAuthor: 'A', scrapedSite: 'S', scrapedDate: '2020' })), false);
+  eq('THE BUG: edited author/site/date, scraped title + URL → cited',
+    S.isSourceCited_(Object.assign({}, web, { citationFields: cf({ author: 'Smith, Jo', siteName: 'History', publishedDate: '2020' }) })), true);
+  eq('scraped values fill required fields once touched',
+    S.isSourceCited_(Object.assign({}, web, { scrapedAuthor: 'A', scrapedSite: 'S', scrapedDate: '2020', citationFields: cf({ title: 'Agent Orange' }) })), true);
+  eq('missing a required field → not cited',
+    S.isSourceCited_(Object.assign({}, web, { citationFields: cf({ author: 'Smith, Jo', siteName: 'History' }) })), false);
+  eq('cleared field stays blank (not re-filled from scrape)',
+    S.isSourceCited_(Object.assign({}, web, { scrapedAuthor: 'A', scrapedSite: 'S', scrapedDate: '2020', citationFields: cf({ author: '' }) })), false);
+  eq('book with no URL can be cited',
+    S.isSourceCited_({ sourceType: 'book', citationFields: cf({ title: 'Hiroshima', author: 'Hersey, John', publisher: 'Knopf', publishedDate: '1946' }) }), true);
+  eq('book needs a publisher',
+    S.isSourceCited_({ sourceType: 'book', citationFields: cf({ title: 'Hiroshima', author: 'Hersey, John', publishedDate: '1946' }) }), false);
+  eq('article publication from scrapedExtra',
+    S.isSourceCited_({ sourceType: 'article', scrapedTitle: 'T', scrapedExtra: cf({ publication: 'NYT' }), citationFields: cf({ author: 'A', publishedDate: '2001' }) }), true);
+  eq('type chosen in the editor wins', S.isSourceCited_({ sourceType: 'website', citationFields: cf({ sourceType: 'book', title: 'T', author: 'A', publishedDate: '1', siteName: 'S' }) }), false);
+  eq('numeric year from Sheets counts', S.isSourceCited_({ sourceType: 'book', citationFields: cf({ title: 'T', author: 'A', publisher: 'P', publishedDate: 1946 }) }), true);
+  eq('pasted', S.isSourceCited_({ citationFields: cf({ pasted: { text: 'Smith. Thing.' } }) }), true);
+  eq('blank pasted', S.isSourceCited_({ citationFields: cf({ pasted: { text: ' ' } }) }), false);
+  eq('malformed JSON', S.isSourceCited_({ citationFields: '{oops' }), false);
+  eq('metric uses it', S.computeCompletion_([{ citationFields: cf({ pasted: { text: 'x' } }), primarySecondary: 'unset' }]).citation.complete, 1);
 }
 
 if (failures) { console.error('\n' + failures + ' FAILED'); process.exit(1); }

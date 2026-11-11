@@ -118,7 +118,7 @@ function computeSourceCounts_(sources) {
 
 /**
  * Per-field completion:
- *   citation:       isCitationComplete_ (title + url entered, or a pasted citation)
+ *   citation:       isSourceCited_ (required fields filled after the student edited, or pasted)
  *   classification: primarySecondary !== 'unset'
  *   annotation:     trimmed annotation length > 0
  *
@@ -127,7 +127,7 @@ function computeSourceCounts_(sources) {
 function computeCompletion_(sources) {
   let citation = 0, classification = 0, annotation = 0;
   sources.forEach((s) => {
-    if (isCitationComplete_(parseCitationFields_(s))) citation++;
+    if (isSourceCited_(s)) citation++;
     if (s.primarySecondary && s.primarySecondary !== 'unset') classification++;
     if (s.annotation && String(s.annotation).trim().length > 0) annotation++;
   });
@@ -157,7 +157,7 @@ function computeCompletionSummary_(sources, requirements) {
   if (sources.length === 0 || !tracked) return { percent: 0, complete: 0, total: sources.length, tracked };
   let complete = 0;
   sources.forEach((s) => {
-    const citationOk = !needCit || isCitationComplete_(parseCitationFields_(s));
+    const citationOk = !needCit || isSourceCited_(s);
     const classOk = !needCls || (s.primarySecondary && s.primarySecondary !== 'unset');
     const annOk = !needAnn || (s.annotation && String(s.annotation).trim().length > 0);
     if (citationOk && classOk && annOk) complete++;
@@ -226,7 +226,7 @@ function computeSourcesProgress_(sources, requirements) {
 function computeGaps_(sources) {
   let cit = 0, cls = 0, ann = 0;
   sources.forEach((s) => {
-    if (!isCitationComplete_(parseCitationFields_(s))) cit++;
+    if (!isSourceCited_(s)) cit++;
     if (!s.primarySecondary || s.primarySecondary === 'unset') cls++;
     if (!s.annotation || String(s.annotation).trim().length === 0) ann++;
   });
@@ -286,15 +286,59 @@ function computeActivityByDay_(sources, highlights, projectCreatedAt) {
 }
 
 /**
- * "Citation done" for the dashboard: the student entered title AND url, or
- * pasted a whole citation (copied from the database/encyclopedia). Takes the
- * RAW parse — scraped values never count. Pure.
+ * Required citation fields per source type: the non-optional, non-URL fields
+ * of sourceFieldsFor_ in source_editor_js.html and extension/content/sidebar.js
+ * (the editors' "Not filled in yet" list). Keep all three in sync.
  */
-function isCitationComplete_(parsed) {
-  if (!parsed) return false;
-  if (parsed.title && parsed.url) return true;
-  const p = parsed.pasted;
-  return !!(p && typeof p === 'object' && String(p.text || '').trim());
+var CITATION_REQUIRED_FIELDS = {
+  website: ['title', 'author', 'siteName', 'publishedDate'],
+  article: ['title', 'author', 'publication', 'publishedDate'],
+  book:    ['title', 'author', 'publisher', 'publishedDate'],
+  primary: ['title', 'author', 'publishedDate', 'archive'],
+};
+
+/**
+ * The citation fields as the editors show them: what the student set, else
+ * the scrape (scraped* columns + scrapedExtra). Same `key in cf` precedence
+ * as the editors, so a field the student cleared stays blank. Pure.
+ */
+function resolvedCitationFieldsForCompletion_(source, cf) {
+  let extra = {};
+  try { extra = source.scrapedExtra ? (JSON.parse(source.scrapedExtra) || {}) : {}; }
+  catch (e) { extra = {}; }
+  const pick = (key, fallback) => String((key in cf ? cf[key] : fallback) || '').trim();
+  return {
+    sourceType: (cf.sourceType || source.sourceType || extra.sourceType || 'website'),
+    title:         pick('title', source.scrapedTitle),
+    author:        pick('author', source.scrapedAuthor),
+    siteName:      pick('siteName', source.scrapedSite),
+    publishedDate: pick('publishedDate', source.scrapedDate),
+    publication:   pick('publication', extra.publication),
+    publisher:     pick('publisher', extra.publisher),
+    archive:       pick('archive', extra.archive),
+  };
+}
+
+/**
+ * "Citation done" for the dashboard, drill-down and Requirements chips. Takes
+ * the raw Sources row. Done when either:
+ *   - the student pasted a whole citation, or
+ *   - the student edited at least one citation field (so an untouched scrape
+ *     never counts) AND every required field for the source type has a value,
+ *     scraped values included — exactly what the editors' "Not filled in yet"
+ *     list checks. URL is never required (it's always the page's own address,
+ *     and books have none).
+ * Pure.
+ */
+function isSourceCited_(source) {
+  const cf = parseCitationFields_(source || {});
+  const p = cf.pasted;
+  if (p && typeof p === 'object' && String(p.text || '').trim()) return true;
+  const touched = Object.keys(cf).some((k) => k !== 'pasted');
+  if (!touched) return false;
+  const f = resolvedCitationFieldsForCompletion_(source, cf);
+  const required = CITATION_REQUIRED_FIELDS[f.sourceType] || CITATION_REQUIRED_FIELDS.website;
+  return required.every((k) => !!f[k]);
 }
 
 /**
