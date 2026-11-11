@@ -145,10 +145,127 @@ function listGroupsForProject_(project, classFilter) {
   // it just to learn the student is solo). Cache the unfiltered listing per
   // project under the sheet-ref version (05_cache.js) — every group mutation
   // runs inside withGroupLock_, which bumps that version.
-  const all = cachedJson_(groupsListKey_(project.projectId), GROUPS_LIST_CACHE_TTL_SEC,
-    () => listGroupsForProjectLive_(project));
+  const all = withMemberClasses_(project, cachedJson_(groupsListKey_(project.projectId), GROUPS_LIST_CACHE_TTL_SEC,
+    () => listGroupsForProjectLive_(project)));
   if (!classFilter) return all;
-  return all.filter((g) => g.className === classFilter);
+  return all.filter((g) => g.memberClasses.indexOf(classFilter) >= 0);
+}
+
+// ============================================================
+// Cross-period groups
+// ------------------------------------------------------------
+// A group's Sheet lives in ONE class folder (its "home", g.className), but
+// its members may come from any of the project's classes. Everything that
+// decides where a group shows or who may manage it uses the classes its
+// members are in (g.memberClasses), never the home folder. Enrollment is
+// read at request time (the roster is cached separately), so the cached
+// group listing never goes stale when a student's classes change.
+// ============================================================
+
+/** A student's classes that are in the project, sorted. */
+function projectClassesForStudent_(email, project) {
+  const pc = projectClassList_(project);
+  return getStudentClasses_(String(email).toLowerCase()).filter((c) => pc.indexOf(c) >= 0).sort();
+}
+
+/**
+ * Annotate group listings with memberClassMap ({email: [project classes]})
+ * and memberClasses (their sorted union). Falls back to the home class when
+ * no member is enrolled anywhere (so an orphaned group stays visible where
+ * it was filed). Returns new objects; the cached listing isn't mutated.
+ */
+function withMemberClasses_(project, groups) {
+  return (groups || []).map((g) => {
+    const map = {};
+    (g.memberEmails || []).forEach((e) => {
+      map[String(e).toLowerCase()] = projectClassesForStudent_(e, project);
+    });
+    return Object.assign({}, g, {
+      memberClassMap: map,
+      memberClasses: unionMemberClasses_(map, g.className),
+    });
+  });
+}
+
+/** Pure: sorted union of a memberClassMap's lists, else [fallbackClass]. */
+function unionMemberClasses_(memberClassMap, fallbackClass) {
+  const seen = {};
+  Object.keys(memberClassMap || {}).forEach((e) => {
+    (memberClassMap[e] || []).forEach((c) => { if (c) seen[c] = true; });
+  });
+  const out = Object.keys(seen).sort();
+  return out.length ? out : (fallbackClass ? [fallbackClass] : []);
+}
+
+/**
+ * Pure: may a non-admin teacher put these students in one group? Yes when
+ * the teacher teaches at least one project class of EVERY student. Admins
+ * skip this check. `memberClassLists` = [[classes of student 1], ...].
+ */
+function teacherCanGroupMembers_(taughtClasses, memberClassLists) {
+  const taught = taughtClasses || [];
+  return (memberClassLists || []).every((list) =>
+    (list || []).some((c) => taught.indexOf(c) >= 0));
+}
+
+/** Pure: does the teacher teach any class a group's members are in? */
+function teacherCanSeeGroup_(taughtClasses, group) {
+  const taught = taughtClasses || [];
+  return ((group && group.memberClasses) || []).some((c) => taught.indexOf(c) >= 0);
+}
+
+/**
+ * Pure: the class folder a new group's Sheet is filed under. The first
+ * (sorted) member class the actor teaches, so a teacher's group lands in
+ * their own section; admins (taught = null) get the first member class.
+ */
+function chooseGroupHomeClass_(memberClassLists, taughtClasses) {
+  const union = unionMemberClasses_(
+    (memberClassLists || []).reduce((m, list, i) => { m[i] = list; return m; }, {}), '');
+  if (!taughtClasses) return union[0] || '';
+  return union.find((c) => taughtClasses.indexOf(c) >= 0) || union[0] || '';
+}
+
+/**
+ * Member classes of a located group (findGroupFileByGroupId_), from its live
+ * Members tab: { memberClassMap, memberClasses }. Used for authorization.
+ */
+function locatedGroupClasses_(project, located) {
+  const map = {};
+  currentMembers_(located.spreadsheet).forEach((m) => {
+    map[String(m.email).toLowerCase()] = projectClassesForStudent_(m.email, project);
+  });
+  return { memberClassMap: map, memberClasses: unionMemberClasses_(map, located.classFolder.getName()) };
+}
+
+/** Throw unless a non-admin teacher teaches a class one of the group's members is in. */
+function assertTeacherSeesGroup_(staff, actorEmail, project, located) {
+  if (isAdmin_(staff)) return;
+  const taught = listClassesTaughtBy_(actorEmail);
+  if (!teacherCanSeeGroup_(taught, locatedGroupClasses_(project, located))) {
+    throw new Error('Class not in your scope');
+  }
+}
+
+/**
+ * Throw unless a non-admin teacher teaches a class of every one of `emails`
+ * (the group's resulting membership).
+ */
+function assertTeacherCanGroup_(staff, actorEmail, project, emails) {
+  if (isAdmin_(staff)) return;
+  const taught = listClassesTaughtBy_(actorEmail);
+  const lists = emails.map((e) => projectClassesForStudent_(e, project));
+  if (!teacherCanGroupMembers_(taught, lists)) {
+    throw new Error('You can only group students in sections you teach');
+  }
+}
+
+/**
+ * Look up a group by id with its member classes (for authorization). Uses
+ * the cached listing; null if absent.
+ */
+function groupWithClasses_(project, groupId) {
+  return listGroupsForProject_(project).find((g) => g.groupId === groupId) || null;
 }
 
 function listGroupsForProjectLive_(project) {
@@ -266,7 +383,8 @@ function findGroupFileByGroupId_(project, groupId) {
 
 /**
  * Validate the inputs for a merge before any side effects run.
- * Throws on the first violation. Pure (no Sheet writes).
+ * Throws on the first violation. No Sheet writes. Returns
+ * { rosters, memberClassLists, lowered, trimmedName }.
  */
 function validateGroupCreate_(project, name, memberEmails) {
   const trimmedName = String(name || '').trim();
@@ -282,22 +400,19 @@ function validateGroupCreate_(project, name, memberEmails) {
     if (seen[e]) throw new Error('Duplicate member email: ' + e);
     seen[e] = true;
   });
-  // Roster check + same-class check.
+  // Roster check + each member must be in at least one of the project's
+  // classes. Members may come from different classes (cross-period groups);
+  // who may group them is checked by the caller (teacherCanGroupMembers_).
   const rosters = lowered.map((e) => {
     const r = getStudentRosterEntry_(e);
     if (!r) throw new Error('Not on roster: ' + e);
     return r;
   });
-  const classes = {};
-  rosters.forEach((r) => { classes[String(r.Class || '').trim()] = true; });
-  if (Object.keys(classes).length !== 1) {
-    throw new Error('All group members must share the same class');
-  }
-  const sharedClass = Object.keys(classes)[0];
-  const projectClasses = projectClassList_(project);
-  if (projectClasses.indexOf(sharedClass) < 0) {
-    throw new Error('Class ' + sharedClass + ' is not enrolled in this project');
-  }
+  const memberClassLists = lowered.map((e) => {
+    const list = projectClassesForStudent_(e, project);
+    if (!list.length) throw new Error(e + ' is not in a class enrolled in this project');
+    return list;
+  });
   // Not already in a group in this project.
   lowered.forEach((e) => {
     const existing = findGroupSheetForStudent_(e, project);
@@ -305,7 +420,7 @@ function validateGroupCreate_(project, name, memberEmails) {
       throw new Error(e + ' is already in a group — move them out first');
     }
   });
-  return { rosters, sharedClass, lowered, trimmedName };
+  return { rosters, memberClassLists, lowered, trimmedName };
 }
 
 /**

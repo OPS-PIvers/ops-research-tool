@@ -64,6 +64,18 @@ console.log('groupsToLeaveOnUnenroll_:');
   eq('leaves every group when no project class remains',
     groupsToLeaveOnUnenroll_(groups, 'Ada@x.org', 'P1', []).map((g) => g.groupId), ['g1', 'g2']);
   eq('not a member → nothing', groupsToLeaveOnUnenroll_(groups, 'zed@x.org', 'P1', []), []);
+  // Cross-period groups carry memberClassMap: stay while still sharing a
+  // project class with a teammate.
+  const xp = [
+    { groupId: 'x1', className: 'P1', memberEmails: ['ada@x.org', 'bo@x.org'],
+      memberClassMap: { 'ada@x.org': ['P1', 'P9'], 'bo@x.org': ['P9'] } },
+    { groupId: 'x2', className: 'P1', memberEmails: ['ada@x.org', 'cy@x.org'],
+      memberClassMap: { 'ada@x.org': ['P1', 'P9'], 'cy@x.org': ['P1'] } },
+  ];
+  eq('drop P1, still in P9 with a teammate -> stay in x1, leave x2',
+    groupsToLeaveOnUnenroll_(xp, 'ada@x.org', 'P1', ['P9']).map((g) => g.groupId), ['x2']);
+  eq('cross-period: no project class left -> leave all',
+    groupsToLeaveOnUnenroll_(xp, 'ada@x.org', 'P9', []).map((g) => g.groupId), ['x1', 'x2']);
   eq('handles missing inputs', groupsToLeaveOnUnenroll_(null, 'ada@x.org', 'P1', null), []);
 }
 

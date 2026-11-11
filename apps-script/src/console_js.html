@@ -1561,7 +1561,9 @@ function paintDashboard_() {
   const title = document.getElementById('db-title');
   if (title) {
     const classes = classLabelJoin_(proj.scopedClasses) || '(no classes)';
-    const totalStudents = dashboard.data.students.length;
+    // Teammates from other sections ride along under their group but aren't
+    // this view's students.
+    const totalStudents = dashboard.data.students.filter((s) => !s.otherClass).length;
     const groupCount = (dashboard.data.groups || []).length;
     let label = proj.name + ' · ' + classes + ' · ' + totalStudents + ' student' + (totalStudents === 1 ? '' : 's');
     if (groupCount > 0) label += ' · ' + groupCount + ' group' + (groupCount === 1 ? '' : 's');
@@ -1975,7 +1977,9 @@ function buildGroupHeaderRow_(group, members) {
   tdName.appendChild(wrap);
   const cls = document.createElement('div');
   cls.className = 'db-row__name-class';
-  cls.textContent = group.className;
+  // A cross-period group lists every section its members are in.
+  cls.textContent = classLabelJoin_(group.memberClasses && group.memberClasses.length
+    ? group.memberClasses : [group.className]);
   tdName.appendChild(cls);
   tr.appendChild(tdName);
 
@@ -2057,7 +2061,7 @@ function buildStudentRow_(s, parentGroup) {
   if (s.class) {
     const cls = document.createElement('div');
     cls.className = 'db-row__name-class';
-    cls.textContent = s.class + (parentGroup ? '' : ' · solo');
+    cls.textContent = classLabel_(s.class) + (parentGroup ? '' : ' · solo');
     tdName.appendChild(cls);
   }
   tr.appendChild(tdName);
@@ -2148,8 +2152,9 @@ function updateManageBar_() {
 
   summary.textContent = 'Manage groups mode — click rows to select.  ' + keys.length + ' selected.';
 
-  // Merge: 2-4 solo students of the same class.
-  const soloStudentsOfSameClass = (() => {
+  // Merge: 2-4 solo students, from any of the view's sections (groups may
+  // span periods; the server checks the teacher teaches each student).
+  const soloStudentsSelected = (() => {
     if (studentKeys.length < 2 || studentKeys.length > 4) return false;
     if (groupKeys.length !== 0) return false;
     const data = dashboard.data;
@@ -2158,13 +2163,10 @@ function updateManageBar_() {
     data.students.forEach((s) => { byEmail[s.email] = s; });
     const rows = studentKeys.map((k) => byEmail[k]).filter(Boolean);
     if (rows.length !== studentKeys.length) return false;
-    if (rows.some((r) => r.groupId)) return false;       // must be solo
-    const classes = {};
-    rows.forEach((r) => { classes[r.class] = true; });
-    return Object.keys(classes).length === 1;
+    return !rows.some((r) => r.groupId);                  // must be solo
   })();
   mergeBtn.textContent = '+ Merge into group (' + studentKeys.length + ')';
-  mergeBtn.disabled = !soloStudentsOfSameClass;
+  mergeBtn.disabled = !soloStudentsSelected;
 
   // Move / Add: exactly one student selected (no groups). A grouped student
   // moves to another group; a solo student is added to one — same button,
@@ -3228,10 +3230,13 @@ function openMergeModal_() {
   (dashboard.data.students || []).forEach((s) => { byEmail[s.email] = s; });
   const members = studentEmails.map((e) => byEmail[e]).filter(Boolean);
   if (members.length === 0) return;
-  const sharedClass = members[0].class;
+  // Members may come from different sections (a cross-period group).
+  const memberClasses = Array.from(new Set(members.map((m) => m.class).filter(Boolean))).sort();
+  const crossPeriod = memberClasses.length > 1;
 
-  // Compute Group N placeholder by counting existing groups in this class.
-  const existingGroupsInClass = (dashboard.data.groups || []).filter((g) => g.className === sharedClass);
+  // Group N placeholder: one past the groups in the first member's section.
+  const existingGroupsInClass = (dashboard.data.groups || []).filter((g) =>
+    (g.memberClasses || [g.className]).indexOf(members[0].class) >= 0);
   const placeholder = 'Group ' + (existingGroupsInClass.length + 1);
 
   const overlay = document.createElement('div');
@@ -3245,7 +3250,8 @@ function openMergeModal_() {
 
   const subtitle = document.createElement('p');
   subtitle.className = 'db-merge-subtitle';
-  subtitle.textContent = sharedClass + ' — ' + members.length + ' student' + (members.length === 1 ? '' : 's');
+  subtitle.textContent = classLabelJoin_(memberClasses) + ' — ' + members.length + ' student' +
+    (members.length === 1 ? '' : 's') + (crossPeriod ? ' from ' + memberClasses.length + ' sections' : '');
   modal.appendChild(subtitle);
 
   const list = document.createElement('ul');
@@ -3257,7 +3263,8 @@ function openMergeModal_() {
     const work = document.createElement('span');
     work.className = 'db-merge-work';
     const src = m.sourceCount || 0, hl = m.highlightCount || 0;
-    work.textContent = (src || hl) ? plural_(src, 'source') + ' · ' + plural_(hl, 'highlight') : 'No work yet';
+    work.textContent = (crossPeriod ? classLabel_(m.class) + ' · ' : '') +
+      ((src || hl) ? plural_(src, 'source') + ' · ' + plural_(hl, 'highlight') : 'No work yet');
     li.appendChild(work);
     list.appendChild(li);
   });
@@ -3374,17 +3381,17 @@ function openMoveDropdown_(anchor) {
   const student = byEmail[email];
   if (!student) return;
 
-  // Candidate groups: same class, not the student's current group, with room
-  // (≤4 members). Works for both a grouped student (move) and a solo one
-  // (add — their groupId is null, so every same-class group is a candidate).
+  // Candidate groups: any group in this view (groups may span periods), not
+  // the student's current group, with room (≤4 members). Works for both a
+  // grouped student (move) and a solo one (add — their groupId is null).
   const candidates = (dashboard.data.groups || []).filter((g) =>
-    g.className === student.class && g.groupId !== student.groupId && g.memberCount < 4);
+    g.groupId !== student.groupId && g.memberCount < 4);
 
   // Close any open dropdown first.
   document.querySelectorAll('.db-move-pop').forEach((el) => el.remove());
   if (candidates.length === 0) {
     const verb = student.groupId ? 'move into' : 'add them to';
-    setStatus('No ' + student.class + ' groups with room to ' + verb + '.', 'neutral', 3000);
+    setStatus('No groups with room to ' + verb + '.', 'neutral', 3000);
     return;
   }
 
@@ -3398,7 +3405,8 @@ function openMoveDropdown_(anchor) {
   candidates.forEach((g) => {
     const item = document.createElement('button');
     item.className = 'db-move-pop__item';
-    item.textContent = g.name + '  (' + g.memberCount + ' member' + (g.memberCount === 1 ? '' : 's') + ')';
+    item.textContent = g.name + '  (' + classLabelJoin_(g.memberClasses || [g.className]) + ' · ' +
+      g.memberCount + ' member' + (g.memberCount === 1 ? '' : 's') + ')';
     item.addEventListener('click', () => {
       pop.remove();
       if (student.groupId) doMove_(email, student.groupId, g.groupId, g.name);

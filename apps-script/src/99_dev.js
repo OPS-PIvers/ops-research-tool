@@ -1687,11 +1687,12 @@ function devTestGroupAuthorizationGate() {
 
   const { check, state } = devGroupsChecker_();
   try {
-    // Same-class invariant: mixed DEV + DEV2 must throw.
+    // Groups may span the project's classes, but DEV2 isn't one of them:
+    // a DEV2-only student can't join a group in this project.
     let mixedThrew = false;
     try { consoleGroupCreate(project.projectId, 'MixedClass', [emails[0], dev2[0]]); }
-    catch (e) { mixedThrew = true; check('mixed-class merge throws', /same class/i.test(e.message)); }
-    if (!mixedThrew) check('mixed-class merge throws', false);
+    catch (e) { mixedThrew = true; check('non-project-class merge throws', /not in a class enrolled/i.test(e.message)); }
+    if (!mixedThrew) check('non-project-class merge throws', false);
 
     // Already-in-a-group: merge {A,B}, then try to add A again → throws.
     const g = consoleGroupCreate(project.projectId, 'AlreadyInGroup', [emails[0], emails[1]]);
@@ -1730,6 +1731,107 @@ function devTestGroupAuthorizationGate() {
       const groups = listGroupsForProject_(project, 'DEV');
       groups.forEach((gr) => { try { consoleGroupDisband(project.projectId, gr.groupId); } catch (e) {} });
     } catch (e) {}
+    devGroupsTestCleanup_(emails);
+  }
+  console.log(state.pass + '/' + (state.pass + state.fail) + ' passed');
+  return state;
+}
+
+/**
+ * Cross-period group: a DEV student + a DEVP9 student (both classes in the
+ * Dev Project, both taught by the runner). The group is filed under DEV,
+ * shows on BOTH class tabs with its other-section member flagged otherClass,
+ * and a teacher who doesn't teach DEVP9 can't build one. Temporarily adds
+ * DEVP9 to the Dev Project's classes; restores them in finally.
+ */
+function devTestGroupCrossPeriod() {
+  const project = devSeedDevProject();
+  const me = Session.getEffectiveUser().getEmail();
+  const emails = devGroupsSeedRoster_(2);
+  if (!getClassRecord_('DEVP9')) createClass_('DEVP9', me, '');
+  const p9 = ['devgroups.p9a@orono.k12.mn.us', 'devgroups.p9b@orono.k12.mn.us'];
+  p9.forEach((e, i) => {
+    if (!getStudentIdentity_(e)) upsertStudent_({ ID: '', First: 'DGP9' + i, Last: 'Student', Email: e });
+    enroll_(e, 'DEVP9');
+  });
+  const projTab = getTab_(SpreadsheetApp.openById(CONFIG.PROJECTS_SHEET_ID), TABS.PROJECTS);
+  const pRow = findRowByKey_(projTab, HEADERS.PROJECTS, 'projectId', project.projectId);
+  const mcCol = HEADERS.PROJECTS.indexOf('memberClasses') + 1;
+  const origClasses = projTab.getRange(pRow, mcCol).getValue();
+  projTab.getRange(pRow, mcCol).setValue(origClasses ? origClasses + ',DEVP9' : 'DEV,DEVP9');
+  invalidateProjectsCache_(); invalidateRosterCache_(); resetGroupSheetCache_(); bumpSheetRefVersion_();
+
+  const { check, state } = devGroupsChecker_();
+  try {
+    const proj = getProject_(project.projectId);
+    const ss = findOrCreateStudentSheet_(p9[0], proj);
+    upsertSource_(ss, {
+      sourceId: 'xp-src-' + p9[0], projectId: proj.projectId,
+      rawUrl: 'https://devg.example.com/xp/' + p9[0], createdByEmail: p9[0],
+    });
+
+    const merge = consoleGroupCreate(proj.projectId, 'CrossPeriod', [emails[0], p9[0]], 'combine');
+    check('cross-period merge ok', merge && merge.ok === true);
+    check('filed under DEV', merge.className === 'DEV');
+    check('memberClasses = DEV + DEVP9', JSON.stringify(merge.memberClasses) === JSON.stringify(['DEV', 'DEVP9']));
+    check('P9 work copied in', merge.sourcesCopied === 1);
+
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
+    check('listed under DEVP9 too',
+      listGroupsForProject_(proj, 'DEVP9').some((g) => g.groupId === merge.groupId));
+    ['DEV', 'DEVP9'].forEach((cls) => {
+      const dash = consoleGetProjectDashboard(proj.projectId, cls, true);
+      const other = cls === 'DEV' ? p9[0] : emails[0];
+      check(cls + ' tab shows the group', (dash.groups || []).some((g) => g.groupId === merge.groupId));
+      const row = (dash.students || []).find((s) => s.email === other);
+      check(cls + ' tab lists the other-section member, flagged',
+        !!row && row.otherClass === true && row.groupId === merge.groupId);
+    });
+
+    // A teacher who doesn't teach DEVP9 can't group across into it.
+    const staffTab = getTab_(SpreadsheetApp.openById(CONFIG.ROSTER_SHEET_ID), TABS.STAFF);
+    const sIdx = findRowByKey_(staffTab, HEADERS.STAFF, 'Email', me);
+    const roleCol = HEADERS.STAFF.indexOf('Role') + 1;
+    const origRole = staffTab.getRange(sIdx, roleCol).getValue();
+    staffTab.getRange(sIdx, roleCol).setValue(ROLES.TEACHER);
+    updateClass_('DEVP9', { TeacherEmail: 'phantom.teacher@orono.k12.mn.us' });
+    invalidateStaffCache_(); invalidateRosterCache_();
+    try {
+      let threw = false;
+      try { consoleGroupCreate(proj.projectId, 'NotMine', [emails[1], p9[1]]); }
+      catch (e) { threw = /sections you teach/i.test(e.message); }
+      check('teacher cannot group a section they do not teach', threw);
+    } finally {
+      updateClass_('DEVP9', { TeacherEmail: me });
+      staffTab.getRange(sIdx, roleCol).setValue(origRole);
+      invalidateStaffCache_(); invalidateRosterCache_();
+    }
+
+    const disband = consoleGroupDisband(proj.projectId, merge.groupId);
+    check('disband ok', disband && disband.ok === true);
+    resetGroupSheetCache_(); bumpSheetRefVersion_();
+    const back = getSoloSheetIfExists_(p9[0], proj);
+    check('P9 student gets their source back',
+      !!back && readAllAsObjects_(getTab_(back, TABS.SOURCES), HEADERS.SOURCES).some((r) => r.sourceId === 'xp-src-' + p9[0]));
+  } finally {
+    try {
+      resetGroupSheetCache_(); bumpSheetRefVersion_();
+      const proj = getProject_(project.projectId);
+      listGroupsForProject_(proj).forEach((g) => {
+        if ((g.memberEmails || []).some((m) => p9.indexOf(m) >= 0 || emails.indexOf(m) >= 0)) {
+          try { consoleGroupDisband(proj.projectId, g.groupId); } catch (e) {}
+        }
+      });
+      p9.forEach((e) => {
+        let f;
+        while ((f = findSoloSheetFileInProject_(e, proj))) { try { f.setTrashed(true); } catch (err) { break; } }
+        forgetSoloSheetId_(proj.projectId, e);
+      });
+    } catch (e) {}
+    projTab.getRange(pRow, mcCol).setValue(origClasses);
+    invalidateProjectsCache_();
+    p9.forEach((e) => { if (getStudentIdentity_(e)) { try { deleteStudent_(e); } catch (err) {} } });
+    try { deleteClass_('DEVP9'); } catch (e) {}
     devGroupsTestCleanup_(emails);
   }
   console.log(state.pass + '/' + (state.pass + state.fail) + ' passed');
@@ -1832,6 +1934,7 @@ function devTestGroupsAll() {
     ['devTestGroupAddToGroup',             devTestGroupAddToGroup],
     ['devTestGroupAuthorizationGate',      devTestGroupAuthorizationGate],
     ['devTestGroupStartFresh',             devTestGroupStartFresh],
+    ['devTestGroupCrossPeriod',            devTestGroupCrossPeriod],
   ];
   let pass = 0, fail = 0, threw = 0;
   const lines = [];

@@ -177,7 +177,8 @@ Moving the project = edit that one file, `clasp push`, redeploy.
   - A+B: Console shell, My Projects, Project Dashboard, student drill-down.
   - C: Admin Area (Roster CRUD, Staff CRUD, Archive School Year) + audit log
     + 7-day recently-unarchived banner.
-  - D: Groups — teacher-driven merge of 2–4 in-class students into a single
+  - D: Groups — teacher-driven merge of 2–4 students (any of the project's
+    classes — see cross-period bullet) into a single
     group Sheet (existing work migrated), Manage Groups mode on the dashboard
     (merge / move / add / remove / disband), group-aggregate drill-down with
     author attribution. Routing goes through `findGroupSheetForStudent_` so the
@@ -193,12 +194,31 @@ Moving the project = edit that one file, `clasp push`, redeploy.
       routing) do the rebuild.
     - **Move** carries the student's work into the target group; **remove**
       auto-disbands a group that would drop to ≤1 member.
-    - **`consoleAddToGroup`** adds an ungrouped same-class student to an
+    - **`consoleAddToGroup`** adds an ungrouped student to an
       existing group (copies their solo rows in, trashes the solo). In the
       dashboard's Manage Groups bar, the "Move to ▾" button doubles as "Add
       to group ▾" when the selected student is solo; "Remove from group"
       removes a selected grouped student.
     - All group mutations are serialized with `LockService` (`withGroupLock_`).
+    - **Groups may span class periods (2026-11-11).** A group's Sheet sits in
+      one "home" class folder (`g.className`: the first member class the
+      creating teacher teaches), but where it shows and who may manage it go
+      by its members' classes. `listGroupsForProject_` annotates every listing
+      at read time (not cached, so enrollment changes apply at once) with
+      `memberClassMap` (`email → project classes`) and `memberClasses` (their
+      union). **Never filter groups on `g.className` again**; use
+      `memberClasses` / `groupInDashboardScope_`. Permission rule (Paul's
+      call): a non-admin teacher must teach a class of **every** member
+      (`teacherCanGroupMembers_`) to merge / add / move; disband and the group
+      drill-down need any member class taught (`teacherCanSeeGroup_`); remove
+      needs the removed student's class. Admins may group anyone in the
+      project. Cross-teacher groups are therefore admin-made. Dashboard: a
+      class tab lists the group plus its members from other sections
+      (`dashboardRoster_`, rows flagged `otherClass`, excluded from the
+      tab's student count). Manage roster: unenrolling keeps a student in a
+      group while they still share a project class with a teammate
+      (`groupsToLeaveOnUnenroll_`). Tests: `devTestGroupCrossPeriod`
+      (temporarily adds a DEVP9 class to the Dev Project) + node.
     - **Merge offers Combine or Start fresh (2026-11-11).** When any selected
       student has saved work, the merge modal requires a choice (no default):
       **Combine** copies their rows in and trashes the solo Sheets (the old
@@ -1080,8 +1100,9 @@ Editor-callable tests in [`apps-script/src/99_dev.js`](apps-script/src/99_dev.js
   cleans up after itself: `devTestGroupRoutingProvisioning`,
   `devTestGroupMergeMigrationFidelity`, `devTestGroupDisbandRoundTrip`,
   `devTestGroupMoveSemantics`, `devTestGroupAddToGroup`,
-  `devTestGroupAuthorizationGate`, `devTestGroupStartFresh`. **Run
-  `devTestGroupsAll` to run all seven in one shot** — it prints a single
+  `devTestGroupAuthorizationGate`, `devTestGroupStartFresh`,
+  `devTestGroupCrossPeriod`. **Run
+  `devTestGroupsAll` to run all eight in one shot** — it prints a single
   `ALL GREEN` / `NOT GREEN` summary. Headless:
   `node apps-script/test/groups.node.test.js` (join mode, idempotent copy,
   source-field fill, solo-Sheet name matching).
