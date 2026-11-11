@@ -171,7 +171,18 @@ function consoleUnenrollStudentFromClass(classKey, email) {
   if (enrollmentsForClass_(cls).indexOf(em) < 0) {
     return Object.assign(classRosterPayload_(a.cls), { email: em, removed: 0, leftGroups: [] });
   }
+  const res = leaveClass_(a.actorEmail, em, cls, '');
+  return Object.assign(classRosterPayload_(a.cls), { email: em, removed: res.removed, leftGroups: res.leftGroups });
+}
 
+/**
+ * Take a student out of one class: leave any group they no longer share a
+ * section with a teammate in (active projects that include this class), then
+ * drop the enrollment row and audit. Sheets are never trashed. `auditNote` is
+ * appended to the audit detail (e.g. 'move;to=<class>').
+ * Returns { removed, leftGroups:[{projectId, groupId, autoDisbanded}] }.
+ */
+function leaveClass_(actorEmail, em, cls, auditNote) {
   const otherClasses = getStudentClasses_(em).filter((c) => c !== cls);
   const leftGroups = [];
   listActiveProjects_().forEach((project) => {
@@ -186,7 +197,7 @@ function consoleUnenrollStudentFromClass(classKey, email) {
       withGroupLock_(() => {
         // Re-check under the lock — a concurrent teacher action may have moved them.
         if (!currentMembers_(group.spreadsheet).some((m) => String(m.email).toLowerCase() === em)) return;
-        const r = removeMemberFromGroupCore_(project, group, em, a.actorEmail);
+        const r = removeMemberFromGroupCore_(project, group, em, actorEmail);
         leftGroups.push({ projectId: project.projectId, groupId: g.groupId, autoDisbanded: !!r.autoDisbanded });
       });
       resetGroupSheetCache_();
@@ -195,9 +206,112 @@ function consoleUnenrollStudentFromClass(classKey, email) {
 
   const res = unenroll_(em, cls);
   appendAuditEvent_({
-    projectId: '', action: AUDIT_ACTIONS.ROSTER_UNENROLL, actor: a.actorEmail,
-    detail: 'class=' + cls + ';email=' + em +
+    projectId: '', action: AUDIT_ACTIONS.ROSTER_UNENROLL, actor: actorEmail,
+    detail: 'class=' + cls + ';email=' + em + (auditNote ? ';' + auditNote : '') +
       (leftGroups.length ? ';leftGroups=' + leftGroups.map((x) => x.groupId).join(',') : ''),
   });
-  return Object.assign(classRosterPayload_(a.cls), { email: em, removed: res.removed, leftGroups });
+  return { removed: res.removed, leftGroups };
+}
+
+// ============================================================
+// Move a student to another period
+// ------------------------------------------------------------
+// One step instead of add-here + remove-there. Work is stored per (student,
+// project) and found by email in any class folder, so nothing moves on disk:
+// the student just shows up under the new section. A teacher may move a
+// student between sections they teach; admins between any classes.
+// ============================================================
+
+/**
+ * Pure: names of the projects the student is in now (via any class) that they
+ * would drop out of after moving fromClass → toClass. projects =
+ * [{ name, classes:[...] }]. Their work in those projects is kept, just hidden
+ * until a class in the project is theirs again.
+ */
+function projectsLostOnMove_(projects, studentClasses, fromClass, toClass) {
+  const now = studentClasses || [];
+  const after = now.filter((c) => c !== fromClass).concat(now.indexOf(toClass) >= 0 ? [] : [toClass]);
+  const hit = (cl, list) => (cl || []).some((c) => list.indexOf(c) >= 0);
+  return (projects || [])
+    .filter((p) => hit(p.classes, now) && !hit(p.classes, after))
+    .map((p) => p.name);
+}
+
+/**
+ * Pure: the classes a student in fromClass can be moved into, sorted by label.
+ * classes = listClasses_() rows; a non-admin only gets classes they teach.
+ * Inactive classes, the source class and classes they're already in are left
+ * out. Each target carries lostProjects (projectsLostOnMove_).
+ */
+function moveTargetsFor_(classes, actorEmail, isAdmin, fromClass, studentClasses, projects) {
+  const a = String(actorEmail || '').trim().toLowerCase();
+  const mine = studentClasses || [];
+  return (classes || [])
+    .filter((c) => c.Class && c.Class !== fromClass && mine.indexOf(c.Class) < 0)
+    .filter((c) => String(c.Status || 'active').toLowerCase() === 'active')
+    .filter((c) => isAdmin || String(c.TeacherEmail || '').trim().toLowerCase() === a)
+    .map((c) => ({
+      classKey: c.Class,
+      label: classDisplayLabel_(c),
+      lostProjects: projectsLostOnMove_(projects, mine, fromClass, c.Class),
+    }))
+    .sort((x, y) => x.label.toLowerCase().localeCompare(y.label.toLowerCase()));
+}
+
+/** Where can this student be moved? { ok, email, fromLabel, targets:[{classKey,label,lostProjects}] } */
+function consoleGetMoveTargets(classKey, email) {
+  const a = assertCanEditClassRoster_(classKey);
+  const em = String(email || '').trim().toLowerCase();
+  if (!em) throw new Error('email required');
+  const projects = listActiveProjects_().map((p) => ({ name: p.name, classes: projectClassList_(p) }));
+  return {
+    ok: true,
+    email: em,
+    fromLabel: classDisplayLabel_(a.cls),
+    targets: moveTargetsFor_(listClasses_(), a.actorEmail, a.isAdmin, a.cls.Class,
+      getStudentClasses_(em), projects),
+  };
+}
+
+/**
+ * Move a student from one class to another: enroll in the target, then leave
+ * the source (leaveClass_, which keeps them in a group while they still share
+ * a section with a teammate). The actor must be able to edit both classes'
+ * rosters. Returns the SOURCE class's refreshed roster + { email, toClass,
+ * toLabel, leftGroups }.
+ */
+function consoleMoveStudentToClass(fromClassKey, toClassKey, email) {
+  const a = assertCanEditClassRoster_(fromClassKey);
+  const b = assertCanEditClassRoster_(toClassKey);
+  const em = String(email || '').trim().toLowerCase();
+  if (!em) throw new Error('email required');
+  const from = a.cls.Class, to = b.cls.Class;
+  if (from === to) throw new Error('Pick a different section');
+  if (enrollmentsForClass_(from).indexOf(em) < 0) throw new Error(em + ' is not in ' + classDisplayLabel_(a.cls));
+  if (!a.isAdmin) {
+    // Same guard as Add: don't hand the teacher a student another teacher
+    // has in a shared active project. The class being left doesn't count.
+    const studentClasses = getStudentClasses_(em).filter((c) => c !== from);
+    const teacherOf = {};
+    studentClasses.forEach((c) => {
+      const rec = getClassRecord_(c);
+      teacherOf[c] = rec ? String(rec.TeacherEmail || '').toLowerCase() : '';
+    });
+    const projects = listActiveProjects_().map((p) => ({ classes: projectClassList_(p) }));
+    if (enrollConflictsWithOtherTeacher_(a.actorEmail, to, studentClasses, projects, teacherOf)) {
+      return { ok: false, reason: 'other_teacher', message: ROSTER_OTHER_TEACHER_MSG };
+    }
+  }
+
+  if (enrollmentsForClass_(to).indexOf(em) < 0) {
+    enroll_(em, to);
+    appendAuditEvent_({
+      projectId: '', action: AUDIT_ACTIONS.ROSTER_ENROLL, actor: a.actorEmail,
+      detail: 'class=' + to + ';email=' + em + ';move;from=' + from,
+    });
+  }
+  const res = leaveClass_(a.actorEmail, em, from, 'move;to=' + to);
+  return Object.assign(classRosterPayload_(a.cls), {
+    email: em, toClass: to, toLabel: classDisplayLabel_(b.cls), leftGroups: res.leftGroups,
+  });
 }

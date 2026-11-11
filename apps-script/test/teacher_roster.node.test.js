@@ -14,13 +14,13 @@ const path = require('path');
 const vm = require('vm');
 
 const srcDir = path.join(__dirname, '..', 'src');
-const src = ['02_constants.js', '61_console_api.js', '68_teacher_roster.js']
+const src = ['02_constants.js', '40_roster_model.js', '61_console_api.js', '68_teacher_roster.js']
   .map((f) => fs.readFileSync(path.join(srcDir, f), 'utf8')).join('\n');
 
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(src, sandbox);
-const { canEditClassRoster_, normalizeRosterEmail_, groupsToLeaveOnUnenroll_, shapeClassRosterRows_, ROSTER_NOT_FOUND_MSG, enrollConflictsWithOtherTeacher_ } = sandbox;
+const { canEditClassRoster_, normalizeRosterEmail_, groupsToLeaveOnUnenroll_, shapeClassRosterRows_, ROSTER_NOT_FOUND_MSG, enrollConflictsWithOtherTeacher_, projectsLostOnMove_, moveTargetsFor_ } = sandbox;
 
 let failures = 0;
 function check(label, cond) {
@@ -108,6 +108,29 @@ console.log('enrollConflictsWithOtherTeacher_:');
   check('other teacher\'s class but no shared project → allowed', enrollConflictsWithOtherTeacher_('a@x.org', 'A P1', ['Art'], shared, teacherOf) === false);
   check('student only in my other class → allowed', enrollConflictsWithOtherTeacher_('a@x.org', 'A P1', ['A P4'], [{ classes: ['A P1', 'A P4'] }], teacherOf) === false);
   check('unenrolled student → allowed', enrollConflictsWithOtherTeacher_('a@x.org', 'A P1', [], shared, teacherOf) === false);
+}
+
+console.log('move to another section:');
+{
+  const projects = [
+    { name: 'History Day', classes: ['P1', 'P9'] },
+    { name: 'Capstone', classes: ['P9'] },
+    { name: 'Science Fair', classes: ['Sci'] },
+  ];
+  eq('P9 -> P1 drops Capstone only', projectsLostOnMove_(projects, ['P9', 'Sci'], 'P9', 'P1'), ['Capstone']);
+  eq('P9 -> P1 keeps everything when P1 shares all', projectsLostOnMove_(projects.slice(0, 1), ['P9'], 'P9', 'P1'), []);
+  eq('target already held still counts', projectsLostOnMove_(projects, ['P9', 'P1'], 'P9', 'P1'), ['Capstone']);
+  const classes = [
+    { Class: 'P9', Name: 'US History', Period: 'P9', TeacherEmail: 'me@x.org', Status: 'active' },
+    { Class: 'P1', Name: 'US History', Period: 'P1', TeacherEmail: 'me@x.org', Status: 'active' },
+    { Class: 'P3', Name: 'US History', Period: 'P3', TeacherEmail: 'ME@x.org ', Status: 'active' },
+    { Class: 'P5', Name: 'US History', Period: 'P5', TeacherEmail: 'other@x.org', Status: 'active' },
+    { Class: 'Old', Name: 'Old', Period: '', TeacherEmail: 'me@x.org', Status: 'archived' },
+  ];
+  const t = moveTargetsFor_(classes, 'me@x.org', false, 'P9', ['P9', 'P3'], projects);
+  eq('teacher: own active sections, not source / already-in / archived', t.map((x) => x.classKey), ['P1']);
+  eq('label + lost projects', [t[0].label, t[0].lostProjects], ['US History · P1', ['Capstone']]);
+  eq('admin sees other teachers sections', moveTargetsFor_(classes, 'admin@x.org', true, 'P9', ['P9'], projects).map((x) => x.classKey), ['P1', 'P3', 'P5']);
 }
 
 if (failures) { console.error('\n' + failures + ' FAILED'); process.exit(1); }
