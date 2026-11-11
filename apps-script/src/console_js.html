@@ -813,7 +813,7 @@ function buildRequirementsFields_(req) {
   numField('Min highlights per source', 'minHighlightsPerSource');
   numField('Min distinct categories per source', 'minDistinctCategories', 5);
 
-  // Cite / Tag / Note: "Not required" removes the dimension from the
+  // Citation / Primary/Secondary / Annotation: "Not required" removes the dimension from the
   // dashboard (Requirements column, drill-down) and from the completion %.
   const dimHint = document.createElement('div');
   dimHint.className = 'req-fieldset__hint';
@@ -832,9 +832,9 @@ function buildRequirementsFields_(req) {
     paint();
     wrap.appendChild(makeField_(label, btn));
   };
-  toggle('Citation (Cite)', 'requireCitation');
-  toggle('Primary / secondary tag (Tag)', 'requireClassification');
-  toggle('Annotation (Note)', 'requireAnnotation');
+  toggle('Citation', 'requireCitation');
+  toggle('Primary/Secondary', 'requireClassification');
+  toggle('Annotation', 'requireAnnotation');
   return wrap;
 }
 
@@ -2207,7 +2207,7 @@ function buildMixBar_(mix) {
 function buildCompletionCell_(comp, requirements) {
   const wrap = document.createElement('div');
   wrap.className = 'db-completion-wrap';
-  // Every Cite/Tag/Note dimension removed → nothing to complete.
+  // Every Citation / Primary/Secondary / Annotation dimension removed → nothing to complete.
   if (!requiredDims_(requirements).length) {
     const none = document.createElement('div');
     none.className = 'db-completion-pct';
@@ -2243,20 +2243,20 @@ function buildCompletionCell_(comp, requirements) {
 /**
  * The Requirements cell. Top row = teacher-set targets (sources, evidence
  * depth), shown only when the project sets them. Bottom row = completion gaps
- * (cite/tag/note), non-zero only. A student with no sources shows a neutral
+ * (citation / primary-secondary / annotation). A student with no sources shows a neutral
  * "—"; one who has met everything shows a single green "✓ complete". Works for
  * both student and group rows (both carry sourcesProgress + evidenceDepth).
  */
 /**
- * The Cite / Tag / Note dimensions a project still requires, in display order.
+ * The Citation / Primary/Secondary / Annotation dimensions a project still requires, in display order.
  * Each defaults on; a teacher can remove any of them in Edit requirements.
  */
 function requiredDims_(requirements) {
   const r = requirements || {};
   return [
-    { key: 'citation',       label: 'Cite', long: 'Citation',   verb: 'cited',     on: r.requireCitation !== false },
-    { key: 'classification', label: 'Tag',  long: 'Tag',        verb: 'tagged',    on: r.requireClassification !== false },
-    { key: 'annotation',     label: 'Note', long: 'Annotation', verb: 'annotated', on: r.requireAnnotation !== false },
+    { key: 'citation',       label: 'Citation',          long: 'Citation',          verb: 'have a citation',                on: r.requireCitation !== false },
+    { key: 'classification', label: 'Primary/Secondary', long: 'Primary/Secondary', verb: 'are marked primary or secondary', on: r.requireClassification !== false },
+    { key: 'annotation',     label: 'Annotation',        long: 'Annotation',        verb: 'have an annotation',             on: r.requireAnnotation !== false },
   ].filter((d) => d.on);
 }
 
@@ -2267,7 +2267,7 @@ function buildRequirementsCell_(gaps, row, requirements) {
   gaps = gaps || {};
   const total = (row && row.sourceCount) || 0;
 
-  // Fixed order — Sources · Depth · Cite · Tag · Note. Every chip that applies
+  // Fixed order — Sources · Evidence · Citation · Primary/Secondary · Annotation. Every chip that applies
   // to the project ALWAYS renders (color encodes status: green met / amber
   // partial / red behind / gray nothing-yet), so the chips line up in the same
   // slots when scanning down the column. Completed ones stay in place, green.
@@ -2275,9 +2275,9 @@ function buildRequirementsCell_(gaps, row, requirements) {
   // Sources target (only when the project sets one).
   if (reqs.minSources && row && row.sourcesProgress) {
     wrap.appendChild(reqChip_(
-      'Sources ' + total + '/' + reqs.minSources,
+      total + ' of ' + reqs.minSources + ' sources',
       row.sourcesProgress.meets ? 'good' : 'bad',
-      total + ' of ' + reqs.minSources + ' sources'));
+      total + ' source' + (total === 1 ? '' : 's') + ' saved; the project asks for ' + reqs.minSources));
   }
 
   // Evidence-depth target (only when the project sets one).
@@ -2287,7 +2287,7 @@ function buildRequirementsCell_(gaps, row, requirements) {
                  : (d.sourcesMeeting === d.total ? 'good'
                  : (d.sourcesMeeting > 0 ? 'warn' : 'bad'));
     wrap.appendChild(reqChip_(
-      'Depth ' + d.sourcesMeeting + '/' + d.total,
+      'Evidence ' + d.sourcesMeeting + '/' + d.total,
       status,
       d.sourcesMeeting + ' of ' + d.total + ' sources meet the evidence target'));
   }
@@ -2303,7 +2303,7 @@ function buildRequirementsCell_(gaps, row, requirements) {
     wrap.appendChild(reqChip_(
       dim.label + ' ' + done + '/' + total,
       status,
-      done + ' of ' + total + ' sources ' + dim.verb));
+      done + ' of ' + total + ' source' + (total === 1 ? '' : 's') + ' ' + dim.verb));
   });
 
   return wrap;
@@ -2711,7 +2711,7 @@ function buildSourceCard_(s) {
   meta.className = 'dd-source-card__meta';
   const chip = document.createElement('span');
   chip.className = 'dd-source-card__chip dd-source-card__chip--' + s.primarySecondary;
-  chip.textContent = s.primarySecondary === 'unset' ? 'Not tagged' : s.primarySecondary[0].toUpperCase() + s.primarySecondary.slice(1);
+  chip.textContent = s.primarySecondary === 'unset' ? 'Not marked yet' : s.primarySecondary[0].toUpperCase() + s.primarySecondary.slice(1);
   meta.appendChild(chip);
   const cnt = document.createElement('span');
   cnt.className = 'dd-source-card__count';
@@ -2938,7 +2938,7 @@ function buildDrillCountsTiles_(c) {
   if (c.unset > 0) {
     const un = document.createElement('div');
     un.className = 'dd-unclassified';
-    un.textContent = 'Untagged: ' + c.unset;
+    un.textContent = 'Not marked primary or secondary: ' + c.unset;
     outer.appendChild(un);
   }
   return outer;
