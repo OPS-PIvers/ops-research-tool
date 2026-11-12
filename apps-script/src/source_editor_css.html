@@ -7,12 +7,17 @@
   --c-field-border: #949494;  /* 3:1 on white, so field edges stay visible */
   --c-help: #595959;          /* helper text, 7:1 on white */
   --c-cite-bg: #f4f6fa;       /* blue-50, the citation card */
+  --c-todo: #8a4b00;          /* "still to do" text, 6.6:1 on white */
+  --c-todo-bg: #fff4e5;       /* its chip fill */
 }
 
 /* ---- Frame ---- */
+/* One scrolling column: the source header, then citation, primary/secondary,
+   annotation and highlights. The Docs modal adds a top bar with the source
+   switcher and close button; the "My research" page hides that bar. */
 .sb-body--modal {
   height: 100vh;
-  overflow: hidden;           /* panes scroll, never the frame */
+  overflow: hidden;           /* the column scrolls, never the frame */
   display: flex;
   flex-direction: column;
 }
@@ -23,36 +28,80 @@
   background: var(--c-bg);
   flex-shrink: 0;
 }
+.sb-modal__header[hidden] { display: none; }
 .sb-modal__close {
   background: none; border: none; font-size: 24px; line-height: 1;
   color: var(--c-muted); padding: 2px 8px; border-radius: 6px; cursor: pointer;
 }
 .sb-modal__close:hover { color: var(--c-text); background: var(--c-soft); }
-.sb-modal__body {
-  flex: 1; min-height: 0;
-  display: flex; gap: 0;
+.ed-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.ed-col {
+  max-width: 760px; margin: 0 auto;
+  padding: 24px 24px 48px;
+  display: flex; flex-direction: column; gap: 28px;
 }
-.sb-modal__pane {
-  overflow-y: auto;
-  min-width: 0;               /* without this, flex children force horizontal overflow */
-  display: flex; flex-direction: column; gap: 12px;
-  padding: 18px 20px 24px;
+.ed-form .sb-source__form { gap: 28px; }
+.ed-sec + .ed-sec,
+.ed-form + .ed-sec,
+.ed-form .ed-sec:first-child { padding-top: 24px; border-top: 1px solid var(--c-line); }
+.ed-sec[hidden] { display: none; }
+.ed-sec { scroll-margin-top: 12px; }
+
+/* ---- Source header ---- */
+.ed-head { display: flex; flex-direction: column; gap: 12px; }
+.ed-head[hidden] { display: none; }
+.ed-head__meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px;
+  font-size: 13px; color: var(--c-help);
 }
-.sb-modal__pane--left  { flex: 0 0 52%; border-right: 1px solid var(--c-line); }
-.sb-modal__pane--right { flex: 1; background: #fafafa; }
-.sb-modal__paneheader {
-  margin: 0;
-  font-family: var(--c-font-head); font-size: 15px; font-weight: 600;
-  color: var(--c-accent-strong);
+.ed-head__row { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.ed-head__title {
+  flex: 1 1 260px; min-width: 0; margin: 0;
+  font-family: var(--c-font-head); font-size: 26px; font-weight: 600; line-height: 1.25;
+  color: var(--c-accent-strong); overflow-wrap: anywhere;
 }
-.sb-modal__paneheader-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.sb-modal__status {
-  padding: 6px 16px 8px; font-size: 13px; color: var(--c-muted); text-align: center;
-  min-height: 28px; flex-shrink: 0; border-top: 1px solid var(--c-line);
+/* In the modal the source switcher above already names the source. */
+.sb-body--modal .ed-head__title { display: none; }
+.sb-body--modal .ed-col { padding-top: 16px; }
+.ed-head__actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ed-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 40px; padding: 0 14px;
+  border: 1.5px solid #d4d4d4; border-radius: 8px; background: #fff;
+  color: var(--c-accent); font-size: 14px; font-weight: 500; text-decoration: none;
+  white-space: nowrap; cursor: pointer;
 }
-.sb-modal__status:empty { border-top-color: transparent; }
-.sb-modal__status--good { color: var(--c-good); }
-.sb-modal__status--bad  { color: var(--c-bad); font-weight: 500; }
+.ed-btn:hover { border-color: var(--c-accent); background: var(--c-accent-hover); }
+.ed-btn:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.ed-btn--icon { width: 40px; padding: 0; }
+.ed-btn--danger { color: var(--c-bad); }
+.ed-btn--danger:hover,
+.ed-btn--danger[aria-expanded="true"] { border-color: var(--c-bad); background: #fbeeee; }
+.ed-del {
+  padding: 12px 14px; border: 1px solid var(--c-bad); border-radius: 8px; background: #fff;
+}
+
+.ed-status { display: inline-flex; align-items: center; gap: 4px; }
+.ed-status:empty { display: none; }
+.ed-status::before { content: '·'; margin-right: 6px; color: var(--c-help); }
+.ed-status--good { color: var(--c-accent); }
+.ed-status--bad { color: var(--c-bad); font-weight: 500; }
+
+.ed-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.ed-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 32px; padding: 4px 12px;
+  border: none; border-radius: 999px;
+  font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.ed-chip:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.ed-chip--done { background: var(--c-blue-subtle); color: var(--c-accent-strong); }
+.ed-chip--todo { background: var(--c-todo-bg); color: var(--c-todo); }
+.ed-chip--neutral { background: var(--c-soft); color: var(--c-text); }
+.ed-chip:hover { filter: brightness(0.96); }
+
+.ed-confirm { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.ed-confirm:empty { display: none; }
 
 /* ---- Source switcher (custom listbox; cf. .sb-ps-pop / .sb-insert-pop) ---- */
 .sb-srcdd { position: relative; flex: 1; min-width: 0; }
@@ -140,7 +189,7 @@
 .sb-source__preview em { font-style: italic; }
 .sb-source__preview-wait { color: var(--c-muted); }
 .sb-source__missing { margin: 0; font-size: 13px; line-height: 1.5; color: var(--c-help); }
-.sb-source__missing strong { color: var(--c-text); font-weight: 600; }
+.sb-source__missing strong { color: var(--c-todo); font-weight: 600; }
 .sb-source__missing[hidden] { display: none; }
 
 .sb-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
@@ -211,8 +260,7 @@
 .sb-segmented__opt--secondary.sb-segmented__opt--active { background: var(--c-bad); color: #fff; }
 .sb-segmented__opt--unset.sb-segmented__opt--active     { background: var(--c-soft); color: var(--c-text); }
 
-/* Remove source: last, quiet, confirmed. */
-.sb-modal__danger { padding-top: 16px; border-top: 1px solid var(--c-line); }
+/* Remove source: the header's trash button, then this confirm. */
 .sb-del { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .sb-del__q { flex-basis: 100%; margin: 0 0 2px; font-size: 14px; color: var(--c-text); }
 .sb-del__link {
@@ -240,7 +288,10 @@
   padding: 14px 16px; font-size: 14px; line-height: 1.5; color: var(--c-text);
 }
 
-.sb-ev { padding: 12px 14px; border-radius: 8px; background: #fff; font-size: 14px; }
+.sb-ev { padding: 12px 14px; border-radius: 8px; background: #fff; font-size: 14px; scroll-margin: 24px; }
+/* The page opened this highlight from its Highlights list: mark it briefly. */
+.sb-ev--flash { box-shadow: 0 0 0 3px var(--c-accent); transition: box-shadow 0.6s ease; }
+@media (prefers-reduced-motion: reduce) { .sb-ev--flash { transition: none; } }
 .sb-ev__cats { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 6px; }
 .sb-ev__cat { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--c-text); }
 .sb-ev__cat--secondary { font-weight: 400; color: var(--c-help); }
@@ -296,12 +347,9 @@
 .sb-modal__busy .sb-loading__spinner { width: 30px; height: 30px; }
 .sb-modal__busy-label { font-size: 14px; color: var(--c-text); font-weight: 500; }
 
-/* The 820px Docs modal and narrow page widths: one column of panes. */
-@media (max-width: 760px) {
-  .sb-modal__body { flex-direction: column; overflow-y: auto; }
-  .sb-modal__pane { overflow-y: visible; }
-  .sb-modal__pane--left { flex: none; border-right: none; border-bottom: 1px solid var(--c-line); }
-  .sb-modal__pane--right { flex: none; }
+@media (max-width: 600px) {
+  .ed-col { padding: 16px 16px 40px; }
+  .ed-head__title { font-size: 22px; }
 }
 ::selection { background: rgba(45, 63, 137, 0.18); }
 </style>

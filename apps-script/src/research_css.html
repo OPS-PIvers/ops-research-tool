@@ -1,11 +1,12 @@
 <style>
-/* "My research" page layout. Everything inside the two panes is styled by
-   sidebar_css (the Docs sidebar list + the source editor modal); this only
-   places them side by side and adapts them to a full browser tab. */
+/* "My research" page: navy district top bar (same chrome as the teacher
+   console), the page's own source list on a light-gray rail, and the shared
+   source editor (source_editor_css) as one scrolling column beside it. */
 .rp-body {
   height: 100vh;
   display: flex; flex-direction: column;
   overflow: hidden;
+  font-size: 14px;
 }
 
 .rp-offline {
@@ -16,64 +17,141 @@
 }
 .rp-offline[hidden] { display: none; }
 
+/* ---- Navy top bar ---- */
 .rp-header {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--c-line);
+  display: flex; align-items: center; gap: 12px 16px; flex-wrap: wrap;
+  padding: 10px 24px;
+  background: var(--c-accent-strong);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
+  color: #fff;
 }
-.rp-brand { min-width: 0; margin-right: auto; }
-.rp-brand .sb-title { font-size: 18px; }
+.rp-brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; margin-right: auto; flex-wrap: wrap; }
+.rp-title { margin: 0; font-family: var(--c-font-head); font-size: 20px; font-weight: 600; color: #fff; }
+.rp-actor { font-size: 13px; color: rgba(255, 255, 255, 0.78); }
 .rp-project { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.rp-project label { font-size: 13px; font-weight: 500; color: var(--c-text); }
+.rp-project label { font-size: 13px; color: rgba(255, 255, 255, 0.85); }
 .rp-project select {
-  min-width: 0; max-width: 320px;
-  padding: 6px 8px; border: 1.5px solid var(--c-line); border-radius: 6px;
+  min-width: 0; max-width: 320px; min-height: 40px;
+  padding: 6px 10px; border: 1.5px solid transparent; border-radius: 8px;
+  background: #fff; color: var(--c-text); font-size: 14px;
 }
-.rp-project select:focus {
-  outline: none; border-color: #4356a9;
-  box-shadow: 0 0 0 3px rgba(45, 63, 137, 0.12);
+.rp-project select:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.rp-refresh {
+  width: 40px; height: 40px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1.5px solid rgba(255, 255, 255, 0.45); border-radius: 8px;
+  background: transparent; color: #fff;
 }
-.rp-refresh:hover { border-color: var(--c-accent); color: var(--c-accent); }
+.rp-refresh:hover { background: rgba(255, 255, 255, 0.12); }
+.rp-refresh:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.rp-refresh--busy svg { animation: rp-spin 0.9s linear infinite; }
+@keyframes rp-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .rp-refresh--busy svg { animation: none; } }
 
 .rp-layout {
   flex: 1; min-height: 0;
   display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
 }
 
+/* ---- The list rail ---- */
 .rp-list {
   min-height: 0;
   display: flex; flex-direction: column;
+  background: #fafafa;
   border-right: 1px solid var(--c-line);
 }
-.rp-list .sb-main { height: auto; flex: 1; min-height: 0; padding-bottom: 8px; }
-.rp-list .sb-status { padding: 4px 12px 8px; margin: 0; }
-
-/* The list is the Docs sidebar's, sized up for a full page. */
-.rp-list .sb-source__title { font-size: 14px; }
-.rp-list .sb-source__meta,
-.rp-list .sb-source__action { font-size: 12px; }
-.rp-list .sb-highlight { font-size: 13px; }
-.rp-list .sb-hl-tag { font-size: 11px; }
-.rp-list .sb-viewmode__pill { font-size: 12px; }
-.rp-project select { font-size: 14px; }
-
-/* The source open in the editor. */
-.sb-source--selected { box-shadow: inset 3px 0 0 var(--c-accent); padding-left: 9px; }
-.sb-source--selected .sb-source__title { color: var(--c-accent-strong); }
-.sb-source__action--edit { font-weight: 600; }
-.sb-source__action--edit[aria-pressed="true"] { color: var(--c-muted); cursor: default; text-decoration: none; }
-.rp-list .sb-source__meta { gap: 2px 4px; }
-.sb-source__action--delete { color: var(--c-bad); }
-.sb-source__action--delete:disabled { color: var(--c-muted); cursor: default; text-decoration: none; }
-.sb-source__del {
-  margin-top: 8px; padding: 10px 12px;
-  border: 1px solid var(--c-bad); border-radius: 6px; background: #fff;
+.rp-list__bar { display: flex; align-items: center; gap: 8px; padding: 16px 16px 10px; }
+.rp-tabs { flex: 1; display: flex; padding: 3px; background: #ececec; border-radius: 10px; }
+.rp-tab {
+  flex: 1; min-height: 38px; border: none; border-radius: 8px; background: transparent;
+  font-size: 14px; color: #525252;
 }
-.sb-source__del .sb-modal__btn { min-height: 32px; padding: 5px 12px; font-size: 13px; }
-.sb-source__del .sb-modal__btn:disabled { opacity: .6; cursor: default; }
+.rp-tab[aria-selected="true"] {
+  background: #fff; color: var(--c-accent-strong); font-weight: 500;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.rp-tab:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
+.rp-iconbtn {
+  width: 44px; height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1.5px solid #d4d4d4; border-radius: 10px; background: #fff; color: #525252;
+}
+.rp-iconbtn:hover { border-color: var(--c-accent); color: var(--c-accent); }
+.rp-iconbtn:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.rp-sort { position: relative; }
+.rp-sort[hidden] { display: none; }
+.rp-sort__pop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+  min-width: 200px; padding: 6px;
+  background: #fff; border: 1px solid var(--c-line); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(29, 42, 93, 0.18);
+}
+.rp-sort__pop[hidden] { display: none; }
+.rp-sort__opt {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  min-height: 40px; padding: 8px 10px; border: none; border-radius: 7px; background: none;
+  font-size: 14px; color: var(--c-text); text-align: left;
+}
+.rp-sort__opt:hover { background: var(--c-soft); }
+.rp-sort__opt[aria-checked="true"] { color: var(--c-accent-strong); font-weight: 600; }
+.rp-sort__check { width: 14px; color: var(--c-accent); }
 
-/* Same flex column the Docs modal gets from .sb-body--modal. */
+.rp-summary { padding: 0 20px 10px; font-size: 13px; color: #525252; }
+.rp-summary[hidden] { display: none; }
+.rp-summary strong { color: var(--c-text); font-weight: 600; }
+
+.rp-items {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 0 16px 16px;
+}
+.rp-group { padding: 12px 4px 2px; font-size: 12px; font-weight: 600; color: #525252; }
+.rp-group:first-child { padding-top: 0; }
+
+.rp-card {
+  display: flex; flex-direction: column; gap: 5px;
+  width: 100%; padding: 12px 14px;
+  border: 1px solid var(--c-line); border-radius: 10px; background: #fff;
+  text-align: left; color: inherit;
+}
+.rp-card:hover { border-color: #bdbdbd; }
+.rp-card:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.rp-card[aria-current="true"] {
+  background: #eef0f8; border: 1.5px solid var(--c-accent); padding: 11.5px 13.5px;
+}
+.rp-card__title {
+  font-size: 15px; font-weight: 500; color: var(--c-text); line-height: 1.3;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.rp-card[aria-current="true"] .rp-card__title { color: var(--c-accent-strong); font-weight: 600; }
+.rp-card__meta { font-size: 12px; color: #6b6b6b; overflow-wrap: anywhere; }
+.rp-card__status {
+  display: flex; align-items: flex-start; gap: 6px;
+  font-size: 12px; font-weight: 500; line-height: 1.35;
+}
+.rp-card__status svg { flex-shrink: 0; margin-top: 1px; }
+.rp-card__status--ready { color: var(--c-accent); }
+.rp-card__status--todo { color: var(--c-todo); }
+
+/* Highlights tab: one card per highlight, grouped by category. */
+.rp-hl__cat { display: inline-flex; align-items: center; gap: 6px; }
+.rp-hl__dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.rp-hl__text {
+  font-size: 14px; line-height: 1.45; color: var(--c-text);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+}
+.rp-hl__src { font-size: 12px; color: #6b6b6b; overflow-wrap: anywhere; }
+
+.rp-empty { padding: 24px 8px; font-size: 14px; line-height: 1.5; color: #525252; text-align: center; }
+.rp-status { padding: 4px 16px 8px; font-size: 12px; color: var(--c-muted); }
+.rp-status:empty { display: none; }
+.rp-status--bad { color: var(--c-bad); }
+
+.rp-skel { height: 86px; border-radius: 10px; background: #eeeeee; }
+
+/* ---- The editor column ---- */
 .rp-editor {
   min-height: 0; min-width: 0;
   display: flex; flex-direction: column;
@@ -82,9 +160,9 @@
 .rp-back {
   display: none;
   align-self: flex-start;
-  margin: 8px 12px 0; padding: 4px 0;
+  min-height: 40px; margin: 6px 12px 0; padding: 4px 4px;
   border: none; background: none;
-  color: var(--c-accent); font-size: 13px; font-weight: 500;
+  color: var(--c-accent); font-size: 14px; font-weight: 500;
 }
 
 /* Narrow: one column. The list shows until a source is picked, then the
@@ -96,16 +174,10 @@
   .rp-editing .rp-list { display: none; }
   .rp-editing .rp-editor { display: flex; }
   .rp-back { display: block; }
+  .rp-header { padding: 10px 16px; }
 }
-
-/* The editor's citation + highlights panes stack once they'd be cramped. */
-@media (max-width: 1100px) {
-  .rp-editor .sb-modal__body { flex-direction: column; overflow-y: auto; }
-  .rp-editor .sb-modal__pane { overflow-y: visible; }
-  .rp-editor .sb-modal__pane--left { flex: none; border-right: none; border-bottom: 1px solid var(--c-line); }
-  .rp-editor .sb-modal__pane--right { flex: none; }
-}
-@media (min-width: 901px) and (max-width: 1100px) {
-  .rp-layout { grid-template-columns: minmax(280px, 320px) minmax(0, 1fr); }
+@media (max-width: 520px) {
+  .rp-project { flex: 1 1 100%; order: 3; }
+  .rp-project select { flex: 1; max-width: none; }
 }
 </style>

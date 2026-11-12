@@ -6,8 +6,8 @@
     <?!= includeFile_('source_editor_css') ?>
     <?!= includeFile_('research_css') ?>
     <script>
-      // "My research": the Docs sidebar list (sidebar_js, PAGE mode) beside the
-      // source editor (source_editor_js, embedded mode). Served by
+      // "My research": the page's own source list (research_js) beside the
+      // shared source editor (source_editor_js, embedded mode). Served by
       // serveResearchHtml_ in 60_console_routing.js.
       window.OPS_PAGE = { projectId: <?!= JSON.stringify(requestedProjectId) ?> };
       window.OPS_EDITOR_CTX = { embedded: true, projectId: '', sourceId: '', focusHighlightId: '', bundle: null };
@@ -20,31 +20,49 @@
 
     <header class="rp-header">
       <div class="rp-brand">
-        <h1 class="sb-title">My research</h1>
-        <div id="sb-actor" class="sb-actor"></div>
+        <h1 class="rp-title">My research</h1>
+        <span id="rp-actor" class="rp-actor"></span>
       </div>
       <div class="rp-project">
-        <label for="sb-project">Project</label>
-        <select id="sb-project" disabled>
+        <label for="rp-project">Project</label>
+        <select id="rp-project" disabled>
           <option>Loading…</option>
         </select>
       </div>
-      <button id="rp-refresh" type="button" class="sb-btn rp-refresh">Refresh</button>
+      <button id="rp-refresh" type="button" class="rp-refresh" aria-label="Refresh" title="Refresh">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg>
+      </button>
     </header>
 
     <div class="rp-layout">
-      <aside class="rp-list" aria-label="Your sources">
-        <?!= includeFile_('sidebar_list') ?>
-        <div id="sb-status" class="sb-status" role="status"></div>
+      <aside class="rp-list" aria-label="Your research">
+        <div class="rp-list__bar">
+          <div class="rp-tabs" role="tablist" aria-label="Show">
+            <button id="rp-tab-sources" type="button" role="tab" class="rp-tab" aria-selected="true" aria-controls="rp-items">Sources</button>
+            <button id="rp-tab-highlights" type="button" role="tab" class="rp-tab" aria-selected="false" aria-controls="rp-items">Highlights</button>
+          </div>
+          <div class="rp-sort" id="rp-sort">
+            <button id="rp-sort-btn" type="button" class="rp-iconbtn" aria-haspopup="true" aria-expanded="false"
+                    aria-label="Sort sources" title="Sort sources">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" aria-hidden="true"><path d="M4 6h16"/><path d="M7 12h10"/><path d="M10 18h4"/></svg>
+            </button>
+            <div id="rp-sort-pop" class="rp-sort__pop" role="radiogroup" aria-label="Sort sources" hidden></div>
+          </div>
+        </div>
+        <div id="rp-summary" class="rp-summary" hidden></div>
+        <div id="rp-items" class="rp-items" role="tabpanel"></div>
+        <div id="rp-status" class="rp-status" role="status" aria-live="polite"></div>
       </aside>
 
-      <section class="rp-editor" aria-label="Edit source">
+      <section class="rp-editor" aria-label="Source">
         <button id="rp-back" type="button" class="rp-back">‹ All sources</button>
         <?!= includeFile_('source_editor_body') ?>
       </section>
     </div>
 
     <?!= includeFile_('source_editor_js') ?>
-    <?!= includeFile_('sidebar_js') ?>
+    <?!= includeFile_('research_js') ?>
   </body>
 </html>

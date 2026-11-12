@@ -1044,7 +1044,7 @@ const OpsSidebar = (function () {
     srcTab.addEventListener('click', () => { state.activeTab = 'source'; render_(); });
     const annTab = el_('button', 'tab' + (state.activeTab === 'annotations' ? ' tab--active' : ''));
     annTab.type = 'button';
-    annTab.appendChild(document.createTextNode('Annotations'));
+    annTab.appendChild(document.createTextNode('Highlights'));
     if (state.pageHighlights.length) {
       const badge = el_('span', 'tab__badge', String(state.pageHighlights.length));
       annTab.appendChild(badge);
@@ -1059,7 +1059,7 @@ const OpsSidebar = (function () {
       return;
     }
 
-    // ----- Annotations tab -----
+    // ----- Highlights tab -----
     // While the first fetch is in flight with nothing loaded yet, suppress the
     // facets (their counts would all read 0) and skeleton the list instead.
     const loadingEmpty = state.loadingHighlights && state.pageHighlights.length === 0;
@@ -1590,10 +1590,10 @@ const OpsSidebar = (function () {
   function renderFacetList_() {
     const wrap = el_('div', 'facets');
 
-    // "All notes" row.
+    // "All highlights" row.
     const all = el_('button', 'facet facet--all' + (state.filter === null ? ' facet--active' : ''));
     all.type = 'button';
-    all.appendChild(el_('span', 'facet__lab', 'All notes'));
+    all.appendChild(el_('span', 'facet__lab', 'All highlights'));
     all.appendChild(el_('span', 'facet__count', String(countByCategory_(null))));
     all.addEventListener('click', () => { state.filter = null; render_(); });
     wrap.appendChild(all);
@@ -1794,7 +1794,7 @@ const OpsSidebar = (function () {
   function showOrphanToast_(sourceId) {
     dismissOrphanToast_();
     const toast = el_('div', 'toast');
-    toast.appendChild(el_('div', null, 'Last note removed. Keep this source’s citation, or delete the source too?'));
+    toast.appendChild(el_('div', null, 'Last highlight removed. Keep this source’s citation, or delete the source too?'));
     const actions = el_('div', 'toast__actions');
     const keep = el_('button', 'toast__btn toast__btn--keep', 'Keep');
     keep.type = 'button';

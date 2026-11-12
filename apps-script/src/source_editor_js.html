@@ -38,15 +38,26 @@ const els = {
   sourceTrigger: document.getElementById('ed-source-trigger'),
   sourceLabel:   document.getElementById('ed-source-label'),
   sourceMenu:    document.getElementById('ed-source-menu'),
+  modalBar:      document.getElementById('ed-modalbar'),
   close:         document.getElementById('ed-close'),
+  scroll:        document.getElementById('ed-scroll'),
+  head:          document.getElementById('ed-head'),
+  meta:          document.getElementById('ed-meta'),
+  title:         document.getElementById('ed-title'),
+  actions:       document.getElementById('ed-actions'),
+  del:           document.getElementById('ed-del'),
+  chips:         document.getElementById('ed-chips'),
   citation:      document.getElementById('ed-citation'),
+  hlSection:     document.getElementById('ed-sec-highlights'),
   evHeader:      document.getElementById('ed-evheader'),
   filter:        document.getElementById('ed-filter'),
   evidence:      document.getElementById('ed-evidence'),
   status:        document.getElementById('ed-status'),
 };
 
-if (embedded) els.close.hidden = true;   // the page has no dialog to close
+// The page picks sources from its own list, so it has neither the close
+// button nor the source switcher; the modal keeps both in its top bar.
+if (embedded) els.modalBar.hidden = true;
 else els.close.addEventListener('click', () => { if (!editor.busy) google.script.host.close(); });
 
 // Custom source switcher — toggle on the trigger, dismiss on outside click /
@@ -95,6 +106,7 @@ if (embedded) {
     // or highlight object show up in its list on the next render);
     // opts = {projectId, sourceId, bundle, focusHighlightId, onChange}.
     show(data, opts) {
+      const switched = !editor.source || editor.source.sourceId !== opts.sourceId;
       ctx.projectId = opts.projectId;
       ctx.sourceId = opts.sourceId;
       ctx.focusHighlightId = opts.focusHighlightId || '';
@@ -105,7 +117,9 @@ if (embedded) {
       editor.confirmingHighlightDeleteId = null;
       editor.confirmingSourceDelete = false;
       editor.pasteOpen = false;
+      if (switched) setStatus('');
       onData({ ok: true, sources: data.sources, highlights: data.highlights, requirements: data.requirements });
+      if (switched && !ctx.focusHighlightId) els.scroll.scrollTop = 0;
     },
     clear(message) {
       editor.source = null;
@@ -115,13 +129,16 @@ if (embedded) {
     // doesn't re-render the field out from under them.
     hasFocus() {
       const a = document.activeElement;
-      return !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)
-        && (els.citation.contains(a) || els.evidence.contains(a)));
+      return !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && els.scroll.contains(a));
     },
   };
 } else {
   bootstrap();
 }
+
+// The page's source list asks the same question as the editor's chips: what
+// does this source still need? One rule, so the two never disagree.
+window.OpsReadiness = { todo: sourceTodo_ };
 
 function bootstrap() {
   google.script.run
@@ -144,17 +161,24 @@ function onData(resp) {
     renderEmpty(embedded ? 'This source no longer exists.' : 'This source no longer exists. Close this window.');
     return;
   }
-  setStatus('');
   populateSourceSelect_();
   render();
-  if (ctx.focusHighlightId) {
-    // Pre-expand the editor for the target highlight, then re-render and scroll.
-    if (editor.highlights.find((h) => h.highlightId === ctx.focusHighlightId)) {
+  if (ctx.focusHighlightId && editor.highlights.find((h) => h.highlightId === ctx.focusHighlightId)) {
+    // The Docs sidebar opens a highlight to edit it, so the modal pre-expands
+    // its editor. The page opens one to show where it is: scroll and mark it.
+    if (!embedded) {
       editor.editingHighlightId = ctx.focusHighlightId;
       render();
-      const target = document.getElementById('hl-' + ctx.focusHighlightId);
-      if (target) target.scrollIntoView({ behavior: 'auto', block: 'center' });
     }
+    const target = document.getElementById('hl-' + ctx.focusHighlightId);
+    if (target) {
+      target.scrollIntoView({ behavior: 'auto', block: 'center' });
+      if (embedded) {
+        target.classList.add('sb-ev--flash');
+        setTimeout(() => target.classList.remove('sb-ev--flash'), 2200);
+      }
+    }
+    ctx.focusHighlightId = '';
   }
 }
 
@@ -188,6 +212,7 @@ function loadSourceIntoEditor_(source) {
   editor.confirmingHighlightDeleteId = null;
   editor.confirmingSourceDelete = false;
   editor.pasteOpen = false;
+  els.scroll.scrollTop = 0;
 }
 
 function sourceLabel_(s) {
@@ -267,7 +292,10 @@ function render() {
   // and primary/secondary changes should ripple into the dropdown.
   syncSourceDropdown_();
 
-  els.evHeader.textContent = 'Your highlights (' + editor.highlights.length + ')';
+  els.head.hidden = false;
+  els.hlSection.hidden = false;
+  renderHead_();
+  els.evHeader.textContent = 'Highlights (' + editor.highlights.length + ')';
 
   els.citation.innerHTML = '';
   els.citation.appendChild(renderCitationForm());
@@ -280,47 +308,212 @@ function renderEmpty(message) {
   els.sourceLabel.textContent = '(no source)';
   els.sourceTrigger.disabled = true;
   closeSourceMenu_();
-  els.citation.innerHTML = '';
+  els.head.hidden = true;
+  els.hlSection.hidden = true;
   els.filter.innerHTML = '';
-  els.evidence.innerHTML = '<div class="sb-empty">' + esc_(message) + '</div>';
+  els.evidence.innerHTML = '';
+  els.citation.innerHTML = '<div class="sb-empty">' + esc_(message) + '</div>';
   setStatus('');
 }
 
+// The save line under the source title. 'good' shows a check; 'bad' stays
+// until the next save succeeds.
 function setStatus(text, kind, autoClearMs) {
   els.status.textContent = text || '';
-  els.status.className = 'sb-modal__status' + (kind ? ' sb-modal__status--' + kind : '');
+  els.status.className = 'ed-status' + (kind ? ' ed-status--' + kind : '');
   if (autoClearMs) {
     setTimeout(() => {
       if (els.status.textContent === text) {
         els.status.textContent = '';
-        els.status.className = 'sb-modal__status';
+        els.status.className = 'ed-status';
       }
     }, autoClearMs);
   }
 }
 
-function onFail(stage) {
-  return (e) => setStatus(stage + ': ' + (e && e.message || e), 'bad');
+// ---------- source header: title, actions, status chips ----------
+
+const TRASH_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6"/>'
+  + '<path d="M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg>';
+const CHECK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+const TODO_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" '
+  + 'aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>';
+
+function hostOf_(url) {
+  const m = /^(?:[a-z]+:\/\/)?(?:www\.)?([^\/?#]+)/i.exec(String(url || ''));
+  return m ? m[1] : '';
 }
 
-function esc_(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function renderCitationForm() {
+// Re-renders only the header, so a field edit can update the chips without
+// rebuilding the form under the student's cursor.
+function renderHead_() {
   const source = editor.source;
+  if (!source) return;
+  els.title.textContent = sourceLabel_(source);
+  const type = resolveFields_(source).sourceType;
+  const host = hostOf_(source.rawUrl);
+  els.meta.textContent = [SRC_TYPE_SHORT[type] || '', host].filter(Boolean).join(' · ');
+
+  els.actions.innerHTML = '';
+  if (source.rawUrl) {
+    const open = openSourceLink_(source.rawUrl, 'ed-btn');
+    els.actions.appendChild(open);
+  }
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'ed-btn';
+  copy.textContent = 'Copy in-text citation';
+  copy.addEventListener('click', () => copyInline_(copy));
+  els.actions.appendChild(copy);
+  const trash = document.createElement('button');
+  trash.type = 'button';
+  trash.className = 'ed-btn ed-btn--icon ed-btn--danger';
+  trash.setAttribute('aria-label', 'Remove source');
+  trash.title = 'Remove source';
+  trash.setAttribute('aria-expanded', editor.confirmingSourceDelete ? 'true' : 'false');
+  trash.innerHTML = TRASH_SVG;
+  trash.addEventListener('click', () => {
+    editor.confirmingSourceDelete = !editor.confirmingSourceDelete;
+    renderHead_();
+  });
+  els.actions.appendChild(trash);
+
+  els.del.innerHTML = '';
+  if (editor.confirmingSourceDelete) els.del.appendChild(renderDeleteSourceUi_());
+
+  renderChips_();
+}
+
+// One chip per thing the project asks of a source, done or not. Each jumps to
+// its section.
+function renderChips_() {
+  const source = editor.source;
+  const req = editor.requirements || {};
+  const chips = [];
+  if (req.requireCitation !== false) {
+    const c = citationState_(source);
+    chips.push(c.done
+      ? { done: true, text: 'Citation', target: 'ed-sec-citation' }
+      : { done: false, text: c.missing.length ? 'Citation · ' + c.missing.length + ' missing' : 'Citation · check it', target: 'ed-sec-citation' });
+  }
+  const ps = source.primarySecondary;
+  const psSet = ps === 'primary' || ps === 'secondary';
+  if (req.requireClassification !== false || psSet) {
+    chips.push(psSet
+      ? { done: true, text: PS_LABELS[ps], target: 'ed-sec-ps' }
+      : { done: false, text: 'Primary or secondary · not chosen', target: 'ed-sec-ps' });
+  }
+  const annDone = !!String(source.annotation || '').trim();
+  if (req.requireAnnotation !== false) {
+    chips.push(annDone
+      ? { done: true, text: 'Annotation', target: 'ed-sec-annotation' }
+      : { done: false, text: 'Annotation · not written', target: 'ed-sec-annotation' });
+  }
+  const n = editor.highlights.length;
+  const nText = n + (n === 1 ? ' highlight' : ' highlights');
+  if (req.minHighlightsPerSource && n < req.minHighlightsPerSource) {
+    chips.push({ done: false, text: n + ' of ' + req.minHighlightsPerSource + ' highlights', target: 'ed-sec-highlights' });
+  } else {
+    chips.push({ neutral: !req.minHighlightsPerSource, done: !!req.minHighlightsPerSource, text: nText, target: 'ed-sec-highlights' });
+  }
+  if (req.minDistinctCategories) {
+    const d = distinctCategories_(editor.highlights);
+    chips.push({
+      done: d >= req.minDistinctCategories,
+      text: Math.min(d, req.minDistinctCategories) + ' of ' + req.minDistinctCategories + ' categories',
+      target: 'ed-sec-highlights',
+    });
+  }
+  els.chips.innerHTML = '';
+  chips.forEach((c) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ed-chip ' + (c.neutral ? 'ed-chip--neutral' : (c.done ? 'ed-chip--done' : 'ed-chip--todo'));
+    if (!c.neutral) b.innerHTML = c.done ? CHECK_SVG : TODO_SVG;
+    b.appendChild(document.createTextNode(c.text));
+    b.addEventListener('click', () => {
+      const t = document.getElementById(c.target);
+      if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    els.chips.appendChild(b);
+  });
+}
+
+// Copy the in-text citation ("(Smith)"). The server formats it into
+// source.inlineCitation; refreshInline_ keeps it current after edits.
+function copyInline_(btn) {
+  const text = (editor.source && editor.source.inlineCitation) || '';
+  if (!text) {
+    setStatus('Add an author or title first, then copy.', 'bad', 4000);
+    return;
+  }
+  if (copyToClipboard_(text)) {
+    btn.textContent = 'Copied ' + text;
+    setTimeout(() => { btn.textContent = 'Copy in-text citation'; }, 1800);
+  } else {
+    setStatus('Could not copy automatically. Your in-text citation: ' + text, 'bad', 8000);
+  }
+}
+
+// navigator.clipboard is usually blocked inside the Apps Script iframe, so use
+// a hidden textarea + execCommand('copy'), which works on a click.
+function copyToClipboard_(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+// The in-text citation is formatted on the server. After a citation edit,
+// re-fetch and copy over just that field, so Copy doesn't paste the old
+// author. Only that field: local objects may be ahead of the server.
+let inlineRefreshTimer = null;
+function refreshInline_() {
+  clearTimeout(inlineRefreshTimer);
+  inlineRefreshTimer = setTimeout(() => {
+    const projectId = ctx.projectId;
+    google.script.run
+      .withSuccessHandler((resp) => {
+        if (!resp || !resp.ok || projectId !== ctx.projectId) return;
+        const byId = {};
+        (resp.sources || []).forEach((s) => { byId[s.sourceId] = s; });
+        editor.allSources.forEach((s) => {
+          if (byId[s.sourceId]) s.inlineCitation = byId[s.sourceId].inlineCitation;
+        });
+      })
+      .withFailureHandler(() => {})
+      .sidebarGetProjectData(projectId);
+  }, 1500);
+}
+
+// ---------- readiness: what a source still needs ----------
+
+// The citation fields as the editor shows them. Student-entered citationFields
+// win, INCLUDING deliberate empties: a key present in citationFields, even as
+// '', is taken as-is so a wrong scraped value the student cleared never
+// reappears (mirrors effectiveFields_ in extension/content/sidebar.js and
+// resolvedCitationFieldsForCompletion_ in 62_aggregator.js; keep them in sync).
+// Then the rich scrape (scrapedExtra + the four scraped* columns); 'website'
+// is the final fallback type. A resolved VIEW only: writes go through
+// citationFieldsParsed, so a scraped fallback shown in an untouched input is
+// never saved as if the student typed it.
+function resolveFields_(source) {
   const extra = source.scrapedExtraParsed || {};
   const cf = source.citationFieldsParsed || {};
-  // Student-entered citationFields win — INCLUDING deliberate empties. A key
-  // present in citationFields, even as '', is taken as-is so a wrong scraped
-  // value the student cleared never reappears (mirrors the extension sidebar's
-  // effectiveFields_ in extension/content/sidebar.js — keep the two in sync).
-  // Then the rich scrape (scrapedExtra + the four discrete scraped* columns);
-  // 'website' is the final fallback type.
-  // `fields` is a resolved VIEW for rendering/preview only. Writes go through
-  // `cf` — the explicit store — so citationFields keeps recording ONLY what
-  // the student actually set (a scraped fallback shown in an untouched input
-  // is never persisted as if the student typed it).
   const pick = (key, fallback) => (key in cf ? cf[key] : (fallback || ''));
   const fields = Object.assign({}, cf);
   fields.sourceType    = ('sourceType' in cf && cf.sourceType) ? cf.sourceType : (source.sourceType || extra.sourceType || 'website');
@@ -336,6 +529,72 @@ function renderCitationForm() {
   fields.url           = pick('url', source.rawUrl);
   fields.archive       = pick('archive', extra.archive);
   fields.accessDate    = pick('accessDate', source.accessDate);
+  return fields;
+}
+
+// "Citation done", the same rule as isSourceCited_ (62_aggregator.js), which
+// the teacher dashboard uses: a pasted citation, or the student edited at
+// least one field AND every required field has a value (scraped included).
+// `missing` = the required fields still blank, by label.
+function citationState_(source) {
+  const cf = source.citationFieldsParsed || {};
+  if (pastedOf_(cf)) return { done: true, missing: [], checked: true };
+  const missing = missingFields_(resolveFields_(source));
+  const checked = Object.keys(cf).some((k) => k !== 'pasted');
+  return { done: checked && missing.length === 0, missing, checked };
+}
+
+function distinctCategories_(highlights) {
+  const cats = {};
+  highlights.forEach((h) => { if (h.primaryCategory) cats[h.primaryCategory] = true; });
+  return Object.keys(cats).length;
+}
+
+// What a source still needs to be Ready, as short student-facing phrases.
+// Follows the project's requirements, like the teacher dashboard: a check the
+// teacher turned off never shows up. [] = Ready.
+function sourceTodo_(source, allHighlights, requirements) {
+  const req = requirements || {};
+  const mine = (allHighlights || []).filter((h) => h.sourceId === source.sourceId);
+  const todo = [];
+  if (req.requireCitation !== false) {
+    const c = citationState_(source);
+    if (!c.done) {
+      if (c.missing.length) c.missing.forEach((m) => todo.push(m.toLowerCase()));
+      else todo.push('check the citation');
+    }
+  }
+  if (req.requireClassification !== false
+      && source.primarySecondary !== 'primary' && source.primarySecondary !== 'secondary') {
+    todo.push('primary or secondary');
+  }
+  if (req.requireAnnotation !== false && !String(source.annotation || '').trim()) todo.push('annotation');
+  if (req.minHighlightsPerSource && mine.length < req.minHighlightsPerSource) {
+    const more = req.minHighlightsPerSource - mine.length;
+    todo.push(more + ' more highlight' + (more === 1 ? '' : 's'));
+  }
+  if (req.minDistinctCategories) {
+    const more = req.minDistinctCategories - distinctCategories_(mine);
+    if (more > 0) todo.push('highlights in ' + more + ' more categor' + (more === 1 ? 'y' : 'ies'));
+  }
+  return todo;
+}
+
+function onFail(stage) {
+  return (e) => setStatus(stage + ': ' + (e && e.message || e), 'bad');
+}
+
+function esc_(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderCitationForm() {
+  const source = editor.source;
+  // `cf` is the explicit store (what the student set); `fields` is the
+  // resolved view (see resolveFields_). Writes go through `cf` only.
+  if (!source.citationFieldsParsed) source.citationFieldsParsed = {};
+  const cf = source.citationFieldsParsed;
+  const fields = resolveFields_(source);
 
   const form = document.createElement('div');
   form.className = 'sb-source__form';
@@ -344,8 +603,7 @@ function renderCitationForm() {
   // 1. The citation itself, first and large: it's what the student is making.
   // Same order, labels and help text as the extension's Source tab
   // (renderSourceTab_ in extension/content/sidebar.js) — keep the two in sync.
-  const citeSec = section_(form, 'Your citation (MLA)');
-  if (source.rawUrl) citeSec.head.appendChild(openSourceLink_(source.rawUrl, 'sb-open-source'));
+  const citeSec = section_(form, 'Citation (MLA)', '', 'ed-sec-citation');
   const preview = document.createElement('div');
   preview.className = 'sb-source__preview';
   preview.id = 'ed-preview';
@@ -354,6 +612,12 @@ function renderCitationForm() {
   const missingEl = document.createElement('p');
   missingEl.className = 'sb-source__missing';
   citeSec.body.appendChild(missingEl);
+  // "Looks right": every required field is filled, but only by the scrape. A
+  // citation counts as done once the student has checked it (isSourceCited_),
+  // so confirming saves the shown values as theirs.
+  const confirmWrap = document.createElement('div');
+  confirmWrap.className = 'ed-confirm';
+  citeSec.body.appendChild(confirmWrap);
   const paintMissing = () => {
     const missing = pasted ? [] : missingFields_(fields);
     missingEl.hidden = missing.length === 0;
@@ -363,6 +627,28 @@ function renderCitationForm() {
     missingEl.appendChild(lead);
     missingEl.appendChild(document.createTextNode(' Add ' + (missing.length === 1 ? 'it' : 'them')
       + ' if the source shows ' + (missing.length === 1 ? 'it.' : 'them.')));
+    confirmWrap.innerHTML = '';
+    const c = citationState_(source);
+    const req = editor.requirements || {};
+    if (!pasted && !c.checked && c.missing.length === 0 && req.requireCitation !== false) {
+      const p = document.createElement('p');
+      p.className = 'sb-help';
+      p.textContent = 'These details were filled in from the page. Check them against the source.';
+      confirmWrap.appendChild(p);
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sb-btn sb-btn--primary';
+      b.textContent = 'The citation looks right';
+      b.addEventListener('click', () => {
+        sourceFieldsFor_(fields.sourceType).forEach((d) => {
+          if (!d.optional && d.key !== 'url' && !(d.key in cf)) cf[d.key] = fields[d.key] || '';
+        });
+        saveSourcePatch_({ citationFields: cf });
+        paintMissing();
+        renderHead_();
+      });
+      confirmWrap.appendChild(b);
+    }
   };
   paintMissing();
   updatePreview_(form, fields);
@@ -388,9 +674,9 @@ function renderCitationForm() {
         fields[def.key] = v;
         cf[def.key] = v;
         saveSourcePatch_({ citationFields: cf });
-        source.citationFieldsParsed = cf;
         updatePreview_(form, fields);
         paintMissing();
+        renderHead_();
       };
       const fld = formField_(def.label, textInput_(fields[def.key] || '', onChange), def.optional ? 'optional' : '');
       if (def.wide) fld.classList.add('sb-field--wide');
@@ -400,7 +686,7 @@ function renderCitationForm() {
   }
 
   // 3. Primary or secondary.
-  const psSec = section_(form, 'Primary or secondary?');
+  const psSec = section_(form, 'Primary or secondary?', '', 'ed-sec-ps');
   psSec.body.appendChild(psSegmented_(source));
   const psHelp = document.createElement('p');
   psHelp.className = 'sb-help';
@@ -409,7 +695,7 @@ function renderCitationForm() {
 
   // 4. Annotation — the student's own writing, so it gets room.
   const annOptional = !!(editor.requirements && editor.requirements.requireAnnotation === false);
-  const annSec = section_(form, 'Annotation', annOptional ? 'optional' : 'required');
+  const annSec = section_(form, 'Annotation', annOptional ? 'optional' : 'required', 'ed-sec-annotation');
   const annHelp = document.createElement('p');
   annHelp.className = 'sb-help';
   annHelp.textContent = ANNOTATION_HELP;
@@ -430,16 +716,11 @@ function renderCitationForm() {
     paintCount();
     clearTimeout(annTimer);
     annTimer = setTimeout(() => {
-      saveSourcePatch_({ annotation: annTa.value });
       source.annotation = annTa.value;
+      saveSourcePatch_({ annotation: annTa.value });
+      renderHead_();
     }, 600);
   });
-
-  // Removing the source is rare and destructive: last, and quiet.
-  const dangerWrap = document.createElement('div');
-  dangerWrap.className = 'sb-modal__danger';
-  dangerWrap.appendChild(renderDeleteSourceUi_());
-  form.appendChild(dangerWrap);
 
   return form;
 }
@@ -452,6 +733,8 @@ const SRC_TYPE_LABELS = {
   book: 'Book',
   primary: 'Historical document, photo, or object',
 };
+// The source type in the header's meta line.
+const SRC_TYPE_SHORT = { website: 'Website', article: 'Article', book: 'Book', primary: 'Historical document' };
 const PS_HELP = 'Primary: made at the time (a letter, photo, speech, diary). '
   + 'Secondary: made later by someone studying it (a textbook, article, documentary).';
 const ANNOTATION_HELP = 'In 2–3 sentences: what is this source, and how will it help your project?';
@@ -472,11 +755,13 @@ function sentenceCountLabel_(text) {
   return n + (n === 1 ? ' sentence' : ' sentences');
 }
 
-// A titled group in the citation pane. `tag` is an optional small label
-// beside the title ('required' / 'optional'). Returns {head, body}.
-function section_(parent, title, tag) {
+// A titled group in the editor column. `tag` is an optional small label
+// beside the title ('required' / 'optional'); `id` is what a header chip
+// jumps to. Returns {head, body}.
+function section_(parent, title, tag, id) {
   const sec = document.createElement('section');
-  sec.className = 'sb-sec';
+  sec.className = 'sb-sec ed-sec';
+  if (id) sec.id = id;
   const head = document.createElement('div');
   head.className = 'sb-sec__head';
   const h = document.createElement('h3');
@@ -774,6 +1059,7 @@ function psSegmented_(source) {
       if ((source.primarySecondary || 'unset') === opt) return;   // no change
       source.primarySecondary = opt;
       saveSourcePatch_({ primarySecondary: opt });
+      renderHead_();
       Array.prototype.forEach.call(group.children, (child) => {
         const on = child === b;
         child.classList.toggle('sb-segmented__opt--active', on);
@@ -814,7 +1100,8 @@ function renderPreviewHtml_(formatted) {
 function saveSourcePatch_(patch) {
   const merged = Object.assign({}, patch, { sourceId: ctx.sourceId, projectId: ctx.projectId });
   notifyHost_({ type: 'edited', sourceId: ctx.sourceId });
-  sendPatch_('source:' + merged.sourceId, 'sidebarUpdateSource', merged);
+  sendPatch_('source:' + merged.sourceId, 'sidebarUpdateSource', merged,
+    'citationFields' in patch || 'sourceType' in patch);
 }
 
 // Saves go straight to the server (no offline queue here — the extension is
@@ -823,25 +1110,28 @@ function saveSourcePatch_(patch) {
 // later edits to the same row fold into the pending one.
 const unsaved = {};   // row key → { fn, patch }
 
-function sendPatch_(key, fn, patch) {
+function sendPatch_(key, fn, patch, citationChanged) {
   const prev = unsaved[key];
   const merged = prev ? Object.assign({}, prev.patch, patch) : patch;
-  unsaved[key] = { fn, patch: merged };
+  const refresh = citationChanged || !!(prev && prev.refresh);
+  unsaved[key] = { fn, patch: merged, refresh };
+  setStatus('Saving…');
   google.script.run
     .withSuccessHandler(() => {
       if (unsaved[key] && unsaved[key].patch === merged) delete unsaved[key];
-      setStatus(Object.keys(unsaved).length ? 'Some changes are not saved yet.' : 'Saved.',
-        Object.keys(unsaved).length ? 'bad' : 'good', 1500);
+      if (Object.keys(unsaved).length) setStatus('Some changes are not saved yet.', 'bad');
+      else setStatus('Saved', 'good');
+      if (refresh) refreshInline_();
       notifyHost_({ type: 'saved', sourceId: merged.sourceId || null });
     })
     .withFailureHandler((e) => {
-      setStatus('Not saved — check your connection. Your changes are still here and will save when you reconnect.'
+      setStatus('Not saved. Check your connection: your changes are still here and will save when you reconnect.'
         + (navigator.onLine ? ' (' + (e && e.message || e) + ')' : ''), 'bad');
     })[fn](merged);
 }
 
 window.addEventListener('online', () => {
-  Object.keys(unsaved).forEach((key) => sendPatch_(key, unsaved[key].fn, {}));
+  Object.keys(unsaved).forEach((key) => sendPatch_(key, unsaved[key].fn, {}, unsaved[key].refresh));
 });
 
 function renderEvidenceList_() {
@@ -1145,44 +1435,33 @@ function makeFilterChip_(value, label, color, count, active) {
   return chip;
 }
 
+// The trash button's confirm, under the header actions.
 function renderDeleteSourceUi_() {
   const wrap = document.createElement('div');
-  wrap.className = 'sb-del';
-  if (editor.confirmingSourceDelete) {
-    const n = editor.highlights.length;
-    const q = document.createElement('p');
-    q.className = 'sb-del__q';
-    q.textContent = n > 0
-      ? 'Remove this source and its ' + n + ' highlight' + (n === 1 ? '' : 's') + '? This can\'t be undone.'
-      : 'Remove this source? This can\'t be undone.';
-    wrap.appendChild(q);
-    const cancel = document.createElement('button');
-    cancel.type = 'button';
-    cancel.className = 'sb-modal__btn sb-modal__btn--cancel';
-    cancel.textContent = 'Keep it';
-    cancel.addEventListener('click', () => {
-      editor.confirmingSourceDelete = false;
-      render();
-    });
-    wrap.appendChild(cancel);
+  wrap.className = 'sb-del ed-del';
+  const n = editor.highlights.length;
+  const q = document.createElement('p');
+  q.className = 'sb-del__q';
+  q.textContent = n > 0
+    ? 'Remove this source and its ' + n + ' highlight' + (n === 1 ? '' : 's') + '? This can\'t be undone.'
+    : 'Remove this source? This can\'t be undone.';
+  wrap.appendChild(q);
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'sb-modal__btn sb-modal__btn--cancel';
+  cancel.textContent = 'Keep it';
+  cancel.addEventListener('click', () => {
+    editor.confirmingSourceDelete = false;
+    renderHead_();
+  });
+  wrap.appendChild(cancel);
 
-    const confirm = document.createElement('button');
-    confirm.type = 'button';
-    confirm.className = 'sb-modal__btn sb-modal__btn--danger';
-    confirm.textContent = 'Remove source';
-    confirm.addEventListener('click', performDeleteSource_);
-    wrap.appendChild(confirm);
-  } else {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'sb-del__link';
-    btn.textContent = 'Remove this source from my project';
-    btn.addEventListener('click', () => {
-      editor.confirmingSourceDelete = true;
-      render();
-    });
-    wrap.appendChild(btn);
-  }
+  const confirm = document.createElement('button');
+  confirm.type = 'button';
+  confirm.className = 'sb-modal__btn sb-modal__btn--danger';
+  confirm.textContent = 'Remove source';
+  confirm.addEventListener('click', performDeleteSource_);
+  wrap.appendChild(confirm);
   return wrap;
 }
 

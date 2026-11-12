@@ -1,0 +1,508 @@
+<script>
+// "My research" page controller: the project picker, the page's own source
+// list (Sources / Highlights tabs) and the shared source editor beside it
+// (source_editor_js, driven through window.OpsSourceEditor). Online-only:
+// the editor saves straight to the server.
+(function () {
+const PAGE = window.OPS_PAGE || {};
+const REFRESH_MIN_MS = 30000;   // on-focus refresh throttle, same as the console
+
+const state = {
+  ctx: null,              // sidebarGetContext response
+  projectId: null,
+  sources: [],
+  highlights: [],
+  requirements: null,     // parsed project requirements (null until loaded)
+  tab: 'sources',         // 'sources' | 'highlights'
+  sort: 'needs',          // 'needs' | 'recent' | 'title'
+  selectedSourceId: null,
+  lastLoadAt: 0,
+  loading: false,
+  order: null,            // frozen source order (ids); see orderedSources_
+  readyFrom: -1,          // index where the Ready group starts in that order
+};
+
+const SORTS = [
+  { value: 'needs', label: 'Needs work first' },
+  { value: 'recent', label: 'Newest first' },
+  { value: 'title', label: 'Title A–Z' },
+];
+const PS_LABELS = { primary: 'Primary', secondary: 'Secondary', unset: 'Not sure yet' };
+const CHECK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+const TODO_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" '
+  + 'aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>';
+
+const els = {
+  actor: document.getElementById('rp-actor'),
+  project: document.getElementById('rp-project'),
+  refresh: document.getElementById('rp-refresh'),
+  tabSources: document.getElementById('rp-tab-sources'),
+  tabHighlights: document.getElementById('rp-tab-highlights'),
+  sort: document.getElementById('rp-sort'),
+  sortBtn: document.getElementById('rp-sort-btn'),
+  sortPop: document.getElementById('rp-sort-pop'),
+  summary: document.getElementById('rp-summary'),
+  items: document.getElementById('rp-items'),
+  status: document.getElementById('rp-status'),
+  back: document.getElementById('rp-back'),
+  offline: document.getElementById('rp-offline'),
+};
+
+const editor = window.OpsSourceEditor;
+const todoFor = (s) => window.OpsReadiness.todo(s, state.highlights, state.requirements);
+
+bind_();
+renderSkeleton_();
+editor.clear('Loading…');
+google.script.run
+  .withSuccessHandler(onContext_)
+  .withFailureHandler((e) => setStatus_('Could not load: ' + (e && e.message || e), 'bad'))
+  .sidebarGetContext(PAGE.projectId || '');
+
+function bind_() {
+  els.project.addEventListener('change', () => {
+    state.projectId = els.project.value;
+    state.selectedSourceId = null;
+    google.script.run.sidebarSetActiveProject(state.projectId);
+    loadProjectData_(false);
+  });
+  els.refresh.addEventListener('click', () => loadProjectData_(true));
+  els.tabSources.addEventListener('click', () => setTab_('sources'));
+  els.tabHighlights.addEventListener('click', () => setTab_('highlights'));
+  [els.tabSources, els.tabHighlights].forEach((t) => t.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const next = state.tab === 'sources' ? 'highlights' : 'sources';
+    setTab_(next);
+    (next === 'sources' ? els.tabSources : els.tabHighlights).focus();
+  }));
+  els.sortBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (els.sortPop.hidden) openSort_(); else closeSort_();
+  });
+  document.addEventListener('click', (e) => {
+    if (!els.sortPop.hidden && !els.sort.contains(e.target)) closeSort_();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !els.sortPop.hidden) { closeSort_(); els.sortBtn.focus(); }
+  });
+  els.back.addEventListener('click', () => {
+    document.body.classList.remove('rp-editing');
+    const card = els.items.querySelector('[aria-current="true"]');
+    if (card) card.focus();
+  });
+  // Pick up highlights the extension saved in another tab when the student
+  // comes back to this one.
+  const onReturn = () => {
+    if (document.visibilityState !== 'visible') return;
+    if (Date.now() - state.lastLoadAt < REFRESH_MIN_MS) return;
+    loadProjectData_(true);
+  };
+  window.addEventListener('focus', onReturn);
+  document.addEventListener('visibilitychange', onReturn);
+  const syncOnline = () => { els.offline.hidden = navigator.onLine; };
+  window.addEventListener('online', syncOnline);
+  window.addEventListener('offline', syncOnline);
+  syncOnline();
+}
+
+// ---------- loading ----------
+
+function onContext_(ctx) {
+  state.ctx = ctx;
+  if (!ctx || !ctx.ok) {
+    setStatus_('Could not load. ' + (ctx && ctx.error || ''), 'bad');
+    els.items.innerHTML = '';
+    editor.clear('Could not load your research.');
+    return;
+  }
+  const r = ctx.roster;
+  const name = r ? ((String(r.First || '') + ' ' + String(r.Last || '')).trim() || r.Name || '') : '';
+  els.actor.textContent = name || ctx.actor || '';
+  populateProjects_(ctx.projects, ctx.activeProjectId);
+  if (ctx.activeProjectId) {
+    state.projectId = ctx.activeProjectId;
+    loadProjectData_(false);
+  } else {
+    els.items.innerHTML = '<div class="rp-empty">You don\'t have a research project yet. Your teacher sets one up.</div>';
+    editor.clear('No project yet.');
+  }
+}
+
+function populateProjects_(projects, activeId) {
+  els.project.innerHTML = '';
+  if (!projects || !projects.length) {
+    const opt = document.createElement('option');
+    opt.textContent = '(no projects)';
+    els.project.appendChild(opt);
+    els.project.disabled = true;
+    return;
+  }
+  projects.forEach((p) => {
+    const opt = document.createElement('option');
+    opt.value = p.projectId;
+    opt.textContent = p.name + (p.schoolYear ? ' (' + p.schoolYear + ')' : '');
+    if (p.projectId === activeId) opt.selected = true;
+    els.project.appendChild(opt);
+  });
+  els.project.disabled = false;
+}
+
+// silent = a background refresh: keep the list on screen, no skeleton.
+function loadProjectData_(silent) {
+  if (!state.projectId) return;
+  if (!silent) {
+    renderSkeleton_();
+    editor.clear('Loading…');
+  }
+  state.lastLoadAt = Date.now();
+  state.loading = true;
+  els.refresh.classList.add('rp-refresh--busy');
+  const projectId = state.projectId;
+  google.script.run
+    .withSuccessHandler((resp) => {
+      if (projectId !== state.projectId) return;   // a reply for a project we left
+      state.loading = false;
+      els.refresh.classList.remove('rp-refresh--busy');
+      onProjectData_(resp);
+    })
+    .withFailureHandler((e) => {
+      state.loading = false;
+      els.refresh.classList.remove('rp-refresh--busy');
+      if (!silent) setStatus_('Could not load your research: ' + (e && e.message || e), 'bad');
+    })
+    .sidebarGetProjectData(projectId);
+}
+
+function onProjectData_(resp) {
+  if (!resp || !resp.ok) {
+    setStatus_('Could not load your research' + (resp && resp.error ? ': ' + resp.error : '.'), 'bad');
+    return;
+  }
+  state.sources = resp.sources || [];
+  state.highlights = resp.highlights || [];
+  state.requirements = resp.requirements || null;
+  state.order = null;
+  setStatus_('');
+  render_();
+  syncEditor_();
+}
+
+// After a (re)load: keep the open source if it still exists, else open the
+// first in the list. Never re-render the editor while the student is typing
+// in it: their objects just stop being the list's until the next switch,
+// which is harmless (both save to the same row).
+function syncEditor_() {
+  if (!state.sources.length) {
+    state.selectedSourceId = null;
+    editor.clear('No sources yet. Highlight something on a web page with the extension, and it shows up here.');
+    render_();
+    return;
+  }
+  if (editor.hasFocus()) return;
+  const keep = state.sources.some((s) => s.sourceId === state.selectedSourceId);
+  showSource_(keep ? state.selectedSourceId : orderedSources_()[0].sourceId, '');
+}
+
+function showSource_(sourceId, focusHighlightId) {
+  state.selectedSourceId = sourceId;
+  editor.show({ sources: state.sources, highlights: state.highlights, requirements: state.requirements }, {
+    projectId: state.projectId,
+    sourceId,
+    bundle: activeBundle_(),
+    focusHighlightId: focusHighlightId || '',
+    onChange: onEditorChange_,
+  });
+  render_();
+}
+
+function openSource_(sourceId, focusHighlightId) {
+  showSource_(sourceId, focusHighlightId);
+  document.body.classList.add('rp-editing');   // narrow screens: list → editor
+}
+
+// The editor edits the same objects the list renders, so most changes just
+// need a re-render. Deletes and restores replace array members.
+function onEditorChange_(evt) {
+  if (evt.type === 'highlightDeleted') {
+    state.highlights = state.highlights.filter((h) => h.highlightId !== evt.highlightId);
+  } else if (evt.type === 'highlightRestored') {
+    state.highlights.push(evt.highlight);
+  } else if (evt.type === 'sourceDeleted') {
+    state.sources = state.sources.filter((s) => s.sourceId !== evt.sourceId);
+    state.highlights = state.highlights.filter((h) => h.sourceId !== evt.sourceId);
+    if (state.selectedSourceId === evt.sourceId) state.selectedSourceId = null;
+    state.order = null;
+  } else if (evt.type === 'switched') {
+    state.selectedSourceId = evt.sourceId;
+  }
+  if (evt.type !== 'saved') render_();
+}
+
+// The bundle of the project being viewed (its category names + colors).
+function activeBundle_() {
+  const ctx = state.ctx;
+  if (!ctx) return null;
+  const project = (ctx.projects || []).find((p) => p.projectId === state.projectId);
+  const bundle = project && (ctx.bundles || []).find((b) => b.bundleId === project.bundleId);
+  return bundle || ctx.activeBundle || null;
+}
+
+// ---------- list ----------
+
+function setTab_(tab) {
+  if (state.tab === tab) return;
+  state.tab = tab;
+  els.items.scrollTop = 0;
+  render_();
+}
+
+function openSort_() {
+  els.sortPop.innerHTML = '';
+  SORTS.forEach((o) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'rp-sort__opt';
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', state.sort === o.value ? 'true' : 'false');
+    const check = document.createElement('span');
+    check.className = 'rp-sort__check';
+    check.textContent = state.sort === o.value ? '✓' : '';
+    b.appendChild(check);
+    b.appendChild(document.createTextNode(o.label));
+    b.addEventListener('click', () => {
+      state.sort = o.value;
+      state.order = null;
+      closeSort_();
+      els.sortBtn.focus();
+      render_();
+    });
+    els.sortPop.appendChild(b);
+  });
+  els.sortPop.hidden = false;
+  els.sortBtn.setAttribute('aria-expanded', 'true');
+  const on = els.sortPop.querySelector('[aria-checked="true"]');
+  if (on) on.focus();
+}
+
+function closeSort_() {
+  els.sortPop.hidden = true;
+  els.sortBtn.setAttribute('aria-expanded', 'false');
+}
+
+function titleOf_(s) {
+  const cf = s.citationFieldsParsed || {};
+  return cf.title || s.scrapedTitle || '(untitled)';
+}
+
+function hostOf_(url) {
+  const m = /^(?:[a-z]+:\/\/)?(?:www\.)?([^\/?#]+)/i.exec(String(url || ''));
+  return m ? m[1] : '';
+}
+
+const newestFirst_ = (a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+
+// The order is fixed when the list loads or the sort changes, not on every
+// edit: a source the student just finished doesn't jump away under them. It
+// moves to the Ready group on the next refresh.
+function orderedSources_() {
+  const byId = {};
+  state.sources.forEach((s) => { byId[s.sourceId] = s; });
+  if (!state.order) freezeOrder_();
+  const out = state.order.map((id) => byId[id]).filter(Boolean);
+  state.sources.forEach((s) => { if (state.order.indexOf(s.sourceId) < 0) out.unshift(s); });
+  return out;
+}
+
+function freezeOrder_() {
+  const arr = computeOrder_();
+  state.order = arr.map((s) => s.sourceId);
+  state.readyFrom = state.sort === 'needs' ? arr.findIndex((s) => !todoFor(s).length) : -1;
+}
+
+// 'needs' = sources with something to do first, then Ready ones; newest
+// first within each.
+function computeOrder_() {
+  const arr = state.sources.slice();
+  if (state.sort === 'title') {
+    arr.sort((a, b) => titleOf_(a).toLowerCase().localeCompare(titleOf_(b).toLowerCase()));
+  } else if (state.sort === 'recent') {
+    arr.sort(newestFirst_);
+  } else {
+    const todo = {};
+    arr.forEach((s) => { todo[s.sourceId] = todoFor(s).length; });
+    arr.sort((a, b) => ((todo[a.sourceId] ? 0 : 1) - (todo[b.sourceId] ? 0 : 1)) || newestFirst_(a, b));
+  }
+  return arr;
+}
+
+// Does the project ask anything of a source? With every check turned off
+// there is nothing to be Ready for, so the list shows no status at all.
+function tracksReadiness_() {
+  const r = state.requirements || {};
+  return r.requireCitation !== false || r.requireClassification !== false || r.requireAnnotation !== false
+    || !!r.minHighlightsPerSource || !!r.minDistinctCategories;
+}
+
+function render_() {
+  els.tabSources.textContent = 'Sources (' + state.sources.length + ')';
+  els.tabHighlights.textContent = 'Highlights (' + state.highlights.length + ')';
+  els.tabSources.setAttribute('aria-selected', state.tab === 'sources' ? 'true' : 'false');
+  els.tabHighlights.setAttribute('aria-selected', state.tab === 'highlights' ? 'true' : 'false');
+  els.tabSources.tabIndex = state.tab === 'sources' ? 0 : -1;
+  els.tabHighlights.tabIndex = state.tab === 'highlights' ? 0 : -1;
+  els.sort.hidden = state.tab !== 'sources';
+  if (state.tab !== 'sources') closeSort_();
+  renderSummary_();
+  els.items.innerHTML = '';
+  if (!state.projectId) return;
+  if (state.tab === 'sources') renderSources_();
+  else renderHighlights_();
+}
+
+// "2 of 4 sources ready · your teacher wants 5 sources". Hidden when the
+// project asks for nothing.
+function renderSummary_() {
+  const req = state.requirements || {};
+  const parts = [];
+  if (state.sources.length && tracksReadiness_()) {
+    const ready = state.sources.filter((s) => todoFor(s).length === 0).length;
+    parts.push('<strong>' + ready + ' of ' + state.sources.length + ' source' + (state.sources.length === 1 ? '' : 's') + ' ready</strong>');
+  }
+  if (req.minSources && state.sources.length < req.minSources) {
+    parts.push('your teacher wants ' + req.minSources + ' source' + (req.minSources === 1 ? '' : 's'));
+  }
+  els.summary.hidden = parts.length === 0 || state.tab !== 'sources';
+  els.summary.innerHTML = parts.join(' · ');
+}
+
+function renderSources_() {
+  if (!state.sources.length) {
+    els.items.innerHTML = '<div class="rp-empty">No sources yet. Highlight something on a web page with the '
+      + 'extension, or use “Save this page as a source”, and it shows up here.</div>';
+    return;
+  }
+  const tracked = tracksReadiness_();
+  const list = orderedSources_();
+  // New sources (added since the order froze) sit on top, ahead of the
+  // frozen boundary.
+  const shift = list.length - state.order.filter((id) => list.some((s) => s.sourceId === id)).length;
+  const readyAt = state.readyFrom >= 0 ? state.readyFrom + shift : -1;
+  list.forEach((s, i) => {
+    // Only worth a heading when something above it still needs work.
+    if (tracked && i === readyAt && i > 0) els.items.appendChild(groupHeader_('Ready'));
+    els.items.appendChild(sourceCard_(s, tracked ? todoFor(s) : [], tracked));
+  });
+}
+
+function groupHeader_(text, color) {
+  const h = document.createElement('div');
+  h.className = 'rp-group';
+  if (color) {
+    const wrap = document.createElement('span');
+    wrap.className = 'rp-hl__cat';
+    const dot = document.createElement('span');
+    dot.className = 'rp-hl__dot';
+    dot.style.backgroundColor = color;
+    wrap.appendChild(dot);
+    wrap.appendChild(document.createTextNode(text));
+    h.appendChild(wrap);
+  } else {
+    h.textContent = text;
+  }
+  return h;
+}
+
+function sourceCard_(s, todo, tracked) {
+  const card = document.createElement('button');
+  card.type = 'button';
+  card.className = 'rp-card';
+  if (s.sourceId === state.selectedSourceId) card.setAttribute('aria-current', 'true');
+  const title = document.createElement('span');
+  title.className = 'rp-card__title';
+  title.textContent = titleOf_(s);
+  card.appendChild(title);
+  const n = state.highlights.filter((h) => h.sourceId === s.sourceId).length;
+  const meta = document.createElement('span');
+  meta.className = 'rp-card__meta';
+  meta.textContent = [hostOf_(s.rawUrl), PS_LABELS[s.primarySecondary || 'unset'],
+    n + (n === 1 ? ' highlight' : ' highlights')].filter(Boolean).join(' · ');
+  card.appendChild(meta);
+  if (tracked) {
+    const st = document.createElement('span');
+    st.className = 'rp-card__status rp-card__status--' + (todo.length ? 'todo' : 'ready');
+    st.innerHTML = todo.length ? TODO_SVG : CHECK_SVG;
+    st.appendChild(document.createTextNode(todo.length
+      ? todo.length + ' to do: ' + todo.join(', ')
+      : 'Ready'));
+    card.appendChild(st);
+  }
+  card.addEventListener('click', () => openSource_(s.sourceId, ''));
+  return card;
+}
+
+// Every highlight in the project, grouped by category in the bundle's order.
+// Clicking one opens its source, scrolled to it.
+function renderHighlights_() {
+  if (!state.highlights.length) {
+    els.items.innerHTML = '<div class="rp-empty">No highlights yet. Highlight passages on a web page with '
+      + 'the extension and they show up here.</div>';
+    return;
+  }
+  const bundle = activeBundle_();
+  const groups = [];
+  const byLabel = {};
+  if (bundle) {
+    for (let i = 1; i <= 5; i++) {
+      const label = bundle['label' + i];
+      if (!label) continue;
+      byLabel[label] = { label, color: bundle['color' + i], items: [] };
+      groups.push(byLabel[label]);
+    }
+  }
+  const other = { label: 'No category', color: '#bdbdbd', items: [] };
+  const sourceById = {};
+  state.sources.forEach((s) => { sourceById[s.sourceId] = s; });
+  state.highlights.slice().sort(newestFirst_).forEach((h) => {
+    (byLabel[h.primaryCategory] || other).items.push(h);
+  });
+  groups.concat([other]).forEach((g) => {
+    if (!g.items.length) return;
+    els.items.appendChild(groupHeader_(g.label + ' (' + g.items.length + ')', g.color));
+    g.items.forEach((h) => {
+      const src = sourceById[h.sourceId];
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'rp-card';
+      const text = document.createElement('span');
+      text.className = 'rp-hl__text';
+      text.textContent = h.highlightedText || '';
+      card.appendChild(text);
+      const from = document.createElement('span');
+      from.className = 'rp-hl__src';
+      from.textContent = src ? 'From ' + titleOf_(src) : 'Source removed';
+      card.appendChild(from);
+      if (src) card.addEventListener('click', () => openSource_(src.sourceId, h.highlightId));
+      else card.disabled = true;
+      els.items.appendChild(card);
+    });
+  });
+}
+
+function renderSkeleton_() {
+  els.summary.hidden = true;
+  els.items.innerHTML = '';
+  for (let i = 0; i < 3; i++) {
+    const d = document.createElement('div');
+    d.className = 'rp-skel';
+    els.items.appendChild(d);
+  }
+}
+
+function setStatus_(text, kind) {
+  els.status.textContent = text || '';
+  els.status.className = 'rp-status' + (kind ? ' rp-status--' + kind : '');
+}
+})();
+</script>
