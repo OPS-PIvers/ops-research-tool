@@ -1,7 +1,9 @@
 <!-- Source editor markup shared by the Docs modal (source_editor.html) and
-     the "My research" page (research.html). Driven by source_editor_js. -->
-<header class="sb-modal__header">
-  <button id="ed-close" type="button" class="sb-modal__close" title="Close">&times;</button>
+     the "My research" page (research.html). Driven by source_editor_js.
+     One scrolling column: the source header (title, save status, actions,
+     status chips), then citation, primary/secondary, annotation, highlights. -->
+<header class="sb-modal__header" id="ed-modalbar">
+  <button id="ed-close" type="button" class="sb-modal__close" title="Close" aria-label="Close">&times;</button>
   <div id="ed-source-dd" class="sb-srcdd">
     <button id="ed-source-trigger" type="button" class="sb-srcdd__trigger"
             aria-haspopup="listbox" aria-expanded="false" disabled>
@@ -13,28 +15,34 @@
   </div>
 </header>
 
-<div class="sb-modal__body">
-  <section class="sb-modal__pane sb-modal__pane--left" id="ed-left" aria-label="Citation and annotation">
-    <div id="ed-citation" class="sb-modal__citation">
+<div class="ed-scroll" id="ed-scroll">
+  <div class="ed-col">
+    <section class="ed-head" id="ed-head" aria-label="Source">
+      <div class="ed-head__meta">
+        <span id="ed-meta"></span>
+        <span id="ed-status" class="ed-status" role="status" aria-live="polite"></span>
+      </div>
+      <div class="ed-head__row">
+        <h2 id="ed-title" class="ed-head__title"></h2>
+        <div id="ed-actions" class="ed-head__actions"></div>
+      </div>
+      <div id="ed-del"></div>
+      <div id="ed-chips" class="ed-chips"></div>
+    </section>
+
+    <div id="ed-citation" class="ed-form">
       <div class="sb-loading">
         <div class="sb-loading__spinner"></div>
         <div class="sb-loading__label">Loading source…</div>
       </div>
     </div>
-  </section>
 
-  <section class="sb-modal__pane sb-modal__pane--right" id="ed-right">
-    <div class="sb-modal__paneheader-row">
-      <h2 class="sb-modal__paneheader" id="ed-evheader">Your highlights</h2>
-    </div>
-    <div id="ed-filter" class="sb-modal__filter"></div>
-    <div id="ed-evidence" class="sb-modal__evidence">
-      <div class="sb-loading">
-        <div class="sb-loading__spinner"></div>
-        <div class="sb-loading__label">Loading highlights…</div>
+    <section class="sb-sec ed-sec" id="ed-sec-highlights" hidden>
+      <div class="sb-sec__head">
+        <h3 class="sb-sec__title" id="ed-evheader">Highlights</h3>
       </div>
-    </div>
-  </section>
+      <div id="ed-filter" class="sb-modal__filter"></div>
+      <div id="ed-evidence" class="sb-modal__evidence"></div>
+    </section>
+  </div>
 </div>
-
-<div id="ed-status" class="sb-modal__status" role="status" aria-live="polite"></div>

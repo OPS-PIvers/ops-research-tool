@@ -830,35 +830,24 @@ These supersede or refine the spec — apply them before defaulting to plan text
   routes it before the console). **No new student permissions:** the web app
   executes as the owner and identifies the caller with `Session.getActiveUser()`,
   like the extension's calls. The page needs no add-on install and no `drive`
-  consent. It is **not a third copy of the UI**:
-  [`research.html`](apps-script/src/research.html) puts the Docs sidebar list
-  (`sidebar_js`, **`window.OPS_PAGE` mode**: no insert menu / Open Editor, an
-  "Edit" action per card) beside the source editor (`source_editor_js`,
-  **`OPS_EDITOR_CTX.embedded` mode**, driven via `window.OpsSourceEditor.show/
-  clear/hasFocus`). The markup is shared through
-  [`sidebar_list.html`](apps-script/src/sidebar_list.html) and
-  [`source_editor_body.html`](apps-script/src/source_editor_body.html);
-  `research_css.html` only does layout. `source_editor_js` is now wrapped in an
-  IIFE, because the page loads it next to `sidebar_js` and both have top-level
-  `els`/`render`/`setStatus`. The list and the editor share source/highlight
-  objects. The editor reports edits, deletes and source switches to the page
-  (deferred `onChange`), and after a citation save the page re-fetches just
-  `inlineCitation` so Copy citation isn't stale. **Freshness:** re-fetches on
-  tab focus (throttled 30s) plus a Refresh button. A refresh never re-renders
-  the editor while a field in it has focus. **Online-only:** saves go straight
-  to the server; a failed save keeps the text on screen, says "Not saved", and
-  is re-sent on the browser `online` event (`unsaved` map in `source_editor_js`,
-  which the Docs modal gets too); an offline banner sits at the top. Layout: two
-  columns ≥901px, the editor's citation/evidence panes stack ≤1100px, and below
-  901px it's one column with "‹ All sources". `sidebarGetContext(preferredProjectId)`
+  consent. **Layout and list were redesigned on 2026-11-12 (next bullet).**
+  The editor (`source_editor_js`, **`OPS_EDITOR_CTX.embedded` mode**, driven
+  via `window.OpsSourceEditor.show/clear/hasFocus`) is shared with the Docs
+  modal through [`source_editor_body.html`](apps-script/src/source_editor_body.html);
+  `source_editor_js` is wrapped in an IIFE. The list and the editor share
+  source/highlight objects. The editor reports edits, deletes and source
+  switches to the page (deferred `onChange`), and after a citation save it
+  re-fetches just `inlineCitation` (`refreshInline_`) so Copy isn't stale.
+  **Freshness:** re-fetches on tab focus (throttled 30s) plus a Refresh button.
+  A refresh never re-renders the editor while a field in it has focus.
+  **Online-only:** saves go straight to the server; a failed save keeps the
+  text on screen, says "Not saved", and is re-sent on the browser `online`
+  event (`unsaved` map in `source_editor_js`, which the Docs modal gets too);
+  an offline banner sits at the top. Below 901px it's one column with
+  "‹ All sources". `sidebarGetContext(preferredProjectId)`
   makes the requested project active when the caller can see it (and now falls
   back when the stored active project is no longer visible). Entry point: the
   popup's **"Open my research ↗"** (opens on the extension's active project).
-  In the **By source** view each list card also has a red **Delete** action
-  with an inline Keep it / Remove source confirm (`deleteSourceFromList_` in
-  `sidebar_js`, same `sidebarDeleteSource` call as the editor's bottom link,
-  non-optimistic); the editor pane is re-shown afterward so its source
-  switcher drops the deleted source.
   Staff get the Docs-sidebar view (all active projects). Group-member delete
   rights unchanged (revisit after pilot). Fixed along the way: switching
   projects in the Docs sidebar kept the first project's bundle colors
@@ -895,6 +884,40 @@ These supersede or refine the spec — apply them before defaulting to plan text
   [`source_editor_css.html`](apps-script/src/source_editor_css.html), which the
   modal and `research.html` load. Field borders are `#949494` (3:1). The value
   `unset` is unchanged; only its label is new.
+
+- **My research redesign: layout A, own list, one-column editor (2026-11-12;
+  extension v0.1.12).** Settled in a grill-with-docs session; terms in
+  [`GLOSSARY.md`](GLOSSARY.md) (Source, Highlight, Ready, Annotation).
+  - **The page owns its list** ([`research_js.html`](apps-script/src/research_js.html));
+    `sidebar_js` is Docs-sidebar only again (its `OPS_PAGE` mode is gone).
+    Navy top bar like the console. Tabs **Sources / Highlights**. A source card
+    = title · host · Primary/Secondary · highlight count · one status line
+    ("Ready" or "2 to do: website name, annotation"). Default order **Needs
+    work first** (then newest), frozen at load/sort change so a card doesn't
+    jump while the student edits; a sort popover offers Newest / A–Z. A summary
+    line ("2 of 4 sources ready · your teacher wants 5 sources") shows only
+    when the project tracks something. Clicking a highlight opens its source,
+    scrolled to it and briefly outlined.
+  - **Ready = the project's requirements**, the same rule the teacher
+    dashboard uses: `sourceTodo_` in `source_editor_js` (exposed as
+    `window.OpsReadiness.todo`) mirrors `computeCompletionSummary_` +
+    `computeEvidenceDepth_`, and `citationState_` mirrors `isSourceCited_`
+    (62_aggregator.js). **Keep them in sync.** Computed client-side so chips
+    and cards update live.
+  - **One-column editor in both the page and the Docs modal**: header (type ·
+    host · save status, title, Open source / Copy in-text citation / trash
+    icon, status chips that jump to their section), then Citation, Citation
+    details (always open), Primary or secondary, Annotation, Highlights. The
+    source dropdown stays in the modal's top bar only (the page uses its
+    list). Remove source = the header trash icon + inline confirm (the ⋯ menu
+    idea was dropped: nothing else would be in it). New **"The citation looks
+    right"** button when every required field is filled by the scrape but the
+    student never touched one: it saves those values as theirs, which is what
+    makes `isSourceCited_` count it.
+  - **Wording:** Docs sidebar "By evidence" → "By highlight"; extension
+    "Annotations" tab → "Highlights", "All notes" → "All highlights".
+  - Headless check: templates built with a mocked `google.script.run`, driven
+    in Playwright (page, Docs modal, Docs sidebar). Real-surface QA still owed.
 
 - **Database articles are keyed by their document id, not the full URL
   (2026-10-29; extension v0.1.9).** Teacher report: highlights didn't come back
@@ -1252,7 +1275,7 @@ allowed in manifest") and assigns the published item its own id. So
 **published id is store-assigned and differs from the unpacked-dev id** until you
 make them match (below). *(Earlier this file claimed the `key` made the two ids
 identical — that was wrong; it bit the first upload.)* **Actual published id (first
-published 2026-06-08 as v0.1.2; current v0.1.9): `goglhlpppkhiddkhgcknbiohcppgdggi`** — the match step was
+published 2026-06-08 as v0.1.2; current v0.1.12): `goglhlpppkhiddkhgcknbiohcppgdggi`** — the match step was
 NOT done, so dev (`nmela…`) and published (`goglh…`) remain different ids.
 
 ### Make dev + published ids match (NOT done — the two ids differ)
