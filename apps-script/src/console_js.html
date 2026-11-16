@@ -500,7 +500,7 @@ function openCreateProjectModal_() {
     schoolYear: defaultSchoolYear_(),
     bundleId: '',
     memberClasses: [],
-    requirements: { minSources: '', minHighlightsPerSource: '', minDistinctCategories: '',
+    requirements: { minSources: '', minTotalHighlights: '', minHighlightsPerSource: '', minDistinctCategories: '',
                     requireCitation: true, requireClassification: true, requireAnnotation: true },
   };
 
@@ -765,7 +765,7 @@ function makeField_(labelText, control) {
 
 /**
  * Builds the optional-requirements fieldset bound to a `req` object
- * ({minSources, minHighlightsPerSource, minDistinctCategories, requireCitation,
+ * ({minSources, minTotalHighlights, minHighlightsPerSource, minDistinctCategories, requireCitation,
  * requireClassification, requireAnnotation}).
  * Shared by the create modal and the edit modal. Blank number input = unset.
  */
@@ -810,6 +810,7 @@ function buildRequirementsFields_(req) {
     wrap.appendChild(f);
   };
   numField('Min sources', 'minSources');
+  numField('Min total highlights (all sources)', 'minTotalHighlights');
   numField('Min highlights per source', 'minHighlightsPerSource');
   numField('Min distinct categories per source', 'minDistinctCategories', 5);
 
@@ -1032,6 +1033,7 @@ function openEditRequirementsModal_() {
   const r = (dashboard.data.project && dashboard.data.project.requirements) || {};
   const editReq = {
     minSources: r.minSources == null ? '' : r.minSources,
+    minTotalHighlights: r.minTotalHighlights == null ? '' : r.minTotalHighlights,
     minHighlightsPerSource: r.minHighlightsPerSource == null ? '' : r.minHighlightsPerSource,
     minDistinctCategories: r.minDistinctCategories == null ? '' : r.minDistinctCategories,
     requireCitation: r.requireCitation !== false,
@@ -2267,7 +2269,7 @@ function buildRequirementsCell_(gaps, row, requirements) {
   gaps = gaps || {};
   const total = (row && row.sourceCount) || 0;
 
-  // Fixed order — Sources · Evidence · Citation · Primary/Secondary · Annotation. Every chip that applies
+  // Fixed order — Sources · Highlights · Evidence · Citation · Primary/Secondary · Annotation. Every chip that applies
   // to the project ALWAYS renders (color encodes status: green met / amber
   // partial / red behind / gray nothing-yet), so the chips line up in the same
   // slots when scanning down the column. Completed ones stay in place, green.
@@ -2278,6 +2280,17 @@ function buildRequirementsCell_(gaps, row, requirements) {
       total + ' of ' + reqs.minSources + ' sources',
       row.sourcesProgress.meets ? 'good' : 'bad',
       total + ' source' + (total === 1 ? '' : 's') + ' saved; the project asks for ' + reqs.minSources));
+  }
+
+  // Total-highlights target across all sources (only when the project sets one).
+  if (reqs.minTotalHighlights && row && row.highlightsProgress) {
+    const hl = row.highlightsProgress.highlightCount || 0;
+    const min = reqs.minTotalHighlights;
+    const status = hl >= min ? 'good' : (hl === 0 ? 'neutral' : (hl * 2 >= min ? 'warn' : 'bad'));
+    wrap.appendChild(reqChip_(
+      hl + ' of ' + min + ' highlights',
+      status,
+      hl + ' highlight' + (hl === 1 ? '' : 's') + ' across all sources; the project asks for ' + min));
   }
 
   // Evidence-depth target (only when the project sets one).
@@ -2947,22 +2960,26 @@ function buildDrillCountsTiles_(c) {
 function buildDrillCompletion_(comp, requirements) {
   const wrap = document.createElement('div');
   const dims = requiredDims_(requirements);
-  if (!dims.length) {
+  // Project-level count targets (aggregates carry the progress objects).
+  const counts = [];
+  const sp = requirements && requirements.sourcesProgress;
+  if (sp && sp.minSources) counts.push({ label: 'Sources', have: sp.sourceCount, min: sp.minSources });
+  const hp = requirements && requirements.highlightsProgress;
+  if (hp && hp.minTotalHighlights) counts.push({ label: 'Highlights', have: hp.highlightCount, min: hp.minTotalHighlights });
+  if (!dims.length && !counts.length) {
     const none = document.createElement('div');
     none.className = 'dd-unclassified';
     none.textContent = 'No completion requirements for this project.';
     wrap.appendChild(none);
     return wrap;
   }
-  dims.forEach((dim) => {
-    const kind = dim.key;
-    const c = comp[kind];
-    const pct = c.total === 0 ? 0 : Math.round((c.complete / c.total) * 100);
+  const addRow = (label, done, total) => {
+    const pct = total === 0 ? 0 : Math.min(100, Math.round((done / total) * 100));
     const row = document.createElement('div');
     row.className = 'dd-comp-row';
     const lab = document.createElement('div');
     lab.className = 'dd-comp-label';
-    lab.textContent = dim.long;
+    lab.textContent = label;
     row.appendChild(lab);
     const bar = document.createElement('div');
     bar.className = 'dd-comp-bar';
@@ -2976,9 +2993,14 @@ function buildDrillCompletion_(comp, requirements) {
     row.appendChild(bar);
     const pctTxt = document.createElement('div');
     pctTxt.className = 'dd-comp-pct';
-    pctTxt.textContent = c.complete + ' / ' + c.total;
+    pctTxt.textContent = done + ' / ' + total;
     row.appendChild(pctTxt);
     wrap.appendChild(row);
+  };
+  counts.forEach((c) => addRow(c.label, c.have, c.min));
+  dims.forEach((dim) => {
+    const c = comp[dim.key];
+    addRow(dim.long, c.complete, c.total);
   });
   return wrap;
 }

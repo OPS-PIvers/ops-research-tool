@@ -26,6 +26,7 @@ function parseProjectRequirements_(project) {
   const cats = posInt(raw.minDistinctCategories);
   return {
     minSources:             posInt(raw.minSources),
+    minTotalHighlights:     posInt(raw.minTotalHighlights),
     minHighlightsPerSource: posInt(raw.minHighlightsPerSource),
     minDistinctCategories:  cats === null ? null : Math.min(cats, 5),
     requireCitation:        raw.requireCitation === false ? false : true,
@@ -39,7 +40,7 @@ function parseProjectRequirements_(project) {
  *
  *   aggregateStudent_(sources, highlights, bundle [, requirements])
  *     → { categoryMix, sourceCount, highlightCount, completion, gaps,
- *          sourcesProgress, evidenceDepth, lastActivity }
+ *          sourcesProgress, highlightsProgress, evidenceDepth, lastActivity }
  *
  * `categoryMix` preserves bundle order so the dashboard stack-bar always
  * paints categories in the same slot regardless of insertion order.
@@ -54,6 +55,7 @@ function aggregateStudent_(sources, highlights, bundle, requirements) {
     completion: computeCompletionSummary_(sources, req),
     gaps: computeGaps_(sources),
     sourcesProgress: computeSourcesProgress_(sources, req),
+    highlightsProgress: computeHighlightsProgress_(highlights, req),
     // Row payload: rollup only (omit perSource to keep the dashboard response small).
     evidenceDepth: {
       targetSet: depth.targetSet,
@@ -76,6 +78,7 @@ function aggregateStudentDetail_(sources, highlights, bundle, projectCreatedAt, 
     sourceCounts: computeSourceCounts_(sources),
     completion: computeCompletion_(sources),
     sourcesProgress: computeSourcesProgress_(sources, req),
+    highlightsProgress: computeHighlightsProgress_(highlights, req),
     // Drill-down: full per-source list so the viewer can annotate each source.
     evidenceDepth: computeEvidenceDepth_(sources, highlights, req),
     requireCitation: req.requireCitation,
@@ -219,6 +222,20 @@ function computeSourcesProgress_(sources, requirements) {
     minSources: min,
     sourceCount: sources.length,
     meets: min ? sources.length >= min : true,
+  };
+}
+
+/**
+ * Project-level TOTAL highlight count against optional minTotalHighlights —
+ * the size of the student's research base across every source (no per-source
+ * split; that's minHighlightsPerSource). Pure.
+ */
+function computeHighlightsProgress_(highlights, requirements) {
+  const min = (requirements && requirements.minTotalHighlights) || null;
+  return {
+    minTotalHighlights: min,
+    highlightCount: highlights.length,
+    meets: min ? highlights.length >= min : true,
   };
 }
 

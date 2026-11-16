@@ -58,5 +58,28 @@ console.log('computeCompletionSummary_:');
   check('drill-down carries the flags', detail.requireCitation === false && detail.requireClassification === true);
 }
 
+console.log('minTotalHighlights:');
+{
+  check('parse default null', S.parseProjectRequirements_({}).minTotalHighlights === null);
+  check('parse 30', req({ minTotalHighlights: 30 }).minTotalHighlights === 30);
+  check('parse 0 → null', req({ minTotalHighlights: 0 }).minTotalHighlights === null);
+  check('validate "30" → 30', S.validateRequirementsInput_({ minTotalHighlights: '30' }).minTotalHighlights === 30);
+  check('validate blank omitted', S.validateRequirementsInput_({ minTotalHighlights: '' }).minTotalHighlights === undefined);
+  check('validate 0 omitted', S.validateRequirementsInput_({ minTotalHighlights: 0 }).minTotalHighlights === undefined);
+  let threw = false; try { S.validateRequirementsInput_({ minTotalHighlights: 'lots' }); } catch (e) { threw = true; }
+  check('validate rejects non-numeric', threw);
+  const hl = [{ sourceId: 's1' }, { sourceId: 's1' }, { sourceId: 's2' }];
+  const p1 = S.computeHighlightsProgress_(hl, req({ minTotalHighlights: 5 }));
+  check('3 of 5 → not met', p1.meets === false && p1.highlightCount === 3 && p1.minTotalHighlights === 5);
+  check('3 of 3 → met', S.computeHighlightsProgress_(hl, req({ minTotalHighlights: 3 })).meets === true);
+  const p3 = S.computeHighlightsProgress_(hl, S.parseProjectRequirements_({}));
+  check('no target → inert', p3.meets === true && p3.minTotalHighlights === null);
+  const agg = S.aggregateStudent_([{ sourceId: 's1' }], hl, null, req({ minTotalHighlights: 4 }));
+  check('dashboard row carries it', agg.highlightsProgress.highlightCount === 3 && agg.highlightsProgress.meets === false);
+  check('legacy undefined reqs → inert', S.aggregateStudent_([], hl, null).highlightsProgress.meets === true);
+  const det = S.aggregateStudentDetail_([], hl, null, '', req({ minTotalHighlights: 2 }));
+  check('drill-down carries it', det.highlightsProgress.meets === true && det.highlightsProgress.minTotalHighlights === 2);
+}
+
 if (failures) { console.error(failures + ' failure(s)'); process.exit(1); }
 console.log('all passed');

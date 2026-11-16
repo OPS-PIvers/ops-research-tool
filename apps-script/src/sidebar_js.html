@@ -540,7 +540,7 @@ function render() {
   }));
   // Overall progress renders above the list AND above the empty state, so a
   // student with no sources yet still sees "Sources: 0 / N" (the motivating
-  // case). Null when no minSources requirement → no extra DOM.
+  // case). Null when no count requirement → no extra DOM.
   const srcProg = renderSourcesProgress_();
   if (srcProg) els.main.appendChild(srcProg);
   if (visibleSources.length === 0) {
@@ -554,20 +554,28 @@ function render() {
   visibleSources.forEach((s) => els.main.appendChild(renderSource(s)));
 }
 
-// Overall "Sources: X / N" line at the top of the source list — shown only when
-// the project sets a minSources requirement (returns null otherwise, so the
-// list is unchanged for no-requirements projects). X = the student's total
-// source count for this project; emphasized when under target.
+// Overall progress lines at the top of the source list: "Sources: X / N" when
+// the project sets minSources, "Highlights: X / N" when it sets
+// minTotalHighlights (total across every source). Returns null when neither is
+// set, so the list is unchanged for no-requirements projects. Each line is
+// emphasized while under target.
 function renderSourcesProgress_() {
   const req = state.requirements;
-  if (!req || !req.minSources) return null;
-  const have = state.sources.length;
-  const need = req.minSources;
-  const met = have >= need;
-  const line = document.createElement('div');
-  line.className = 'sb-srcprog' + (met ? ' sb-srcprog--met' : ' sb-srcprog--unmet');
-  line.textContent = 'Sources: ' + have + ' / ' + need;
-  return line;
+  if (!req) return null;
+  const lines = [];
+  const line = (label, have, need) => {
+    const el = document.createElement('div');
+    el.className = 'sb-srcprog' + (have >= need ? ' sb-srcprog--met' : ' sb-srcprog--unmet');
+    el.textContent = label + ': ' + have + ' / ' + need;
+    lines.push(el);
+  };
+  if (req.minSources) line('Sources', state.sources.length, req.minSources);
+  if (req.minTotalHighlights) line('Highlights', state.highlights.length, req.minTotalHighlights);
+  if (!lines.length) return null;
+  if (lines.length === 1) return lines[0];
+  const wrap = document.createElement('div');
+  lines.forEach((el) => wrap.appendChild(el));
+  return wrap;
 }
 
 function renderSource(source) {
