@@ -564,8 +564,8 @@ These supersede or refine the spec — apply them before defaulting to plan text
   `computeHighlightsProgress_` → `highlightsProgress` on dashboard rows + the
   drill-down; a "12 of 30 highlights" chip right after the Sources chip; a
   Sources/Highlights bar at the top of the drill-down Completion block; a
-  "Highlights: X / N" line in the Docs sidebar; a "your teacher wants N
-  highlights in all" note in the My research summary. The extension is
+  "Highlights: X / N" line in the Docs sidebar; a "12 of the 30 highlights your teacher
+  wants" note in the My research summary. The extension is
   untouched (its sidebar only holds the current page's highlights).
   Headless: `node apps-script/test/requirements.node.test.js`. Set at project creation AND editable afterward via
   **`consoleUpdateProjectRequirements`** (staff-gated like archive). The single
