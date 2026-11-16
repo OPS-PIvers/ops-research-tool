@@ -48,7 +48,7 @@ const HEADERS = {
     'projectId', 'name', 'schoolYear', 'bundleId', 'memberClasses',
     'status', 'rootFolderId', 'createdBy', 'createdAt',
     // Appended (positional mapping preserved). JSON blob of optional teacher
-    // requirements: minSources / minHighlightsPerSource / minDistinctCategories
+    // requirements: minSources / minTotalHighlights / minHighlightsPerSource / minDistinctCategories
     // / requireAnnotation. Empty cell on existing rows → parser defaults.
     'requirements',
   ],

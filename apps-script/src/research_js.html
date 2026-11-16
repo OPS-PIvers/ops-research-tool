@@ -361,7 +361,8 @@ function render_() {
   else renderHighlights_();
 }
 
-// "2 of 4 sources ready · your teacher wants 5 sources". Hidden when the
+// "2 of 4 sources ready · your teacher wants 5 sources · your teacher wants
+// 30 highlights in all (you have 12)". Hidden when the
 // project asks for nothing.
 function renderSummary_() {
   const req = state.requirements || {};
@@ -372,6 +373,10 @@ function renderSummary_() {
   }
   if (req.minSources && state.sources.length < req.minSources) {
     parts.push('your teacher wants ' + req.minSources + ' source' + (req.minSources === 1 ? '' : 's'));
+  }
+  if (req.minTotalHighlights && state.highlights.length < req.minTotalHighlights) {
+    parts.push('your teacher wants ' + req.minTotalHighlights + ' highlight' + (req.minTotalHighlights === 1 ? '' : 's')
+      + ' in all (you have ' + state.highlights.length + ')');
   }
   els.summary.hidden = parts.length === 0 || state.tab !== 'sources';
   els.summary.innerHTML = parts.join(' · ');

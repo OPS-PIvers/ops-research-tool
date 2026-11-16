@@ -558,6 +558,15 @@ These supersede or refine the spec — apply them before defaulting to plan text
   drops it from the completion % (all three off → Completion shows "—",
   `completion.tracked:false`). Student surfaces and the bibliography rule are
   untouched (an untagged source is still left out of the bibliography).
+  **2026-11-16:** **`minTotalHighlights`** (project-level, like `minSources`)
+  is the student's TOTAL highlight count across every source, for teachers who
+  care about the size of the research base, not per-source depth.
+  `computeHighlightsProgress_` → `highlightsProgress` on dashboard rows + the
+  drill-down; a "12 of 30 highlights" chip right after the Sources chip; a
+  Sources/Highlights bar at the top of the drill-down Completion block; a
+  "Highlights: X / N" line in the Docs sidebar; a "your teacher wants N
+  highlights in all" note in the My research summary. The extension is
+  untouched (its sidebar only holds the current page's highlights).
   Headless: `node apps-script/test/requirements.node.test.js`. Set at project creation AND editable afterward via
   **`consoleUpdateProjectRequirements`** (staff-gated like archive). The single
   parser is **`parseProjectRequirements_`** ([`62_aggregator.js`](apps-script/src/62_aggregator.js),

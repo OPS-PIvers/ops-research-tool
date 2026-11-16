@@ -180,6 +180,7 @@ function validateRequirementsInput_(raw) {
     return n;
   };
   const ms = intField(raw.minSources, 'Min sources');                          if (ms !== undefined) out.minSources = ms;
+  const mt = intField(raw.minTotalHighlights, 'Min total highlights');         if (mt !== undefined) out.minTotalHighlights = mt;
   const mh = intField(raw.minHighlightsPerSource, 'Min highlights per source'); if (mh !== undefined) out.minHighlightsPerSource = mh;
   const mc = intField(raw.minDistinctCategories, 'Min distinct categories', 5); if (mc !== undefined) out.minDistinctCategories = mc;
   out.requireCitation = raw.requireCitation === false ? false : true;
@@ -577,6 +578,7 @@ function computeDashboardParallel_(project, scopedClasses, bundle) {
       highlightCount: agg.highlightCount,
       completion:     agg.completion,
       sourcesProgress: agg.sourcesProgress,
+      highlightsProgress: agg.highlightsProgress,
       evidenceDepth:   agg.evidenceDepth,
       gaps:           agg.gaps,
       lastActivity:   agg.lastActivity,
@@ -598,6 +600,7 @@ function computeDashboardParallel_(project, scopedClasses, bundle) {
       highlightCount: agg.highlightCount,
       completion:     agg.completion,
       sourcesProgress: agg.sourcesProgress,
+      highlightsProgress: agg.highlightsProgress,
       evidenceDepth:   agg.evidenceDepth,
       gaps:           agg.gaps,
       lastActivity:   agg.lastActivity,
@@ -653,6 +656,7 @@ function computeDashboardSerial_(project, scopedClasses, bundle) {
       highlightCount: agg.highlightCount,
       completion:     agg.completion,
       sourcesProgress: agg.sourcesProgress,
+      highlightsProgress: agg.highlightsProgress,
       evidenceDepth:   agg.evidenceDepth,
       gaps:           agg.gaps,
       lastActivity:   agg.lastActivity,
@@ -682,6 +686,7 @@ function computeDashboardSerial_(project, scopedClasses, bundle) {
         highlightCount: agg.highlightCount,
         completion:     agg.completion,
         sourcesProgress: agg.sourcesProgress,
+        highlightsProgress: agg.highlightsProgress,
         evidenceDepth:   agg.evidenceDepth,
         gaps:           agg.gaps,
         lastActivity:   agg.lastActivity,

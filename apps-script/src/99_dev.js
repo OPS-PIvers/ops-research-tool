@@ -609,6 +609,7 @@ function devTestRequirementsBackCompat() {
   check('completion.percent still 33',  agg.completion.percent === 33);
   check('gaps.annotation still 1',      agg.gaps.annotation === 1);
   check('sourcesProgress inert',        agg.sourcesProgress.meets === true && agg.sourcesProgress.minSources === null);
+  check('highlightsProgress inert',     agg.highlightsProgress.meets === true && agg.highlightsProgress.minTotalHighlights === null);
   check('evidenceDepth inert',          agg.evidenceDepth.targetSet === false);
   console.log(pass + '/' + (pass + fail) + ' passed');
 }
@@ -2746,9 +2747,10 @@ function devTestConsoleUpdateRequirements() {
   // which treats null as "unset", so the restore is faithful.
   const original = parseProjectRequirements_(getProject_(proj.projectId));
   try {
-    consoleUpdateProjectRequirements(proj.projectId, { minSources: 4, minHighlightsPerSource: 2, minDistinctCategories: 3, requireAnnotation: false });
+    consoleUpdateProjectRequirements(proj.projectId, { minSources: 4, minTotalHighlights: 20, minHighlightsPerSource: 2, minDistinctCategories: 3, requireAnnotation: false });
     const after = parseProjectRequirements_(getProject_(proj.projectId));
     check('minSources persisted 4',        after.minSources === 4);
+    check('minTotalHighlights persisted 20', after.minTotalHighlights === 20);
     check('minHighlights persisted 2',     after.minHighlightsPerSource === 2);
     check('minDistinct persisted 3',       after.minDistinctCategories === 3);
     check('requireAnnotation persisted false', after.requireAnnotation === false);
@@ -2756,6 +2758,7 @@ function devTestConsoleUpdateRequirements() {
     consoleUpdateProjectRequirements(proj.projectId, { requireAnnotation: true });
     const reset = parseProjectRequirements_(getProject_(proj.projectId));
     check('reset → minSources null',       reset.minSources === null);
+    check('reset → minTotalHighlights null', reset.minTotalHighlights === null);
     check('reset → requireAnnotation true', reset.requireAnnotation === true);
   } finally {
     consoleUpdateProjectRequirements(proj.projectId, original);   // non-destructive
